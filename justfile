@@ -11,19 +11,27 @@ default:
 
 # Compile without linking the release binary.
 typecheck:
-    cargo check --all-targets --all-features --locked
+    cargo check --workspace --all-targets --all-features --locked
 
 # Run every test target.
 test:
-    cargo test --all-targets --all-features --locked
+    cargo test --workspace --all-targets --all-features --locked
 
 # Build the optimised binary.
 build-release:
-    cargo build --release --locked
+    cargo build --release --locked --package git-ls
 
 # Run every lint hook through prek.
 lint:
     prek run --all-files --show-diff-on-failure
+
+# Verify commit-level Cargo version policy over a Git range.
+verify-versions base="v0.2.1" head="HEAD":
+    cargo run --locked -p xtask -- version verify-range "{{base}}" "{{head}}"
+
+# Verify and tag commit-level Cargo versions over a Git range.
+tag-versions base head:
+    cargo run --locked -p xtask -- version tag-range "{{base}}" "{{head}}"
 
 # Full validation gate.
 check:
@@ -31,6 +39,10 @@ check:
     just typecheck
     just test
     just build-release
+
+# Install project Git hooks.
+install-hooks:
+    prek install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 
 # Install the current development tools used by `just check`.
 install-tools:
@@ -40,5 +52,4 @@ install-tools:
         cargo-sort@2.1.4 \
         just@1.51.0 \
         prek@0.4.3 \
-        release-plz@0.3.158 \
         typos-cli@1.46.3

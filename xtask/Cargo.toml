@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+semver = "1.0.27"
+toml_edit = "0.23.9"
