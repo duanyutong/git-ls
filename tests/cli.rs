@@ -8,6 +8,7 @@ fn help_exits_successfully_without_git() {
     cmd.arg("--help").assert().success().stderr("").stdout(
         predicate::str::contains("Usage: git ls")
             .and(predicate::str::contains("--hidden"))
+            .and(predicate::str::contains("--backend <VALUE>"))
             .and(predicate::str::contains("--order <VALUE>"))
             .and(predicate::str::contains("--color <VALUE>")),
     );
