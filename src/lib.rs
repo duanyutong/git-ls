@@ -11,6 +11,7 @@ use std::process::Command;
 use thiserror::Error;
 
 const PALETTE: [u8; 10] = [39, 208, 141, 82, 203, 220, 45, 177, 114, 214];
+const TREE_LEFT_PADDING: &str = "";
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (git ",
@@ -139,7 +140,6 @@ struct Lane {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RepositorySnapshot {
-    branches_by_oid: HashMap<String, Vec<String>>,
     current_branch: Option<String>,
     head: Option<String>,
     main_name: String,
@@ -149,6 +149,7 @@ struct RepositorySnapshot {
 enum BuiltLanes {
     Empty {
         main_name: String,
+        current_branch: Option<String>,
     },
     Populated {
         lanes: Vec<Lane>,
@@ -232,6 +233,25 @@ impl Colours {
         self.paint(
             text,
             Ansi256Color(PALETTE[index % PALETTE.len()]).on_default(),
+        )
+    }
+
+    fn current_stack(&self, index: usize, text: &str) -> String {
+        self.paint(
+            text,
+            Ansi256Color(PALETTE[index % PALETTE.len()])
+                .on_default()
+                .bold()
+                .underline(),
+        )
+    }
+
+    fn current_indicator(&self, index: usize, text: &str) -> String {
+        self.paint(
+            text,
+            Ansi256Color(PALETTE[index % PALETTE.len()])
+                .on_default()
+                .bold(),
         )
     }
 
@@ -781,8 +801,10 @@ fn build_lanes<G: GitBackend + ?Sized>(
     let revset = branch_revset(&args.revset);
     let branch_names = git.query_branch_names(&revset, args.hidden)?;
     if branch_names.is_empty() {
+        let (_head, current_branch) = git.current_head_and_branch()?;
         return Ok(BuiltLanes::Empty {
             main_name: git.main_branch_name()?,
+            current_branch,
         });
     }
 
@@ -823,7 +845,6 @@ fn build_lanes<G: GitBackend + ?Sized>(
         lanes,
         main_oid,
         repository: RepositorySnapshot {
-            branches_by_oid: branch_oid_map,
             current_branch,
             head,
             main_name,
@@ -872,24 +893,37 @@ fn marker_for(
     current_branch: Option<&str>,
     head: Option<&str>,
 ) -> &'static str {
-    if head.is_some_and(|head| point.oid == head)
-        || current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
-    {
+    if is_current_branch_point(point, current_branch) {
+        "●"
+    } else if head.is_some_and(|head| point.oid == head) {
         "◉"
     } else {
         "◯"
     }
 }
 
-fn display_names(point: &BranchPoint, current_branch: Option<&str>) -> String {
+fn is_current_branch_point(point: &BranchPoint, current_branch: Option<&str>) -> bool {
+    current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
+}
+
+fn display_names(
+    point: &BranchPoint,
+    current_branch: Option<&str>,
+    colour_index: usize,
+    colours: &Colours,
+) -> String {
     point
         .names
         .iter()
         .map(|name| {
             if current_branch.is_some_and(|branch| branch == name) {
-                format!("ᐅ {name}")
+                format!(
+                    "{} {}",
+                    colours.current_indicator(colour_index, "▶"),
+                    colours.current_stack(colour_index, name)
+                )
             } else {
-                name.clone()
+                format!("  {}", colours.stack(colour_index, name))
             }
         })
         .collect::<Vec<_>>()
@@ -918,47 +952,43 @@ fn row_prefix(
     }
     let visible_width = lane_count * 2 - 1;
     let padding = " ".repeat(graph_width(lane_count) - visible_width);
-    format!("{}{padding}", slots.join(" "))
+    format!("{TREE_LEFT_PADDING}{}{padding}", slots.join(" "))
 }
 
 fn graph_width(lane_count: usize) -> usize {
     lane_count.max(1) * 2 + 1
 }
 
-fn base_label<G: GitBackend + ?Sized>(
-    git: &G,
-    base_oid: Option<&str>,
-    main_oid: &str,
-    main_name: &str,
-    branches_by_oid: &HashMap<String, Vec<String>>,
-    meta_cache: &mut HashMap<String, CommitMeta>,
-) -> Result<String> {
-    let Some(base_oid) = base_oid else {
-        return Ok("<no merge base>".to_string());
-    };
-    if base_oid == main_oid {
-        return Ok(main_name.to_string());
-    }
-
-    let mut branch_names: Vec<String> = branches_by_oid
-        .get(base_oid)
-        .into_iter()
-        .flatten()
-        .filter(|name| name.as_str() != main_name)
-        .cloned()
-        .collect();
-    branch_names.sort();
-    if !branch_names.is_empty() {
-        return Ok(branch_names.join(", "));
-    }
-
-    let meta = get_commit_meta(git, base_oid, meta_cache)?;
-    Ok(format!("{} {}", meta.short_oid, meta.subject))
+fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
+    current_branch.is_some_and(|branch| branch == main_name)
 }
 
-fn trunk_prefix(lane_count: usize, colour_offset: usize, colours: &Colours) -> String {
+fn main_label(main_name: &str, current_branch: Option<&str>, colours: &Colours) -> String {
+    if main_is_current(main_name, current_branch) {
+        format!(
+            "{} {}",
+            colours.current_indicator(0, "▶"),
+            colours.current_stack(0, main_name)
+        )
+    } else {
+        format!("  {}", colours.dim(main_name))
+    }
+}
+
+fn trunk_prefix(
+    lane_count: usize,
+    colour_offset: usize,
+    main_is_current: bool,
+    colours: &Colours,
+) -> String {
+    let marker = if main_is_current {
+        colours.current_stack(0, "●")
+    } else {
+        colours.dim("◯")
+    };
+
     if lane_count == 0 {
-        return colours.dim("└─◯");
+        return format!("{TREE_LEFT_PADDING}└─{marker}");
     }
 
     let mut parts = Vec::new();
@@ -966,32 +996,24 @@ fn trunk_prefix(lane_count: usize, colour_offset: usize, colours: &Colours) -> S
         let connector = if index == 0 { "└─" } else { "┴─" };
         parts.push(colours.stack(colour_offset + index, connector));
     }
-    parts.push(colours.dim("◯"));
-    parts.join("")
+    parts.push(marker);
+    format!("{TREE_LEFT_PADDING}{}", parts.join(""))
 }
 
-struct RenderContext<'a, G: GitBackend + ?Sized> {
-    git: &'a G,
-    main_oid: &'a str,
+struct RenderContext<'a> {
     main_name: &'a str,
-    branches_by_oid: &'a HashMap<String, Vec<String>>,
     current_branch: Option<&'a str>,
     head: Option<&'a str>,
     colours: &'a Colours,
-    meta_cache: &'a mut HashMap<String, CommitMeta>,
 }
 
-fn render_group<G: GitBackend + ?Sized>(
-    lanes: &[Lane],
-    base_oid: Option<&str>,
-    colour_offset: usize,
-    ctx: &mut RenderContext<'_, G>,
-) -> Result<Vec<String>> {
+fn render_group(lanes: &[Lane], colour_offset: usize, ctx: &RenderContext<'_>) -> Vec<String> {
     let lane_count = lanes.len();
     let mut output = Vec::new();
 
     for (lane_index, lane) in lanes.iter().enumerate() {
         for point in &lane.branch_points {
+            let colour_index = colour_offset + lane_index;
             let prefix = row_prefix(
                 lane_index,
                 lane_count,
@@ -1001,28 +1023,19 @@ fn render_group<G: GitBackend + ?Sized>(
                 ctx.head,
                 ctx.colours,
             );
-            let label = ctx.colours.stack(
-                colour_offset + lane_index,
-                &display_names(point, ctx.current_branch),
-            );
+            let label = display_names(point, ctx.current_branch, colour_index, ctx.colours);
             output.push(format!("{prefix}  {label}"));
         }
     }
 
-    let label = base_label(
-        ctx.git,
-        base_oid,
-        ctx.main_oid,
-        ctx.main_name,
-        ctx.branches_by_oid,
-        ctx.meta_cache,
-    )?;
+    let current_main = main_is_current(ctx.main_name, ctx.current_branch);
+    let label = main_label(ctx.main_name, ctx.current_branch, ctx.colours);
     output.push(format!(
         "{}  {}",
-        trunk_prefix(lane_count, colour_offset, ctx.colours),
-        ctx.colours.dim(&label)
+        trunk_prefix(lane_count, colour_offset, current_main, ctx.colours),
+        label
     ));
-    Ok(output)
+    output
 }
 
 fn parse_args_from<I, S>(args: I) -> Result<Args>
@@ -1043,44 +1056,44 @@ where
     let colours = Colours::new(args.colour_mode);
 
     let mut meta_cache = HashMap::new();
-    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
-        BuiltLanes::Empty { main_name } => {
+    let (lanes, repository) = match build_lanes(git, args, &mut meta_cache)? {
+        BuiltLanes::Empty {
+            main_name,
+            current_branch,
+        } => {
+            let current_main = main_is_current(&main_name, current_branch.as_deref());
             writeln!(
                 stdout,
                 "{}  {}",
-                trunk_prefix(0, 0, &colours),
-                colours.dim(&main_name)
+                trunk_prefix(0, 0, current_main, &colours),
+                main_label(&main_name, current_branch.as_deref(), &colours)
             )?;
             return Ok(());
         }
         BuiltLanes::Populated {
             lanes,
-            main_oid,
+            main_oid: _,
             repository,
-        } => (lanes, main_oid, repository),
+        } => (lanes, repository),
     };
 
     let lanes = ordered_lanes(lanes, args.order);
 
-    let mut ctx = RenderContext {
-        git,
-        main_oid: &main_oid,
+    let ctx = RenderContext {
         main_name: &repository.main_name,
-        branches_by_oid: &repository.branches_by_oid,
         current_branch: repository.current_branch.as_deref(),
         head: repository.head.as_deref(),
         colours: &colours,
-        meta_cache: &mut meta_cache,
     };
 
     let mut first_group = true;
     let mut colour_offset = 0;
-    for (base_oid, base_lanes) in grouped_by_base(lanes) {
+    for (_base_oid, base_lanes) in grouped_by_base(lanes) {
         if !first_group {
             writeln!(stdout)?;
         }
         first_group = false;
-        for line in render_group(&base_lanes, base_oid.as_deref(), colour_offset, &mut ctx)? {
+        for line in render_group(&base_lanes, colour_offset, &ctx) {
             writeln!(stdout, "{line}")?;
         }
         colour_offset += base_lanes.len();
@@ -1447,10 +1460,7 @@ mod tests {
 
     #[test]
     fn renders_markers_names_and_trunk() {
-        let git = MockGit::default();
         let colours = Colours { enabled: false };
-        let branches_by_oid = HashMap::new();
-        let mut meta_cache = HashMap::new();
         let lanes = vec![
             Lane {
                 head_oid: "a".to_string(),
@@ -1467,35 +1477,28 @@ mod tests {
                 contains_current: true,
             },
         ];
-        let mut ctx = RenderContext {
-            git: &git,
-            main_oid: "main",
+        let ctx = RenderContext {
             main_name: "main",
-            branches_by_oid: &branches_by_oid,
             current_branch: Some("feature/two"),
             head: Some("b"),
             colours: &colours,
-            meta_cache: &mut meta_cache,
         };
 
-        let output = render_group(&lanes, Some("main"), 0, &mut ctx).unwrap();
+        let output = render_group(&lanes, 0, &ctx);
 
         assert_eq!(
             output,
             vec![
-                "◯      feature/one".to_string(),
-                "│ ◉    ᐅ feature/two".to_string(),
-                "└─┴─◯  main".to_string()
+                "◯        feature/one".to_string(),
+                "│ ●    ▶ feature/two".to_string(),
+                "└─┴─◯    main".to_string()
             ]
         );
     }
 
     #[test]
     fn renders_single_lane_with_visible_connector() {
-        let git = MockGit::default();
         let colours = Colours { enabled: false };
-        let branches_by_oid = HashMap::new();
-        let mut meta_cache = HashMap::new();
         let lanes = vec![Lane {
             head_oid: "a".to_string(),
             base_oid: Some("main".to_string()),
@@ -1503,64 +1506,44 @@ mod tests {
             head_timestamp: 1,
             contains_current: true,
         }];
-        let mut ctx = RenderContext {
-            git: &git,
-            main_oid: "main",
+        let ctx = RenderContext {
             main_name: "main",
-            branches_by_oid: &branches_by_oid,
             current_branch: Some("feature/one"),
             head: Some("a"),
             colours: &colours,
-            meta_cache: &mut meta_cache,
         };
 
-        let output = render_group(&lanes, Some("main"), 0, &mut ctx).unwrap();
+        let output = render_group(&lanes, 0, &ctx);
 
         assert_eq!(
             output,
-            vec!["◉    ᐅ feature/one".to_string(), "└─◯  main".to_string()]
+            vec!["●    ▶ feature/one".to_string(), "└─◯    main".to_string()]
         );
     }
 
     #[test]
-    fn renders_base_labels_without_unnecessary_git_calls() {
-        let git = MockGit::default();
-        let mut branches_by_oid = HashMap::new();
-        branches_by_oid.insert(
-            "base".to_string(),
-            vec!["main".to_string(), "topic".to_string()],
-        );
-        let mut cache = HashMap::new();
+    fn renders_current_main_on_trunk_row() {
+        let colours = Colours { enabled: false };
+        let lanes = vec![Lane {
+            head_oid: "a".to_string(),
+            base_oid: Some("main".to_string()),
+            branch_points: vec![point("a", &["feature/one"])],
+            head_timestamp: 1,
+            contains_current: false,
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("main"),
+            head: Some("main"),
+            colours: &colours,
+        };
+
+        let output = render_group(&lanes, 0, &ctx);
 
         assert_eq!(
-            base_label(&git, None, "main", "main", &branches_by_oid, &mut cache).unwrap(),
-            "<no merge base>"
+            output,
+            vec!["◯      feature/one".to_string(), "└─●  ▶ main".to_string()]
         );
-        assert_eq!(
-            base_label(
-                &git,
-                Some("main"),
-                "main",
-                "main",
-                &branches_by_oid,
-                &mut cache
-            )
-            .unwrap(),
-            "main"
-        );
-        assert_eq!(
-            base_label(
-                &git,
-                Some("base"),
-                "main",
-                "main",
-                &branches_by_oid,
-                &mut cache
-            )
-            .unwrap(),
-            "topic"
-        );
-        assert!(git.calls().is_empty());
     }
 
     #[test]
@@ -1568,6 +1551,14 @@ mod tests {
         let colours = Colours { enabled: true };
 
         assert_eq!(colours.stack(0, "x"), "\x1b[38;5;39mx\x1b[0m");
+        assert_eq!(
+            colours.current_stack(0, "x"),
+            "\x1b[1m\x1b[4m\x1b[38;5;39mx\x1b[0m"
+        );
+        assert_eq!(
+            colours.current_indicator(0, "x"),
+            "\x1b[1m\x1b[38;5;39mx\x1b[0m"
+        );
         assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
     }
 
@@ -1672,12 +1663,16 @@ mod tests {
         let revset = "((draft()) & branches()) - public()";
         let git = MockGit::default()
             .with(&["branchless", "query", "-b", revset], "")
+            .with(
+                &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+                "main-oid\nmain",
+            )
             .with(&["config", "--get", "branchless.core.mainBranch"], "");
         let mut output = Vec::new();
 
         run(["--color", "never"], &git, &mut output).unwrap();
 
-        assert_eq!(String::from_utf8(output).unwrap(), "└─◯  main\n");
+        assert_eq!(String::from_utf8(output).unwrap(), "└─●  ▶ main\n");
         assert!(
             git.calls()
                 .iter()
@@ -1696,6 +1691,12 @@ mod tests {
                     "query".to_string(),
                     "-b".to_string(),
                     revset.to_string()
+                ],
+                vec![
+                    "rev-parse".to_string(),
+                    "HEAD".to_string(),
+                    "--abbrev-ref".to_string(),
+                    "HEAD".to_string()
                 ],
                 vec![
                     "config".to_string(),
