@@ -10,13 +10,17 @@
 
 ## Build & Install
 
-One-line command to build and install the release build:
+One-line commands to build and install:
 
 ```sh
-rustup run stable cargo install --path . --locked --profile release
+# release build
+rustup run stable cargo install --path . --locked
+
+# development build
+rustup run stable cargo install --path . --locked --debug
 ```
 
-Cargo builds the local crate with the release profile and installs the binary into its configured binary directory, commonly `~/.cargo/bin`. When that directory is on `PATH`, Git exposes the executable as `git ls`.
+Cargo installs the local crate with the release profile by default, placing the binary in its configured binary directory, commonly `~/.cargo/bin`. Use the debug command for rapid local iteration. When that directory is on `PATH`, Git exposes the executable as `git ls`.
 
 ## Run
 
