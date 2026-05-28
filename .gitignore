@@ -1,0 +1,10 @@
+/target/
+/.serena/
+/.agents/
+/.codegraph/
+/coverage/
+/lcov.info
+/tarpaulin-report.html
+*.profraw
+*.profdata
+.DS_Store
