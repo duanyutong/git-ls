@@ -10,8 +10,10 @@
 
 ## Build & Install
 
+One-line command to build and install the release build:
+
 ```sh
-cargo +stable install --path . --locked --profile release
+rustup run stable cargo install --path . --locked --profile release
 ```
 
 Cargo builds the local crate with the release profile and installs the binary into its configured binary directory, commonly `~/.cargo/bin`. When that directory is on `PATH`, Git exposes the executable as `git ls`.
@@ -23,6 +25,7 @@ git ls
 git ls --backend shell
 git ls --color never
 git ls --order oldest
+git ls --version
 git ls 'draft() & branches(feature/)'
 ```
 

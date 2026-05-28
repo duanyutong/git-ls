@@ -24,3 +24,16 @@ fn invalid_option_exits_unsuccessfully_without_git() {
         .stdout("")
         .stderr(predicate::str::contains("invalid value 'later'"));
 }
+
+#[test]
+fn version_includes_build_provenance() {
+    let mut cmd = Command::cargo_bin("git-ls").expect("binary exists");
+
+    cmd.arg("--version").assert().success().stderr("").stdout(
+        predicate::str::contains(concat!("git ls ", env!("CARGO_PKG_VERSION"), " (git "))
+            .and(predicate::str::contains("dirty="))
+            .and(predicate::str::contains("target="))
+            .and(predicate::str::contains("rustc="))
+            .and(predicate::str::contains("built=")),
+    );
+}

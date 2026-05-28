@@ -11,6 +11,20 @@ use std::process::Command;
 use thiserror::Error;
 
 const PALETTE: [u8; 10] = [39, 208, 141, 82, 203, 220, 45, 177, 114, 214];
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (git ",
+    env!("VERGEN_GIT_SHA"),
+    ", dirty=",
+    env!("VERGEN_GIT_DIRTY"),
+    ", target=",
+    env!("VERGEN_CARGO_TARGET_TRIPLE"),
+    ", rustc=",
+    env!("VERGEN_RUSTC_SEMVER"),
+    ", built=",
+    env!("VERGEN_BUILD_TIMESTAMP"),
+    ")"
+);
 
 #[derive(Debug, Error)]
 pub enum GitLsError {
@@ -164,7 +178,7 @@ enum Backend {
 #[command(
     name = "git ls",
     about = "Render git-branchless draft branches as coloured stack lanes.",
-    version
+    version = VERSION
 )]
 struct Args {
     #[arg(default_value = "draft()", value_name = "REVSET")]
@@ -732,10 +746,10 @@ fn build_lane<G: GitBackend + ?Sized>(
         .filter_map(|oid| points_by_oid.get(oid).cloned())
         .collect();
 
-    if branch_points.is_empty() {
-        if let Some(point) = points_by_oid.get(head_oid) {
-            branch_points.push(point.clone());
-        }
+    if branch_points.is_empty()
+        && let Some(point) = points_by_oid.get(head_oid)
+    {
+        branch_points.push(point.clone());
     }
     if branch_points.is_empty() {
         return Ok(None);
