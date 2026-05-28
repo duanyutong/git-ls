@@ -1,0 +1,50 @@
+# Project-scoped hooks for git-ls.
+#
+# These hooks invoke the repository's normal tools directly, keeping local
+# validation and CI behaviour aligned.
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "cargo-fmt",
+    name = "cargo fmt --all",
+    language = "system",
+    entry = "cargo fmt --all",
+    files = "\\.rs$",
+    pass_filenames = false },
+
+  { id = "cargo-clippy",
+    name = "cargo clippy --all-targets --all-features --locked -- -D warnings",
+    language = "system",
+    entry = "cargo clippy --all-targets --all-features --locked -- -D warnings",
+    files = "(\\.rs|Cargo\\.toml|Cargo\\.lock|clippy\\.toml)$",
+    pass_filenames = false },
+
+  { id = "cargo-deny",
+    name = "cargo deny check",
+    language = "system",
+    entry = "cargo deny check advisories bans licenses sources",
+    files = "(Cargo\\.toml|Cargo\\.lock|deny\\.toml)$",
+    pass_filenames = false },
+
+  { id = "cargo-machete",
+    name = "cargo machete",
+    language = "system",
+    entry = "cargo machete",
+    files = "(Cargo\\.toml|Cargo\\.lock)$",
+    pass_filenames = false },
+
+  { id = "cargo-sort",
+    name = "cargo sort --grouped --check --check-format",
+    language = "system",
+    entry = "cargo sort --grouped --check --check-format",
+    files = "Cargo\\.toml$",
+    pass_filenames = false },
+
+  { id = "typos",
+    name = "typos",
+    language = "system",
+    entry = "typos",
+    files = "\\.(md|rs|toml|ya?ml)$|^(README|justfile)$",
+    pass_filenames = true },
+]
