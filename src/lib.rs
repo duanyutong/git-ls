@@ -1,5 +1,6 @@
 use anstyle::{Ansi256Color, Style};
 use clap::{Parser, ValueEnum};
+use gix::bstr::ByteSlice as _;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -21,6 +22,15 @@ pub enum GitLsError {
 
     #[error("git {args} failed: {detail}")]
     GitCommand { args: String, detail: String },
+
+    #[error("gix {context} failed: {detail}")]
+    Gix {
+        context: &'static str,
+        detail: String,
+    },
+
+    #[error("invalid git object id {oid}: {detail}")]
+    InvalidObjectId { oid: String, detail: String },
 
     #[error("unexpected git show output for {oid}")]
     UnexpectedGitShow { oid: String },
@@ -45,14 +55,14 @@ pub enum GitLsError {
 
 pub type Result<T> = std::result::Result<T, GitLsError>;
 
-trait Git {
+trait GitCommand {
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String>;
 }
 
 #[derive(Debug, Default)]
 struct ProcessGit;
 
-impl Git for ProcessGit {
+impl GitCommand for ProcessGit {
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
         let output = Command::new("git")
             .args(args)
@@ -73,6 +83,21 @@ impl Git for ProcessGit {
             .trim_end_matches('\n')
             .to_string())
     }
+}
+
+trait GitBackend {
+    fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
+    fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
+    fn cache_commit_metas(
+        &self,
+        oids: &[&str],
+        cache: &mut HashMap<String, CommitMeta>,
+    ) -> Result<()>;
+    fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>>;
+    fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)>;
+    fn main_branch_name(&self) -> Result<String>;
+    fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>>;
+    fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -129,6 +154,12 @@ enum Order {
     Oldest,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum Backend {
+    Gix,
+    Shell,
+}
+
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
 #[command(
     name = "git ls",
@@ -141,6 +172,9 @@ struct Args {
 
     #[arg(long)]
     hidden: bool,
+
+    #[arg(long, value_enum, default_value = "gix", value_name = "VALUE")]
+    backend: Backend,
 
     #[arg(long, value_enum, default_value = "newest", value_name = "VALUE")]
     order: Order,
@@ -190,7 +224,49 @@ impl Colours {
     }
 }
 
-fn query_revset<G: Git + ?Sized>(git: &G, revset: &str, hidden: bool) -> Result<Vec<String>> {
+impl<T: GitCommand + ?Sized> GitBackend for T {
+    fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
+        shell_query_revset(self, revset, hidden)
+    }
+
+    fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
+        shell_query_branch_names(self, revset, hidden)
+    }
+
+    fn cache_commit_metas(
+        &self,
+        oids: &[&str],
+        cache: &mut HashMap<String, CommitMeta>,
+    ) -> Result<()> {
+        shell_cache_commit_metas(self, oids, cache)
+    }
+
+    fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
+        shell_local_branches_by_oid(self)
+    }
+
+    fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)> {
+        shell_current_head_and_branch(self)
+    }
+
+    fn main_branch_name(&self) -> Result<String> {
+        shell_main_branch_name(self)
+    }
+
+    fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
+        shell_merge_base(self, main_oid, head_oid)
+    }
+
+    fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>> {
+        shell_ancestry_path(self, base_oid, head_oid)
+    }
+}
+
+fn shell_query_revset<G: GitCommand + ?Sized>(
+    git: &G,
+    revset: &str,
+    hidden: bool,
+) -> Result<Vec<String>> {
     let mut args = vec!["branchless", "query", "-r"];
     if hidden {
         args.push("--hidden");
@@ -199,7 +275,11 @@ fn query_revset<G: Git + ?Sized>(git: &G, revset: &str, hidden: bool) -> Result<
     Ok(lines(&git.run(&args, false)?))
 }
 
-fn query_branch_names<G: Git + ?Sized>(git: &G, revset: &str, hidden: bool) -> Result<Vec<String>> {
+fn shell_query_branch_names<G: GitCommand + ?Sized>(
+    git: &G,
+    revset: &str,
+    hidden: bool,
+) -> Result<Vec<String>> {
     let mut args = vec!["branchless", "query", "-b"];
     if hidden {
         args.push("--hidden");
@@ -217,7 +297,7 @@ fn lines(output: &str) -> Vec<String> {
         .collect()
 }
 
-fn get_commit_meta<G: Git + ?Sized>(
+fn get_commit_meta<G: GitBackend + ?Sized>(
     git: &G,
     oid: &str,
     cache: &mut HashMap<String, CommitMeta>,
@@ -226,7 +306,7 @@ fn get_commit_meta<G: Git + ?Sized>(
         return Ok(meta.clone());
     }
 
-    cache_commit_metas(git, &[oid], cache)?;
+    git.cache_commit_metas(&[oid], cache)?;
     cache
         .get(oid)
         .cloned()
@@ -235,7 +315,7 @@ fn get_commit_meta<G: Git + ?Sized>(
         })
 }
 
-fn cache_commit_metas<G: Git + ?Sized>(
+fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
     git: &G,
     oids: &[&str],
     cache: &mut HashMap<String, CommitMeta>,
@@ -273,13 +353,13 @@ fn cache_commit_metas<G: Git + ?Sized>(
     }
 
     for (alias, record) in missing.into_iter().zip(records) {
-        cache_commit_meta(alias, record, cache)?;
+        shell_cache_commit_meta(alias, record, cache)?;
     }
 
     Ok(())
 }
 
-fn cache_commit_meta(
+fn shell_cache_commit_meta(
     alias: &str,
     record: &str,
     cache: &mut HashMap<String, CommitMeta>,
@@ -310,7 +390,9 @@ fn cache_commit_meta(
     Ok(())
 }
 
-fn local_branches_by_oid<G: Git + ?Sized>(git: &G) -> Result<HashMap<String, Vec<String>>> {
+fn shell_local_branches_by_oid<G: GitCommand + ?Sized>(
+    git: &G,
+) -> Result<HashMap<String, Vec<String>>> {
     let output = git.run(
         &[
             "for-each-ref",
@@ -332,7 +414,9 @@ fn local_branches_by_oid<G: Git + ?Sized>(git: &G) -> Result<HashMap<String, Vec
     Ok(result)
 }
 
-fn current_head_and_branch<G: Git + ?Sized>(git: &G) -> Result<(Option<String>, Option<String>)> {
+fn shell_current_head_and_branch<G: GitCommand + ?Sized>(
+    git: &G,
+) -> Result<(Option<String>, Option<String>)> {
     let output = git.run(&["rev-parse", "HEAD", "--abbrev-ref", "HEAD"], true)?;
     let mut values = lines(&output).into_iter();
     let head = values.next();
@@ -340,7 +424,7 @@ fn current_head_and_branch<G: Git + ?Sized>(git: &G) -> Result<(Option<String>, 
     Ok((head, branch))
 }
 
-fn main_branch_name<G: Git + ?Sized>(git: &G) -> Result<String> {
+fn shell_main_branch_name<G: GitCommand + ?Sized>(git: &G) -> Result<String> {
     let output = git.run(&["config", "--get", "branchless.core.mainBranch"], true)?;
     Ok(non_empty(&output).unwrap_or_else(|| "main".to_string()))
 }
@@ -388,12 +472,16 @@ fn branch_points_by_oid(
     result
 }
 
-fn merge_base<G: Git + ?Sized>(git: &G, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
+fn shell_merge_base<G: GitCommand + ?Sized>(
+    git: &G,
+    main_oid: &str,
+    head_oid: &str,
+) -> Result<Option<String>> {
     let output = git.run(&["merge-base", main_oid, head_oid], true)?;
     Ok(non_empty(&output))
 }
 
-fn ancestry_path<G: Git + ?Sized>(
+fn shell_ancestry_path<G: GitCommand + ?Sized>(
     git: &G,
     base_oid: Option<&str>,
     head_oid: &str,
@@ -413,7 +501,222 @@ fn ancestry_path<G: Git + ?Sized>(
     Ok(lines(&output))
 }
 
-fn build_lane<G: Git + ?Sized>(
+#[derive(Debug)]
+struct GixBackend {
+    repo: gix::Repository,
+    command: ProcessGit,
+}
+
+impl GixBackend {
+    fn discover() -> Result<Self> {
+        Self::discover_from(".")
+    }
+
+    fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
+        let mut repo = gix::discover_with_environment_overrides(directory)
+            .map_err(|source| gix_error("discover repository", source))?;
+        repo.object_cache_size_if_unset(4 * 1024 * 1024);
+        Ok(Self {
+            repo,
+            command: ProcessGit,
+        })
+    }
+
+    fn object_id(oid: &str) -> Result<gix::ObjectId> {
+        oid.parse::<gix::ObjectId>()
+            .map_err(|source| GitLsError::InvalidObjectId {
+                oid: oid.to_string(),
+                detail: source.to_string(),
+            })
+    }
+
+    fn commit_meta(&self, alias: &str) -> Result<CommitMeta> {
+        let oid = Self::object_id(alias)?;
+        let commit = self
+            .repo
+            .find_commit(oid)
+            .map_err(|source| gix_error("find commit", source))?;
+        let full_oid = commit.id().detach();
+        let subject = commit
+            .message()
+            .map_err(|source| gix_error("read commit message", source))?
+            .summary()
+            .to_str_lossy()
+            .into_owned();
+        let timestamp = commit
+            .time()
+            .map_err(|source| gix_error("read commit timestamp", source))?
+            .seconds;
+        let short_oid = commit
+            .short_id()
+            .map_err(|source| gix_error("shorten commit id", source))?
+            .to_string();
+
+        Ok(CommitMeta {
+            oid: full_oid.to_string(),
+            short_oid,
+            subject,
+            timestamp,
+        })
+    }
+
+    fn is_descendant_of(
+        &self,
+        commit: gix::ObjectId,
+        ancestor: gix::ObjectId,
+        cache: &mut HashMap<gix::ObjectId, bool>,
+    ) -> Result<bool> {
+        if commit == ancestor {
+            return Ok(true);
+        }
+        if let Some(result) = cache.get(&commit) {
+            return Ok(*result);
+        }
+
+        let commit_object = self
+            .repo
+            .find_commit(commit)
+            .map_err(|source| gix_error("find ancestry commit", source))?;
+        for parent in commit_object.parent_ids() {
+            let parent = parent.detach();
+            if parent == ancestor || self.is_descendant_of(parent, ancestor, cache)? {
+                cache.insert(commit, true);
+                return Ok(true);
+            }
+        }
+
+        cache.insert(commit, false);
+        Ok(false)
+    }
+}
+
+impl GitBackend for GixBackend {
+    fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
+        shell_query_revset(&self.command, revset, hidden)
+    }
+
+    fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
+        shell_query_branch_names(&self.command, revset, hidden)
+    }
+
+    fn cache_commit_metas(
+        &self,
+        oids: &[&str],
+        cache: &mut HashMap<String, CommitMeta>,
+    ) -> Result<()> {
+        let mut seen = HashSet::new();
+        let missing: Vec<&str> = oids
+            .iter()
+            .copied()
+            .filter(|oid| !cache.contains_key(*oid) && seen.insert(*oid))
+            .collect();
+        for alias in missing {
+            let meta = self.commit_meta(alias)?;
+            if alias != meta.oid {
+                cache.insert(alias.to_string(), meta.clone());
+            }
+            cache.insert(meta.oid.clone(), meta);
+        }
+        Ok(())
+    }
+
+    fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut result: HashMap<String, Vec<String>> = HashMap::new();
+        for reference in self
+            .repo
+            .references()
+            .map_err(|source| gix_error("open references", source))?
+            .local_branches()
+            .map_err(|source| gix_error("iterate local branches", source))?
+        {
+            let reference = reference.map_err(|source| gix_error("read local branch", source))?;
+            let Some(id) = reference.try_id() else {
+                continue;
+            };
+            result
+                .entry(id.detach().to_string())
+                .or_default()
+                .push(reference.name().shorten().to_str_lossy().into_owned());
+        }
+        Ok(result)
+    }
+
+    fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)> {
+        let Ok(head) = self.repo.head_id() else {
+            return Ok((None, None));
+        };
+        let branch = self
+            .repo
+            .head_name()
+            .map_err(|source| gix_error("read HEAD name", source))?
+            .map(|name| name.shorten().to_str_lossy().into_owned());
+        Ok((Some(head.detach().to_string()), branch))
+    }
+
+    fn main_branch_name(&self) -> Result<String> {
+        Ok(self
+            .repo
+            .config_snapshot()
+            .string("branchless.core.mainBranch")
+            .map_or_else(
+                || "main".to_string(),
+                |value| value.to_str_lossy().into_owned(),
+            ))
+    }
+
+    fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
+        let main_oid = Self::object_id(main_oid)?;
+        let head_oid = Self::object_id(head_oid)?;
+        match self.repo.merge_base(main_oid, head_oid) {
+            Ok(base) => Ok(Some(base.detach().to_string())),
+            Err(gix::repository::merge_base::Error::NotFound { .. }) => Ok(None),
+            Err(source) => Err(gix_error("find merge base", source)),
+        }
+    }
+
+    fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>> {
+        let head_oid = Self::object_id(head_oid)?;
+        let mut walk =
+            self.repo
+                .rev_walk([head_oid])
+                .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                    gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+                ));
+        let base_oid = base_oid.map(Self::object_id).transpose()?;
+        if let Some(base_oid) = base_oid {
+            walk = walk.with_hidden([base_oid]);
+        }
+
+        let mut descendant_cache = HashMap::new();
+        let mut path = Vec::new();
+        for info in walk
+            .all()
+            .map_err(|source| gix_error("walk revisions", source))?
+        {
+            let oid = info
+                .map_err(|source| gix_error("read revision walk entry", source))?
+                .id;
+            let include = match base_oid {
+                Some(base) => self.is_descendant_of(oid, base, &mut descendant_cache)?,
+                None => true,
+            };
+            if include {
+                path.push(oid.to_string());
+            }
+        }
+        path.reverse();
+        Ok(path)
+    }
+}
+
+fn gix_error(context: &'static str, source: impl std::fmt::Display) -> GitLsError {
+    GitLsError::Gix {
+        context,
+        detail: source.to_string(),
+    }
+}
+
+fn build_lane<G: GitBackend + ?Sized>(
     git: &G,
     head_oid: &str,
     main_oid: &str,
@@ -422,8 +725,8 @@ fn build_lane<G: Git + ?Sized>(
     head: Option<&str>,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
-    let base_oid = merge_base(git, main_oid, head_oid)?;
-    let path = ancestry_path(git, base_oid.as_deref(), head_oid)?;
+    let base_oid = git.merge_base(main_oid, head_oid)?;
+    let path = git.ancestry_path(base_oid.as_deref(), head_oid)?;
     let mut branch_points: Vec<BranchPoint> = path
         .iter()
         .filter_map(|oid| points_by_oid.get(oid).cloned())
@@ -454,18 +757,18 @@ fn build_lane<G: Git + ?Sized>(
     }))
 }
 
-fn build_lanes<G: Git + ?Sized>(
+fn build_lanes<G: GitBackend + ?Sized>(
     git: &G,
     args: &Args,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
     let revset = branch_revset(&args.revset);
-    let branch_names = query_branch_names(git, &revset, args.hidden)?;
+    let branch_names = git.query_branch_names(&revset, args.hidden)?;
     if branch_names.is_empty() {
         return Ok(BuiltLanes::Empty);
     }
 
-    let main_oids = query_revset(git, "main()", args.hidden)?;
+    let main_oids = git.query_revset("main()", args.hidden)?;
     if main_oids.len() != 1 {
         return Err(GitLsError::AmbiguousMainRevset {
             count: main_oids.len(),
@@ -473,15 +776,15 @@ fn build_lanes<G: Git + ?Sized>(
     }
     let main_oid = main_oids[0].clone();
 
-    let branch_oid_map = local_branches_by_oid(git)?;
+    let branch_oid_map = git.local_branches_by_oid()?;
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let heads_revset = format!("heads({revset})");
-    let head_oids = query_revset(git, &heads_revset, args.hidden)?;
-    let (head, current_branch) = current_head_and_branch(git)?;
-    let main_name = main_branch_name(git)?;
+    let head_oids = git.query_revset(&heads_revset, args.hidden)?;
+    let (head, current_branch) = git.current_head_and_branch()?;
+    let main_name = git.main_branch_name()?;
 
     let head_refs: Vec<&str> = head_oids.iter().map(String::as_str).collect();
-    cache_commit_metas(git, &head_refs, meta_cache)?;
+    git.cache_commit_metas(&head_refs, meta_cache)?;
 
     let mut lanes = Vec::new();
     for head_oid in head_oids {
@@ -598,7 +901,7 @@ fn row_prefix(
     format!(" {}", slots.join(" "))
 }
 
-fn base_label<G: Git + ?Sized>(
+fn base_label<G: GitBackend + ?Sized>(
     git: &G,
     base_oid: Option<&str>,
     main_oid: &str,
@@ -646,7 +949,7 @@ fn trunk_prefix(lane_count: usize, colour_offset: usize, colours: &Colours) -> S
     format!(" {}", parts.join(""))
 }
 
-struct RenderContext<'a, G: Git + ?Sized> {
+struct RenderContext<'a, G: GitBackend + ?Sized> {
     git: &'a G,
     main_oid: &'a str,
     main_name: &'a str,
@@ -657,7 +960,7 @@ struct RenderContext<'a, G: Git + ?Sized> {
     meta_cache: &'a mut HashMap<String, CommitMeta>,
 }
 
-fn render_group<G: Git + ?Sized>(
+fn render_group<G: GitBackend + ?Sized>(
     lanes: &[Lane],
     base_oid: Option<&str>,
     colour_offset: usize,
@@ -711,14 +1014,11 @@ where
     Args::try_parse_from(cli_args).map_err(Into::into)
 }
 
-fn run<I, S, W, G>(args: I, git: &G, stdout: &mut W) -> Result<()>
+fn execute<W, G>(args: &Args, git: &G, stdout: &mut W) -> Result<()>
 where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
     W: Write,
-    G: Git + ?Sized,
+    G: GitBackend + ?Sized,
 {
-    let args = parse_args_from(args)?;
     let colours = Colours::new(args.colour_mode);
 
     let mut meta_cache = HashMap::new();
@@ -726,7 +1026,7 @@ where
         lanes,
         main_oid,
         repository,
-    } = build_lanes(git, &args, &mut meta_cache)?
+    } = build_lanes(git, args, &mut meta_cache)?
     else {
         writeln!(stdout, "No draft branches matched.")?;
         return Ok(());
@@ -761,10 +1061,31 @@ where
     Ok(())
 }
 
+#[cfg(test)]
+fn run<I, S, W, G>(args: I, git: &G, stdout: &mut W) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    W: Write,
+    G: GitBackend + ?Sized,
+{
+    let args = parse_args_from(args)?;
+    execute(&args, git, stdout)
+}
+
 pub fn run_from_env() -> Result<()> {
-    let git = ProcessGit;
     let mut stdout = io::stdout().lock();
-    run(env::args().skip(1), &git, &mut stdout)
+    let args = parse_args_from(env::args().skip(1))?;
+    match args.backend {
+        Backend::Gix => {
+            let git = GixBackend::discover()?;
+            execute(&args, &git, &mut stdout)
+        }
+        Backend::Shell => {
+            let git = ProcessGit;
+            execute(&args, &git, &mut stdout)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -772,6 +1093,9 @@ mod tests {
     use super::*;
     use clap::error::ErrorKind;
     use std::cell::RefCell;
+    use std::path::Path;
+    use std::process::Command as TestCommand;
+    use tempfile::TempDir;
 
     #[derive(Default)]
     struct MockGit {
@@ -793,7 +1117,7 @@ mod tests {
         }
     }
 
-    impl Git for MockGit {
+    impl GitCommand for MockGit {
         fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
             let key: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
             self.calls.borrow_mut().push(key.clone());
@@ -834,6 +1158,54 @@ mod tests {
         }
     }
 
+    fn git(repo: &Path, args: &[&str]) -> String {
+        let output = TestCommand::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim_end_matches('\n')
+            .to_string()
+    }
+
+    fn commit_file(repo: &Path, path: &str, content: &str, message: &str) -> String {
+        std::fs::write(repo.join(path), content).unwrap();
+        git(repo, &["add", path]);
+        git(repo, &["commit", "-m", message]);
+        git(repo, &["rev-parse", "HEAD"])
+    }
+
+    fn parity_repo() -> (TempDir, String, String, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        git(repo, &["init", "--initial-branch", "main"]);
+        git(repo, &["config", "user.name", "git-ls tests"]);
+        git(repo, &["config", "user.email", "git-ls@example.invalid"]);
+
+        commit_file(repo, "root.txt", "root\n", "root");
+        git(repo, &["checkout", "-b", "side"]);
+        let side_oid = commit_file(repo, "side.txt", "side\n", "side before base");
+
+        git(repo, &["checkout", "main"]);
+        let base_oid = commit_file(repo, "base.txt", "base\n", "base");
+        git(repo, &["checkout", "-b", "topic"]);
+        commit_file(repo, "topic.txt", "topic\n", "topic");
+        git(repo, &["merge", "--no-ff", "side", "-m", "merge side"]);
+        let head_oid = git(repo, &["rev-parse", "HEAD"]);
+
+        (temp, base_oid, head_oid, side_oid)
+    }
+
     #[test]
     fn parses_default_arguments() {
         assert_eq!(
@@ -841,6 +1213,7 @@ mod tests {
             Args {
                 revset: "draft()".to_string(),
                 hidden: false,
+                backend: Backend::Gix,
                 order: Order::Newest,
                 colour_mode: ColourMode::Auto,
             }
@@ -852,6 +1225,7 @@ mod tests {
         assert_eq!(
             parse_args_from([
                 "--hidden",
+                "--backend=shell",
                 "--order=oldest",
                 "--colour",
                 "never",
@@ -861,6 +1235,7 @@ mod tests {
             Args {
                 revset: "draft() & branches(feature/)".to_string(),
                 hidden: true,
+                backend: Backend::Shell,
                 order: Order::Oldest,
                 colour_mode: ColourMode::Never,
             }
@@ -874,6 +1249,7 @@ mod tests {
             Args {
                 revset: "-synthetic-revset".to_string(),
                 hidden: false,
+                backend: Backend::Gix,
                 order: Order::Newest,
                 colour_mode: ColourMode::Auto,
             }
@@ -950,6 +1326,57 @@ mod tests {
                 names: vec!["alpha".to_string(), "zeta".to_string()],
             }
         );
+    }
+
+    #[test]
+    fn gix_backend_matches_git_ancestry_path() {
+        let (temp, base_oid, head_oid, side_oid) = parity_repo();
+        let repo = temp.path();
+        let backend = GixBackend::discover_from(repo).unwrap();
+        let shell_path = lines(&git(
+            repo,
+            &[
+                "rev-list",
+                "--reverse",
+                "--ancestry-path",
+                &format!("{base_oid}..{head_oid}"),
+            ],
+        ));
+
+        assert_eq!(
+            backend.merge_base(&base_oid, &head_oid).unwrap(),
+            Some(base_oid.clone())
+        );
+        assert_eq!(
+            backend.ancestry_path(Some(&base_oid), &head_oid).unwrap(),
+            shell_path
+        );
+        assert!(!shell_path.contains(&side_oid));
+    }
+
+    #[test]
+    fn gix_backend_reads_repository_snapshot_and_commit_metadata() {
+        let (temp, _base_oid, head_oid, _side_oid) = parity_repo();
+        let repo = temp.path();
+        git(repo, &["config", "branchless.core.mainBranch", "trunk"]);
+
+        let backend = GixBackend::discover_from(repo).unwrap();
+        let (head, current_branch) = backend.current_head_and_branch().unwrap();
+        let branches = backend.local_branches_by_oid().unwrap();
+        let mut cache = HashMap::new();
+        backend
+            .cache_commit_metas(&[&head_oid], &mut cache)
+            .unwrap();
+
+        assert_eq!(head, Some(head_oid.clone()));
+        assert_eq!(current_branch, Some("topic".to_string()));
+        assert!(
+            branches
+                .get(&head_oid)
+                .is_some_and(|names| names.contains(&"topic".to_string()))
+        );
+        assert_eq!(backend.main_branch_name().unwrap(), "trunk");
+        assert_eq!(cache.get(&head_oid).unwrap().subject, "merge side");
     }
 
     #[test]
@@ -1130,6 +1557,7 @@ mod tests {
         let args = Args {
             revset: "draft()".to_string(),
             hidden: false,
+            backend: Backend::Gix,
             order: Order::Newest,
             colour_mode: ColourMode::Never,
         };

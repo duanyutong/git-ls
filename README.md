@@ -20,6 +20,7 @@ Cargo builds the local crate with the release profile and installs the binary in
 
 ```sh
 git ls
+git ls --backend shell
 git ls --color never
 git ls --order oldest
 git ls 'draft() & branches(feature/)'
@@ -27,6 +28,7 @@ git ls 'draft() & branches(feature/)'
 
 ```text
 --hidden          include hidden commits when evaluating revsets
+--backend VALUE   Git plumbing backend: gix or shell
 --order VALUE     order stack lanes by head commit time: newest or oldest
 --color VALUE     colour mode: auto, always, or never
 ```
