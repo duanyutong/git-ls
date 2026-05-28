@@ -14,9 +14,9 @@ hooks = [
     pass_filenames = false },
 
   { id = "cargo-clippy",
-    name = "cargo clippy --all-targets --all-features --locked -- -D warnings",
+    name = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
     language = "system",
-    entry = "cargo clippy --all-targets --all-features --locked -- -D warnings",
+    entry = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
     files = "(\\.rs|Cargo\\.toml|Cargo\\.lock|clippy\\.toml)$",
     pass_filenames = false },
 
@@ -35,10 +35,26 @@ hooks = [
     pass_filenames = false },
 
   { id = "cargo-sort",
-    name = "cargo sort --grouped --check --check-format",
+    name = "cargo sort --workspace --grouped --check --check-format",
     language = "system",
-    entry = "cargo sort --grouped --check --check-format",
+    entry = "cargo sort --workspace --grouped --check --check-format",
     files = "Cargo\\.toml$",
+    pass_filenames = false },
+
+  { id = "version-commit-msg",
+    name = "version policy for commit message",
+    language = "system",
+    entry = "cargo run --locked -p xtask -- version commit-msg",
+    stages = ["commit-msg"],
+    always_run = true,
+    pass_filenames = true },
+
+  { id = "version-pre-push",
+    name = "version policy for pushed commits",
+    language = "system",
+    entry = "cargo run --locked -p xtask -- version pre-push",
+    stages = ["pre-push"],
+    always_run = true,
     pass_filenames = false },
 
   { id = "typos",

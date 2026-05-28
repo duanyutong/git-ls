@@ -40,6 +40,7 @@ git ls 'draft() & branches(feature/)'
 
 ```sh
 just install-tools
+just install-hooks
 just check
 ```
 

@@ -1,6 +1,6 @@
 [package]
 name = "git-ls"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Graphite-style stack lane renderer for git-branchless"
@@ -9,6 +9,10 @@ repository = "https://github.com/duanyutong/git-ls"
 readme = "README.md"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["branchless", "cli", "git", "stack"]
+
+[workspace]
+members = [".", "xtask"]
+resolver = "3"
 
 [dependencies]
 anstyle = "1.0.14"
