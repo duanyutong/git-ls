@@ -40,4 +40,5 @@ install-tools:
         cargo-sort@2.1.4 \
         just@1.51.0 \
         prek@0.4.3 \
+        release-plz@0.3.158 \
         typos-cli@1.46.3
