@@ -147,7 +147,9 @@ struct RepositorySnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BuiltLanes {
-    Empty,
+    Empty {
+        main_name: String,
+    },
     Populated {
         lanes: Vec<Lane>,
         main_oid: String,
@@ -779,7 +781,9 @@ fn build_lanes<G: GitBackend + ?Sized>(
     let revset = branch_revset(&args.revset);
     let branch_names = git.query_branch_names(&revset, args.hidden)?;
     if branch_names.is_empty() {
-        return Ok(BuiltLanes::Empty);
+        return Ok(BuiltLanes::Empty {
+            main_name: git.main_branch_name()?,
+        });
     }
 
     let main_oids = git.query_revset("main()", args.hidden)?;
@@ -912,7 +916,13 @@ fn row_prefix(
             Ordering::Greater => slots.push(" ".to_string()),
         }
     }
-    format!(" {}", slots.join(" "))
+    let visible_width = lane_count * 2 - 1;
+    let padding = " ".repeat(graph_width(lane_count) - visible_width);
+    format!("{}{padding}", slots.join(" "))
+}
+
+fn graph_width(lane_count: usize) -> usize {
+    lane_count.max(1) * 2 + 1
 }
 
 fn base_label<G: GitBackend + ?Sized>(
@@ -947,20 +957,17 @@ fn base_label<G: GitBackend + ?Sized>(
 }
 
 fn trunk_prefix(lane_count: usize, colour_offset: usize, colours: &Colours) -> String {
-    if lane_count <= 1 {
-        return format!(" {}", colours.dim("◯"));
+    if lane_count == 0 {
+        return colours.dim("└─◯");
     }
 
-    let mut parts = vec![colours.dim("◯")];
-    for index in 1..lane_count {
-        let connector = if index == lane_count - 1 {
-            "─┘"
-        } else {
-            "─┴"
-        };
+    let mut parts = Vec::new();
+    for index in 0..lane_count {
+        let connector = if index == 0 { "└─" } else { "┴─" };
         parts.push(colours.stack(colour_offset + index, connector));
     }
-    format!(" {}", parts.join(""))
+    parts.push(colours.dim("◯"));
+    parts.join("")
 }
 
 struct RenderContext<'a, G: GitBackend + ?Sized> {
@@ -1036,14 +1043,21 @@ where
     let colours = Colours::new(args.colour_mode);
 
     let mut meta_cache = HashMap::new();
-    let BuiltLanes::Populated {
-        lanes,
-        main_oid,
-        repository,
-    } = build_lanes(git, args, &mut meta_cache)?
-    else {
-        writeln!(stdout, "No draft branches matched.")?;
-        return Ok(());
+    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
+        BuiltLanes::Empty { main_name } => {
+            writeln!(
+                stdout,
+                "{}  {}",
+                trunk_prefix(0, 0, &colours),
+                colours.dim(&main_name)
+            )?;
+            return Ok(());
+        }
+        BuiltLanes::Populated {
+            lanes,
+            main_oid,
+            repository,
+        } => (lanes, main_oid, repository),
     };
 
     let lanes = ordered_lanes(lanes, args.order);
@@ -1466,10 +1480,46 @@ mod tests {
 
         let output = render_group(&lanes, Some("main"), 0, &mut ctx).unwrap();
 
-        assert_eq!(output.len(), 3);
-        assert!(output[0].contains("feature/one"));
-        assert!(output[1].contains("ᐅ feature/two"));
-        assert_eq!(output[2], " ◯─┘  main");
+        assert_eq!(
+            output,
+            vec![
+                "◯      feature/one".to_string(),
+                "│ ◉    ᐅ feature/two".to_string(),
+                "└─┴─◯  main".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_single_lane_with_visible_connector() {
+        let git = MockGit::default();
+        let colours = Colours { enabled: false };
+        let branches_by_oid = HashMap::new();
+        let mut meta_cache = HashMap::new();
+        let lanes = vec![Lane {
+            head_oid: "a".to_string(),
+            base_oid: Some("main".to_string()),
+            branch_points: vec![point("a", &["feature/one"])],
+            head_timestamp: 1,
+            contains_current: true,
+        }];
+        let mut ctx = RenderContext {
+            git: &git,
+            main_oid: "main",
+            main_name: "main",
+            branches_by_oid: &branches_by_oid,
+            current_branch: Some("feature/one"),
+            head: Some("a"),
+            colours: &colours,
+            meta_cache: &mut meta_cache,
+        };
+
+        let output = render_group(&lanes, Some("main"), 0, &mut ctx).unwrap();
+
+        assert_eq!(
+            output,
+            vec!["◉    ᐅ feature/one".to_string(), "└─◯  main".to_string()]
+        );
     }
 
     #[test]
@@ -1618,19 +1668,16 @@ mod tests {
     }
 
     #[test]
-    fn run_reports_empty_selection() {
+    fn run_renders_empty_selection_as_trunk() {
         let revset = "((draft()) & branches()) - public()";
         let git = MockGit::default()
-            .with(&["branchless", "query", "-r", "main()"], "main-oid")
-            .with(&["branchless", "query", "-b", revset], "");
+            .with(&["branchless", "query", "-b", revset], "")
+            .with(&["config", "--get", "branchless.core.mainBranch"], "");
         let mut output = Vec::new();
 
         run(["--color", "never"], &git, &mut output).unwrap();
 
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            "No draft branches matched.\n"
-        );
+        assert_eq!(String::from_utf8(output).unwrap(), "└─◯  main\n");
         assert!(
             git.calls()
                 .iter()
@@ -1643,12 +1690,19 @@ mod tests {
         );
         assert_eq!(
             git.calls(),
-            vec![vec![
-                "branchless".to_string(),
-                "query".to_string(),
-                "-b".to_string(),
-                revset.to_string()
-            ]]
+            vec![
+                vec![
+                    "branchless".to_string(),
+                    "query".to_string(),
+                    "-b".to_string(),
+                    revset.to_string()
+                ],
+                vec![
+                    "config".to_string(),
+                    "--get".to_string(),
+                    "branchless.core.mainBranch".to_string()
+                ]
+            ]
         );
     }
 }
