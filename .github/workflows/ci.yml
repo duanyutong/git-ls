@@ -50,4 +50,5 @@ jobs:
 
       - name: Verify pushed versions
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: cargo run --locked -p xtask -- version verify-range "${{ github.event.before }}" "${{ github.sha }}"
+        # The all-zero object ID asks xtask to verify from the latest reachable v* tag.
+        run: cargo run --locked -p xtask -- version verify-range "0000000000000000000000000000000000000000" "${{ github.sha }}"
