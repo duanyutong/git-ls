@@ -17,6 +17,10 @@ typecheck:
 test:
     cargo test --workspace --all-targets --all-features --locked
 
+# Generate a line-coverage summary and enforce the current unit-test baseline.
+coverage:
+    cargo llvm-cov --workspace --all-targets --all-features --locked --summary-only --fail-under-lines 85
+
 # Build the optimised binary.
 build-release:
     cargo build --release --locked --package git-ls
@@ -47,10 +51,11 @@ setup: install-tools install-hooks
 install-hooks:
     prek install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 
-# Install the current development tools used by `just check`.
+# Install the current development tools used by validation recipes.
 install-tools:
     cargo binstall --no-confirm \
         cargo-deny@0.19.8 \
+        cargo-llvm-cov@0.8.7 \
         cargo-machete@0.9.2 \
         cargo-sort@2.1.4 \
         just@1.51.0 \
