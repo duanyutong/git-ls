@@ -344,10 +344,40 @@ active work queue.
 2. **Compiled-binary end-to-end testing remains deferred.**
    Process-level tests that execute the compiled `git-ls` binary with a fake
    `git` executable on `PATH` remain out of scope. Unit tests with explicit
-   mock backends and mock command data remain preferred; temporary repositories
-   should be retained only where real repository semantics are essential.
+   mock backends and mock command data remain preferred. Temporary repositories
+   should be retained only where real repository semantics are essential. The
+   final coverage gate should therefore define an explicit unit-testable scope
+   and should not require coverage of compiled-binary entry points or
+   process-boundary adapters merely to satisfy a numerical target.
 
 ## Active Development Plan
 
-No active refactor or coverage PR remains in this sequence. Further work should
-begin from a fresh audit against the then-current codebase and coverage report.
+1. **PR21: `test(coverage): define unit coverage boundary` (approximately
+   150-300 lines).**
+   Establish the precise files and behaviours that belong to the final unit
+   coverage target. Compiled-binary execution, fake-`git` PATH tests, and
+   process-boundary adapters should remain outside the strict unit gate unless
+   they are refactored behind ordinary injectable interfaces.
+2. **PR22: `refactor(cli): split parsing and runtime configuration`
+   (approximately 500-800 lines).**
+   Split the remaining large CLI module by concern, preserving behaviour while
+   separating argument parsing, configuration loading, runtime defaults, and
+   effective option construction. Move or adjust existing CLI unit tests as
+   needed, but avoid expanding behavioural scope beyond coverage-neutral
+   refactoring.
+3. **PR23: `refactor(render-tests): organise render unit tests by concern`
+   (approximately 300-600 lines).**
+   Split the large render unit-test file into concern-specific child modules
+   while keeping the tests inside the `render` module tree. In Rust, small unit
+   suites conventionally live in an inline `#[cfg(test)] mod tests`; larger
+   suites may use `#[cfg(test)] mod tests;` plus `tests.rs`, and that file may
+   in turn declare child modules such as `tests::metadata`, `tests::orphan`, or
+   `tests::trunk`. Top-level `tests/` files are integration tests and should be
+   reserved for public API or binary-surface behaviour, not private rendering
+   helpers.
+4. **PR24: `test(coverage): raise unit coverage to final target`
+   (approximately 800-1,500 lines).**
+   Add the remaining unit coverage within the boundary established by PR21,
+   with coverage ownership following the production module boundaries. This PR
+   should be last so that agents are not adding tests against modules that are
+   still being moved.
