@@ -169,7 +169,7 @@ fn lines(output: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn get_commit_meta<G: GitBackend + ?Sized>(
+pub(crate) fn get_commit_meta<G: CommitMetadataBackend + ?Sized>(
     git: &G,
     oid: &str,
     cache: &mut HashMap<String, CommitMeta>,
