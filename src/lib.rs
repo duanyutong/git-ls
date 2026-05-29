@@ -1,6 +1,8 @@
 use anstyle::{Ansi256Color, Style};
 use clap::{ArgAction, Parser, ValueEnum};
+use console::{Term, truncate_str};
 use gix::bstr::ByteSlice as _;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -34,6 +36,7 @@ const DISPLAY_OID_LEN: usize = 7;
 const ANSI_METADATA_COUNT: u8 = 255;
 const ANSI_MUTED_TEXT: u8 = 251;
 const ANSI_ORPHANED_LABEL: u8 = 255;
+const TRUNCATION_TAIL: &str = "...";
 const DEFAULT_VERBOSITY: Verbosity = Verbosity::Medium;
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -1937,6 +1940,48 @@ fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<Stri
     output
 }
 
+fn truncation_tail(width: usize) -> &'static str {
+    match width {
+        0 => "",
+        1 => ".",
+        2 => "..",
+        _ => TRUNCATION_TAIL,
+    }
+}
+
+fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<'_, str> {
+    let Some(width) = terminal_width else {
+        return Cow::Borrowed(line);
+    };
+    if width == 0 {
+        return Cow::Borrowed("");
+    }
+    truncate_str(line, width, truncation_tail(width))
+}
+
+fn write_rendered_line<W: Write>(
+    stdout: &mut W,
+    line: &str,
+    terminal_width: Option<usize>,
+) -> Result<()> {
+    writeln!(
+        stdout,
+        "{}",
+        fit_line_to_terminal_width(line, terminal_width)
+    )?;
+    Ok(())
+}
+
+fn terminal_output_width() -> Option<usize> {
+    let terminal = Term::stdout();
+    if !terminal.is_term() {
+        return None;
+    }
+    terminal
+        .size_checked()
+        .map(|(_, columns)| usize::from(columns))
+}
+
 fn parse_args_from<I, S>(args: I) -> Result<Args>
 where
     I: IntoIterator<Item = S>,
@@ -1947,7 +1992,12 @@ where
     Args::try_parse_from(cli_args).map_err(Into::into)
 }
 
-fn execute<W, G>(args: &EffectiveArgs, git: &G, stdout: &mut W) -> Result<()>
+fn execute<W, G>(
+    args: &EffectiveArgs,
+    git: &G,
+    stdout: &mut W,
+    terminal_width: Option<usize>,
+) -> Result<()>
 where
     W: Write,
     G: GitBackend + ?Sized,
@@ -1978,9 +2028,9 @@ where
                 metadata_widths,
                 colours: &colours,
             };
-            writeln!(stdout, "{}", render_top_spacer(&colours, false))?;
-            writeln!(stdout, "{}", render_main_tip(&ctx))?;
-            writeln!(stdout, "{}", render_omitted_main_past(&colours))?;
+            write_rendered_line(stdout, &render_top_spacer(&colours, false), terminal_width)?;
+            write_rendered_line(stdout, &render_main_tip(&ctx), terminal_width)?;
+            write_rendered_line(stdout, &render_omitted_main_past(&colours), terminal_width)?;
             return Ok(());
         }
         BuiltLanes::Populated {
@@ -2013,7 +2063,7 @@ where
     };
 
     for line in render_lane_groups(&groups, &ctx) {
-        writeln!(stdout, "{line}")?;
+        write_rendered_line(stdout, &line, terminal_width)?;
     }
 
     Ok(())
@@ -2030,11 +2080,12 @@ where
     let args = parse_args_from(args)?;
     let config = read_git_ls_config(git)?;
     let args = args.resolve(&config);
-    execute(&args, git, stdout)
+    execute(&args, git, stdout, None)
 }
 
 pub fn run_from_env() -> Result<()> {
     let mut stdout = io::stdout().lock();
+    let terminal_width = terminal_output_width();
     let args = parse_args_from(env::args().skip(1))?;
     let config_git = ProcessGit;
     let config = read_git_ls_config(&config_git)?;
@@ -2042,11 +2093,11 @@ pub fn run_from_env() -> Result<()> {
     match args.backend {
         Backend::Gix => {
             let git = GixBackend::discover()?;
-            execute(&args, &git, &mut stdout)
+            execute(&args, &git, &mut stdout, terminal_width)
         }
         Backend::Shell => {
             let git = ProcessGit;
-            execute(&args, &git, &mut stdout)
+            execute(&args, &git, &mut stdout, terminal_width)
         }
     }
 }
@@ -3150,6 +3201,46 @@ mod tests {
                 "  ◇─────┘ chore: this is an old commit in main history".to_string(),
                 "  ⁝".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn fits_plain_rows_to_terminal_width() {
+        let line = "  ◯ feature/very-long-branch-name ci(package): publish generated api package";
+
+        let fitted = fit_line_to_terminal_width(line, Some(24));
+
+        assert_ne!(fitted.as_ref(), line);
+        assert!(fitted.ends_with(TRUNCATION_TAIL));
+        assert!(console::measure_text_width(fitted.as_ref()) <= 24);
+    }
+
+    #[test]
+    fn fits_coloured_rows_without_counting_ansi_sequences() {
+        let colours = test_colours(true);
+        let line = format!(
+            "  {} {}",
+            colours.stack(0, "feature/very-long-branch-name"),
+            colours.commit_title("ci(package): publish generated api package")
+        );
+
+        let fitted = fit_line_to_terminal_width(&line, Some(24));
+        let visible = console::strip_ansi_codes(fitted.as_ref());
+
+        assert_ne!(fitted.as_ref(), line);
+        assert!(fitted.contains("\x1b["));
+        assert!(visible.ends_with(TRUNCATION_TAIL));
+        assert!(console::measure_text_width(fitted.as_ref()) <= 24);
+    }
+
+    #[test]
+    fn fits_rows_to_tiny_terminal_widths() {
+        assert_eq!(fit_line_to_terminal_width("abcdef", Some(0)).as_ref(), "");
+        assert_eq!(fit_line_to_terminal_width("abcdef", Some(1)).as_ref(), ".");
+        assert_eq!(fit_line_to_terminal_width("abcdef", Some(2)).as_ref(), "..");
+        assert_eq!(
+            fit_line_to_terminal_width("abcdef", None).as_ref(),
+            "abcdef"
         );
     }
 
