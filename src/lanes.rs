@@ -139,9 +139,7 @@ pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
     let revset = branch_revset(&args.revset);
     let main_oids = git.query_revset("main()", args.hidden)?;
     if main_oids.len() != 1 {
-        return Err(GitLsError::AmbiguousMainRevset {
-            count: main_oids.len(),
-        });
+        return Err(GitLsError::ambiguous_main_revset(main_oids.len()));
     }
     let main_oid = main_oids[0].clone();
 

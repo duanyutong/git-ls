@@ -268,11 +268,7 @@ fn git_config_value<G: GitCommand + ?Sized>(git: &G, key: ConfigKey) -> Result<O
 }
 
 fn invalid_git_config(key: ConfigKey, value: &str) -> GitLsError {
-    GitLsError::InvalidGitConfig {
-        key: key.name(),
-        value: value.to_string(),
-        expected: key.expected(),
-    }
+    GitLsError::invalid_git_config(key.name(), value, key.expected())
 }
 
 fn parse_backend_config(key: ConfigKey, value: &str) -> Result<Backend> {

@@ -24,10 +24,7 @@ impl GitCommand for ProcessGit {
             let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let fallback = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let detail = if detail.is_empty() { fallback } else { detail };
-            return Err(GitLsError::GitCommand {
-                args: args.join(" "),
-                detail,
-            });
+            return Err(GitLsError::git_command(args.join(" "), detail));
         }
 
         Ok(String::from_utf8_lossy(&output.stdout)
@@ -137,9 +134,7 @@ pub(crate) fn get_commit_meta<G: GitBackend + ?Sized>(
     cache
         .get(oid)
         .cloned()
-        .ok_or_else(|| GitLsError::UnexpectedGitShow {
-            oid: oid.to_string(),
-        })
+        .ok_or_else(|| GitLsError::unexpected_git_show(oid))
 }
 
 fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
@@ -174,9 +169,7 @@ fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
         .collect();
 
     if records.len() != missing.len() {
-        return Err(GitLsError::UnexpectedGitShow {
-            oid: missing.join(", "),
-        });
+        return Err(GitLsError::unexpected_git_show(missing.join(", ")));
     }
 
     for (alias, record) in missing.into_iter().zip(records) {
@@ -193,9 +186,7 @@ fn shell_cache_commit_meta(
 ) -> Result<()> {
     let parts: Vec<&str> = record.splitn(3, '\0').collect();
     if parts.len() != 3 {
-        return Err(GitLsError::UnexpectedGitShow {
-            oid: alias.to_string(),
-        });
+        return Err(GitLsError::unexpected_git_show(alias));
     }
 
     let meta = CommitMeta {
@@ -203,10 +194,7 @@ fn shell_cache_commit_meta(
         short_oid: display_short_oid(parts[0]),
         timestamp: parts[1]
             .parse()
-            .map_err(|source| GitLsError::InvalidCommitTimestamp {
-                oid: alias.to_string(),
-                source,
-            })?,
+            .map_err(|source| GitLsError::invalid_commit_timestamp(alias, source))?,
         subject: parts[2].to_string(),
     };
 
@@ -306,7 +294,7 @@ impl GixBackend {
 
     fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
         let mut repo = gix::discover_with_environment_overrides(directory)
-            .map_err(|source| gix_error("discover repository", source))?;
+            .map_err(|source| GitLsError::gix("discover repository", source))?;
         repo.object_cache_size_if_unset(4 * 1024 * 1024);
         Ok(Self {
             repo,
@@ -316,10 +304,7 @@ impl GixBackend {
 
     fn object_id(oid: &str) -> Result<gix::ObjectId> {
         oid.parse::<gix::ObjectId>()
-            .map_err(|source| GitLsError::InvalidObjectId {
-                oid: oid.to_string(),
-                detail: source.to_string(),
-            })
+            .map_err(|source| GitLsError::invalid_object_id(oid, source))
     }
 
     fn commit_meta(&self, alias: &str) -> Result<CommitMeta> {
@@ -327,17 +312,17 @@ impl GixBackend {
         let commit = self
             .repo
             .find_commit(oid)
-            .map_err(|source| gix_error("find commit", source))?;
+            .map_err(|source| GitLsError::gix("find commit", source))?;
         let full_oid = commit.id().detach().to_string();
         let subject = commit
             .message()
-            .map_err(|source| gix_error("read commit message", source))?
+            .map_err(|source| GitLsError::gix("read commit message", source))?
             .summary()
             .to_str_lossy()
             .into_owned();
         let timestamp = commit
             .time()
-            .map_err(|source| gix_error("read commit timestamp", source))?
+            .map_err(|source| GitLsError::gix("read commit timestamp", source))?
             .seconds;
         let short_oid = display_short_oid(&full_oid);
 
@@ -365,7 +350,7 @@ impl GixBackend {
         let commit_object = self
             .repo
             .find_commit(commit)
-            .map_err(|source| gix_error("find ancestry commit", source))?;
+            .map_err(|source| GitLsError::gix("find ancestry commit", source))?;
         for parent in commit_object.parent_ids() {
             let parent = parent.detach();
             if parent == ancestor || self.is_descendant_of(parent, ancestor, cache)? {
@@ -414,11 +399,12 @@ impl GitBackend for GixBackend {
         for reference in self
             .repo
             .references()
-            .map_err(|source| gix_error("open references", source))?
+            .map_err(|source| GitLsError::gix("open references", source))?
             .local_branches()
-            .map_err(|source| gix_error("iterate local branches", source))?
+            .map_err(|source| GitLsError::gix("iterate local branches", source))?
         {
-            let reference = reference.map_err(|source| gix_error("read local branch", source))?;
+            let reference =
+                reference.map_err(|source| GitLsError::gix("read local branch", source))?;
             let Some(id) = reference.try_id() else {
                 continue;
             };
@@ -437,7 +423,7 @@ impl GitBackend for GixBackend {
         let branch = self
             .repo
             .head_name()
-            .map_err(|source| gix_error("read HEAD name", source))?
+            .map_err(|source| GitLsError::gix("read HEAD name", source))?
             .map(|name| name.shorten().to_str_lossy().into_owned());
         Ok((Some(head.detach().to_string()), branch))
     }
@@ -459,7 +445,7 @@ impl GitBackend for GixBackend {
         match self.repo.merge_base(main_oid, head_oid) {
             Ok(base) => Ok(Some(base.detach().to_string())),
             Err(gix::repository::merge_base::Error::NotFound { .. }) => Ok(None),
-            Err(source) => Err(gix_error("find merge base", source)),
+            Err(source) => Err(GitLsError::gix("find merge base", source)),
         }
     }
 
@@ -480,10 +466,10 @@ impl GitBackend for GixBackend {
         let mut path = Vec::new();
         for info in walk
             .all()
-            .map_err(|source| gix_error("walk revisions", source))?
+            .map_err(|source| GitLsError::gix("walk revisions", source))?
         {
             let oid = info
-                .map_err(|source| gix_error("read revision walk entry", source))?
+                .map_err(|source| GitLsError::gix("read revision walk entry", source))?
                 .id;
             let include = match base_oid {
                 Some(base) => self.is_descendant_of(oid, base, &mut descendant_cache)?,
@@ -495,13 +481,6 @@ impl GitBackend for GixBackend {
         }
         path.reverse();
         Ok(path)
-    }
-}
-
-fn gix_error(context: &'static str, source: impl std::fmt::Display) -> GitLsError {
-    GitLsError::Gix {
-        context,
-        detail: source.to_string(),
     }
 }
 
