@@ -1,16 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::cli::Verbosity;
 use crate::model::{BranchAnnotation, CommitMeta, LaneGroup};
 
 use super::colours::Colours;
-
-pub(crate) fn current_unix_timestamp() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
-        Err(_) => 0,
-    }
-}
 
 pub(super) fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
     const MINUTE: i64 = 60;

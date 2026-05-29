@@ -1,8 +1,6 @@
-use std::io::IsTerminal;
-
 use anstyle::{Ansi256Color, Style};
 
-use crate::cli::{ColourMode, Palette};
+use crate::cli::Palette;
 
 const ANSI_METADATA_COUNT: u8 = 255;
 const ANSI_MUTED_TEXT: u8 = 251;
@@ -14,12 +12,7 @@ pub(crate) struct Colours {
 }
 
 impl Colours {
-    pub(crate) fn new(mode: ColourMode, palette: Palette) -> Self {
-        let enabled = match mode {
-            ColourMode::Auto => std::io::stdout().is_terminal(),
-            ColourMode::Always => true,
-            ColourMode::Never => false,
-        };
+    pub(crate) fn new(enabled: bool, palette: Palette) -> Self {
         Self {
             enabled,
             palette: palette.ansi_colours(),
