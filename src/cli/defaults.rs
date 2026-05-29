@@ -1,6 +1,6 @@
 use super::values::{Backend, ColourMode, Order, Palette, Verbosity};
 
-pub(super) const DEFAULT_REVSET: &str = "draft()";
+pub(crate) const DEFAULT_REVSET: &str = "draft()";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RuntimeDefaults {

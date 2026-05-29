@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use crate::backend::{
     AncestryBackend, BranchlessQueries, GitBackend, RepositoryStateBackend, get_commit_meta,
 };
-use crate::cli::{Order, RuntimeOptions, Verbosity};
+use crate::cli::{DEFAULT_REVSET, Order, RuntimeOptions, Verbosity};
 use crate::error::{GitLsError, Result};
 use crate::model::{
     BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane, LaneGroup,
@@ -68,6 +68,7 @@ enum LaneSelection {
         head_oids: Vec<String>,
         points_by_oid: HashMap<String, BranchPointRef>,
         repository: RepositorySnapshot,
+        detect_rewritten_commits: bool,
     },
 }
 
@@ -76,17 +77,79 @@ fn query_lane_selection(
     user_revset: &str,
     hidden: bool,
 ) -> Result<LaneSelection> {
+    if let Some(selection) = query_branchless_lane_selection(git, user_revset, hidden)? {
+        return Ok(selection);
+    }
+
+    query_plain_git_lane_selection(git)
+}
+
+fn uses_plain_git_fallback(user_revset: &str) -> bool {
+    user_revset.trim() == DEFAULT_REVSET
+}
+
+fn query_branchless_lane_selection(
+    git: &dyn GitBackend,
+    user_revset: &str,
+    hidden: bool,
+) -> Result<Option<LaneSelection>> {
     let revset = branch_revset(user_revset);
-    let main_oids = BranchlessQueries::query_revset(git, "main()", hidden)?;
+    let main_oids = match BranchlessQueries::query_revset(git, "main()", hidden) {
+        Ok(main_oids) => main_oids,
+        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) => return Err(error),
+    };
     if main_oids.len() != 1 {
         return Err(GitLsError::ambiguous_main_revset(main_oids.len()));
     }
     let main_oid = main_oids[0].clone();
 
-    let branch_names = BranchlessQueries::query_branch_names(git, &revset, hidden)?;
+    let branch_names = match BranchlessQueries::query_branch_names(git, &revset, hidden) {
+        Ok(branch_names) => branch_names,
+        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if branch_names.is_empty() {
+        if uses_plain_git_fallback(user_revset) {
+            return Ok(None);
+        }
+        let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
+        let main_name = RepositoryStateBackend::main_branch_name(git)?;
+        let repository = RepositorySnapshot::new(current_branch, head, main_name);
+        return Ok(Some(LaneSelection::Empty {
+            main_oid,
+            repository,
+        }));
+    }
+
     let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
     let main_name = RepositoryStateBackend::main_branch_name(git)?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
+    let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
+    let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
+    let heads_revset = format!("heads({revset})");
+    let head_oids = match BranchlessQueries::query_revset(git, &heads_revset, hidden) {
+        Ok(head_oids) => head_oids,
+        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+
+    Ok(Some(LaneSelection::Populated {
+        main_oid,
+        head_oids,
+        points_by_oid,
+        repository,
+        detect_rewritten_commits: true,
+    }))
+}
+
+fn query_plain_git_lane_selection(git: &dyn GitBackend) -> Result<LaneSelection> {
+    let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
+    let configured_main_name = RepositoryStateBackend::main_branch_name(git)?;
+    let (main_name, main_oid) = plain_git_main_branch(&branch_oid_map, &configured_main_name)?;
+    let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
+    let repository = RepositorySnapshot::new(current_branch, head, main_name.clone());
+    let branch_names = plain_git_branch_names(git, &branch_oid_map, &main_name, &main_oid)?;
 
     if branch_names.is_empty() {
         return Ok(LaneSelection::Empty {
@@ -95,17 +158,118 @@ fn query_lane_selection(
         });
     }
 
-    let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
-    let heads_revset = format!("heads({revset})");
-    let head_oids = BranchlessQueries::query_revset(git, &heads_revset, hidden)?;
+    let head_oids = plain_git_stack_heads(git, points_by_oid.keys())?;
+    if head_oids.is_empty() {
+        return Ok(LaneSelection::Empty {
+            main_oid,
+            repository,
+        });
+    }
 
     Ok(LaneSelection::Populated {
         main_oid,
         head_oids,
         points_by_oid,
         repository,
+        detect_rewritten_commits: false,
     })
+}
+
+fn plain_git_main_branch(
+    branch_oid_map: &HashMap<String, Vec<String>>,
+    configured_main_name: &str,
+) -> Result<(String, String)> {
+    let candidates = plain_git_main_branch_candidates(configured_main_name);
+    for candidate in &candidates {
+        if let Some(oid) = oid_for_branch(branch_oid_map, candidate) {
+            return Ok((candidate.clone(), oid.to_string()));
+        }
+    }
+
+    Err(GitLsError::plain_git_main_branch_not_found(
+        candidates.join(", "),
+    ))
+}
+
+fn plain_git_main_branch_candidates(configured_main_name: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    for candidate in [configured_main_name, "main", "master", "trunk"] {
+        if !candidate.is_empty() && !candidates.iter().any(|existing| existing == candidate) {
+            candidates.push(candidate.to_string());
+        }
+    }
+    candidates
+}
+
+fn oid_for_branch<'a>(
+    branch_oid_map: &'a HashMap<String, Vec<String>>,
+    branch_name: &str,
+) -> Option<&'a str> {
+    branch_oid_map
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == branch_name))
+        .map(|(oid, _)| oid.as_str())
+}
+
+fn plain_git_branch_names(
+    git: &dyn GitBackend,
+    branch_oid_map: &HashMap<String, Vec<String>>,
+    main_name: &str,
+    main_oid: &str,
+) -> Result<Vec<String>> {
+    let mut branch_names = Vec::new();
+    for (oid, names) in branch_oid_map {
+        if oid == main_oid || is_ancestor(git, oid, main_oid)? {
+            continue;
+        }
+
+        branch_names.extend(
+            names
+                .iter()
+                .filter(|name| name.as_str() != main_name)
+                .cloned(),
+        );
+    }
+    branch_names.sort();
+    branch_names.dedup();
+    Ok(branch_names)
+}
+
+fn plain_git_stack_heads<'a>(
+    git: &dyn GitBackend,
+    selected_oids: impl IntoIterator<Item = &'a String>,
+) -> Result<Vec<String>> {
+    let mut oids: Vec<String> = selected_oids.into_iter().cloned().collect();
+    oids.sort();
+    oids.dedup();
+
+    let mut heads = Vec::new();
+    for oid in &oids {
+        let mut is_intermediate = false;
+        for other in oids.iter().filter(|other| *other != oid) {
+            if is_ancestor(git, oid, other)? {
+                is_intermediate = true;
+                break;
+            }
+        }
+        if !is_intermediate {
+            heads.push(oid.clone());
+        }
+    }
+
+    Ok(heads)
+}
+
+fn is_ancestor(git: &dyn GitBackend, ancestor_oid: &str, descendant_oid: &str) -> Result<bool> {
+    if ancestor_oid == descendant_oid {
+        return Ok(true);
+    }
+
+    Ok(
+        AncestryBackend::merge_base(git, ancestor_oid, descendant_oid)?.as_deref()
+            == Some(ancestor_oid),
+    )
 }
 
 fn prefetch_lane_metadata(
@@ -244,13 +408,19 @@ fn build_branch_point(
     ))
 }
 
+#[derive(Clone, Copy)]
+struct LaneBuildContext<'a> {
+    current_branch: Option<&'a str>,
+    head: Option<&'a str>,
+    verbosity: Verbosity,
+    detect_rewritten_commits: bool,
+}
+
 fn build_lane_from_path(
     git: &dyn GitBackend,
     lane_path: &LanePath,
     points_by_oid: &HashMap<String, BranchPointRef>,
-    current_branch: Option<&str>,
-    head: Option<&str>,
-    verbosity: Verbosity,
+    context: LaneBuildContext<'_>,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
     let branch_points = branch_points_for_path(lane_path, points_by_oid, &[]);
@@ -258,17 +428,23 @@ fn build_lane_from_path(
         return Ok(None);
     }
 
-    let rewritten_refs = rewritten_commits_for_path(git, lane_path, points_by_oid)?;
+    let rewritten_refs = if context.detect_rewritten_commits {
+        rewritten_commits_for_path(git, lane_path, points_by_oid)?
+    } else {
+        Vec::new()
+    };
     let branch_points = branch_points_for_path(lane_path, points_by_oid, &rewritten_refs);
     let branch_points = branch_points
         .iter()
-        .map(|point| build_branch_point(git, point, verbosity, meta_cache))
+        .map(|point| build_branch_point(git, point, context.verbosity, meta_cache))
         .collect::<Result<Vec<_>>>()?;
     let rewritten_commits = build_rewritten_commits(git, &rewritten_refs, meta_cache)?;
     let head_meta = get_commit_meta(git, &lane_path.head_oid, meta_cache)?;
     let contains_current = branch_points.iter().any(|point| {
-        current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
-            || head.is_some_and(|head| point.oid == head)
+        context
+            .current_branch
+            .is_some_and(|branch| point.names.iter().any(|name| name == branch))
+            || context.head.is_some_and(|head| point.oid == head)
     });
 
     let head_timestamp = head_meta.timestamp;
@@ -287,21 +463,11 @@ fn build_lane(
     head_oid: &str,
     main_oid: &str,
     points_by_oid: &HashMap<String, BranchPointRef>,
-    current_branch: Option<&str>,
-    head: Option<&str>,
-    verbosity: Verbosity,
+    context: LaneBuildContext<'_>,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
     let lane_path = collect_lane_path(git, main_oid, head_oid)?;
-    build_lane_from_path(
-        git,
-        &lane_path,
-        points_by_oid,
-        current_branch,
-        head,
-        verbosity,
-        meta_cache,
-    )
+    build_lane_from_path(git, &lane_path, points_by_oid, context, meta_cache)
 }
 
 pub(crate) fn build_lanes(
@@ -309,7 +475,7 @@ pub(crate) fn build_lanes(
     args: &RuntimeOptions,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
-    let (main_oid, head_oids, points_by_oid, repository) =
+    let (main_oid, head_oids, points_by_oid, repository, detect_rewritten_commits) =
         match query_lane_selection(git, &args.revset, args.hidden)? {
             LaneSelection::Empty {
                 main_oid,
@@ -322,7 +488,14 @@ pub(crate) fn build_lanes(
                 head_oids,
                 points_by_oid,
                 repository,
-            } => (main_oid, head_oids, points_by_oid, repository),
+                detect_rewritten_commits,
+            } => (
+                main_oid,
+                head_oids,
+                points_by_oid,
+                repository,
+                detect_rewritten_commits,
+            ),
         };
 
     prefetch_lane_metadata(git, &head_oids, &points_by_oid, args.verbosity, meta_cache)?;
@@ -334,9 +507,12 @@ pub(crate) fn build_lanes(
             &head_oid,
             &main_oid,
             &points_by_oid,
-            repository.current_branch.as_deref(),
-            repository.head.as_deref(),
-            args.verbosity,
+            LaneBuildContext {
+                current_branch: repository.current_branch.as_deref(),
+                head: repository.head.as_deref(),
+                verbosity: args.verbosity,
+                detect_rewritten_commits,
+            },
             meta_cache,
         )? {
             lanes.push(lane);

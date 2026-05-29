@@ -50,6 +50,10 @@ pub enum GitLsError {
     #[error("expected main() to resolve to one commit, got {count}")]
     AmbiguousMainRevset { count: usize },
 
+    /// Plain Git fallback could not identify the repository's main branch.
+    #[error("could not resolve plain Git main branch from local branches; tried {candidates}")]
+    PlainGitMainBranchNotFound { candidates: String },
+
     /// A `git config` value was present but outside the accepted value domain.
     #[error("invalid git config {key}={value:?}: expected {expected}")]
     InvalidGitConfig {
@@ -101,6 +105,12 @@ impl GitLsError {
 
     pub(crate) fn ambiguous_main_revset(count: usize) -> Self {
         Self::AmbiguousMainRevset { count }
+    }
+
+    pub(crate) fn plain_git_main_branch_not_found(candidates: impl Into<String>) -> Self {
+        Self::PlainGitMainBranchNotFound {
+            candidates: candidates.into(),
+        }
     }
 
     pub(crate) fn invalid_git_config(
@@ -161,6 +171,10 @@ mod tests {
             (
                 GitLsError::ambiguous_main_revset(2),
                 "expected main() to resolve to one commit, got 2",
+            ),
+            (
+                GitLsError::plain_git_main_branch_not_found("main, master"),
+                "could not resolve plain Git main branch from local branches; tried main, master",
             ),
             (
                 GitLsError::invalid_git_config("git-ls.backend", "svn", "gix or shell"),

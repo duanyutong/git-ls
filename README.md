@@ -1,11 +1,11 @@
 # git-ls
 
-`git-ls` renders local `git-branchless` branches as compact coloured stack lanes for use as `git ls`.
+`git-ls` renders local Git branch stacks as compact coloured lanes for use as `git ls`.
 
 ## Prerequisites
 
 - Git.
-- `git-branchless`, initialised in the repository to be inspected.
+- `git-branchless` is optional. When it is installed and initialised, `git-ls` uses branchless revsets for branch selection and rewrite metadata. Otherwise, the default `git ls` command falls back to plain Git, selecting unmerged local branches and inferring stack heads from ancestry.
 - Rust. This repository includes `rust-toolchain.toml` for the standard formatting and linting components.
 
 ## Build & Install
@@ -40,7 +40,9 @@ git ls 'draft() & branches(feature/)'
 ```
 
 ```text
---hidden          include hidden commits when evaluating revsets
+REVSET            branchless revset used for stack selection; defaults to draft()
+                  custom revsets require git-branchless
+--hidden          include hidden commits when evaluating branchless revsets
 -v, --verbose     increase branch annotation verbosity; repeat as -vv for commit titles
 --backend VALUE   Git plumbing backend: gix or shell
 --order VALUE     order stack lanes by head commit time: newest or oldest
@@ -61,6 +63,12 @@ Local repository configuration overrides global configuration, and explicit comm
   palette = classic
   verbosity = 2
 ```
+
+## Plain Git Fallback
+
+The default command first attempts the branchless-backed selection, equivalent to `draft()` constrained to local branches. If that selection is unavailable or empty, `git-ls` falls back to plain Git. The fallback resolves the main branch from `branchless.core.mainBranch`, `main`, `master`, or `trunk`, in that order; it then selects local branches not already contained in main, identifies stack heads by ancestry, and renders them through the same graph, metadata, ordering, and colour pipeline.
+
+Custom branchless revsets are not interpreted by the fallback. A command such as `git ls 'draft() & branches(feature/)'` therefore requires `git-branchless`, because plain Git has no equivalent syntax for `draft()`, `public()`, or `heads(...)`.
 
 ## Glyph System
 

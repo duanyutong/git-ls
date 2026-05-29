@@ -240,6 +240,20 @@ fn lane_group(base: Option<&str>, main_distance: Option<usize>, lanes: Vec<Lane>
     LaneGroup::new(base.map(ToOwned::to_owned), None, main_distance, lanes)
 }
 
+fn lane_context<'a>(
+    current_branch: Option<&'a str>,
+    head: Option<&'a str>,
+    verbosity: Verbosity,
+    detect_rewritten_commits: bool,
+) -> LaneBuildContext<'a> {
+    LaneBuildContext {
+        current_branch,
+        head,
+        verbosity,
+        detect_rewritten_commits,
+    }
+}
+
 fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
     RuntimeOptions {
         revset: "draft()".to_string(),
@@ -250,6 +264,12 @@ fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
         colour_mode: ColourMode::Never,
         palette: Palette::Classic,
     }
+}
+
+fn runtime_options_with_revset(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
+    let mut args = runtime_options(verbosity);
+    args.revset = revset.to_string();
+    args
 }
 
 fn assert_test_fixture_error(error: GitLsError, expected: &str) {
@@ -305,7 +325,8 @@ fn rejects_ambiguous_main_revsets_before_lane_construction() {
 
 #[test]
 fn propagates_lane_selection_query_and_repository_errors() {
-    let revset = "((draft()) & branches()) - public()";
+    let revset = "((custom()) & branches()) - public()";
+    let args = runtime_options_with_revset("custom()", Verbosity::Low);
     let cases = [
         (
             FakeLaneBackend::default().with_revset("main()", false, &["main-oid"]),
@@ -344,10 +365,94 @@ fn propagates_lane_selection_query_and_repository_errors() {
     for (git, expected) in cases {
         let mut cache = HashMap::new();
 
-        let error = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap_err();
+        let error = build_lanes(&git, &args, &mut cache).unwrap_err();
 
         assert_test_fixture_error(error, expected);
     }
+}
+
+#[test]
+fn falls_back_to_plain_git_when_branchless_is_unavailable() {
+    let git = FakeLaneBackend::default()
+        .with_local_branches(&[
+            ("main-oid", &["main"]),
+            ("base", &["feature/base"]),
+            ("tip", &["feature/tip"]),
+        ])
+        .with_head(Some("tip"), Some("feature/tip"))
+        .with_merge_base("base", "main-oid", Some("main-oid"))
+        .with_merge_base("tip", "main-oid", Some("main-oid"))
+        .with_merge_base("base", "tip", Some("base"))
+        .with_merge_base("tip", "base", Some("base"))
+        .with_merge_base("main-oid", "tip", Some("main-oid"))
+        .with_meta("tip", "tip", 20)
+        .with_ancestry_path(Some("main-oid"), "tip", &["base", "tip"]);
+    let mut cache = HashMap::new();
+
+    let BuiltLanes::Populated {
+        lanes,
+        main_oid,
+        repository,
+    } = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap()
+    else {
+        panic!("expected populated lanes");
+    };
+
+    assert_eq!(main_oid, "main-oid");
+    assert_eq!(repository.main_name, "main");
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].head_oid, "tip");
+    assert!(lanes[0].contains_current);
+    assert_eq!(
+        lanes[0].branch_points,
+        vec![
+            point("tip", &["feature/tip"]),
+            point("base", &["feature/base"]),
+        ]
+    );
+}
+
+#[test]
+fn falls_back_to_plain_git_when_default_branchless_selection_is_empty() {
+    let revset = "((draft()) & branches()) - public()";
+    let git = FakeLaneBackend::default()
+        .with_revset("main()", false, &["branchless-main"])
+        .with_branch_names(revset, false, &[])
+        .with_local_branches(&[("main-oid", &["main"]), ("tip", &["feature/tip"])])
+        .with_head(Some("tip"), Some("feature/tip"))
+        .with_merge_base("tip", "main-oid", Some("main-oid"))
+        .with_merge_base("main-oid", "tip", Some("main-oid"))
+        .with_meta("tip", "tip", 20)
+        .with_ancestry_path(Some("main-oid"), "tip", &["tip"]);
+    let mut cache = HashMap::new();
+
+    let BuiltLanes::Populated {
+        lanes, main_oid, ..
+    } = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap()
+    else {
+        panic!("expected populated lanes");
+    };
+
+    assert_eq!(main_oid, "main-oid");
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].branch_points, vec![point("tip", &["feature/tip"])]);
+}
+
+#[test]
+fn plain_git_fallback_excludes_branches_already_merged_to_main() {
+    let git = FakeLaneBackend::default()
+        .with_local_branches(&[("main-oid", &["main"]), ("old", &["feature/old"])])
+        .with_head(Some("main-oid"), Some("main"))
+        .with_merge_base("old", "main-oid", Some("old"));
+    let mut cache = HashMap::new();
+
+    let BuiltLanes::Empty { main_oid, .. } =
+        build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap()
+    else {
+        panic!("expected empty selection");
+    };
+
+    assert_eq!(main_oid, "main-oid");
 }
 
 #[test]
@@ -743,9 +848,7 @@ fn builds_lane_from_path_with_metadata_and_current_status() {
         &git,
         &lane_path,
         &points_by_oid,
-        Some("feature/two"),
-        None,
-        Verbosity::Medium,
+        lane_context(Some("feature/two"), None, Verbosity::Medium, false),
         &mut cache,
     )
     .unwrap()
@@ -788,9 +891,7 @@ fn builds_lane_from_path_with_rewritten_commit_marker() {
         &git,
         &lane_path,
         &points_by_oid,
-        None,
-        None,
-        Verbosity::Medium,
+        lane_context(None, None, Verbosity::Medium, true),
         &mut cache,
     )
     .unwrap()
@@ -829,9 +930,7 @@ fn skips_lane_paths_without_visible_branch_points() {
         &git,
         &lane_path,
         &HashMap::new(),
-        None,
-        None,
-        Verbosity::Low,
+        lane_context(None, None, Verbosity::Low, false),
         &mut cache,
     )
     .unwrap();
@@ -854,9 +953,7 @@ fn build_lane_from_path_propagates_branch_point_metadata_errors() {
         &git,
         &lane_path,
         &points_by_oid,
-        None,
-        None,
-        Verbosity::Medium,
+        lane_context(None, None, Verbosity::Medium, false),
         &mut cache,
     )
     .unwrap_err();
@@ -879,9 +976,7 @@ fn build_lane_from_path_propagates_head_metadata_errors() {
         &git,
         &lane_path,
         &points_by_oid,
-        None,
-        None,
-        Verbosity::Low,
+        lane_context(None, None, Verbosity::Low, false),
         &mut cache,
     )
     .unwrap_err();
@@ -944,9 +1039,7 @@ fn marks_lane_current_when_detached_head_matches_branch_point() {
         &git,
         &lane_path,
         &points_by_oid,
-        Some("other"),
-        Some("head"),
-        Verbosity::Low,
+        lane_context(Some("other"), Some("head"), Verbosity::Low, false),
         &mut cache,
     )
     .unwrap()
