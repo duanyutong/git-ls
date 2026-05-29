@@ -6,7 +6,9 @@ use crate::backend::{
     AncestryBackend, BranchlessQueries, CommitMetadataBackend, RepositoryStateBackend,
 };
 use crate::cli::{Backend, ColourMode, Order, Palette, RuntimeOptions, Verbosity};
-use crate::model::{BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane};
+use crate::model::{
+    BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane, RewrittenCommit,
+};
 
 #[derive(Default)]
 struct FakeLaneBackend {
@@ -646,7 +648,7 @@ fn counts_each_branch_point_from_previous_visible_stack_point() {
         ancestry_path: vec!["a".to_string(), "b".to_string()],
     };
 
-    let points = branch_points_for_path(&lane_path, &points_by_oid);
+    let points = branch_points_for_path(&lane_path, &points_by_oid, &[]);
 
     assert_eq!(
         points,
@@ -660,6 +662,64 @@ fn counts_each_branch_point_from_previous_visible_stack_point() {
                 commit_count: 1,
             },
         ]
+    );
+}
+
+#[test]
+fn excludes_rewritten_commits_from_visible_branch_point_counts() {
+    let mut points_by_oid = HashMap::new();
+    points_by_oid.insert(
+        "replacement".to_string(),
+        point_ref("replacement", &["base"]),
+    );
+    points_by_oid.insert("child".to_string(), point_ref("child", &["feature/child"]));
+    let lane_path = LanePath {
+        head_oid: "child".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "child".to_string()],
+    };
+    let rewritten = vec![RewrittenCommitRef {
+        oid: "old".to_string(),
+        replacement_oid: "replacement".to_string(),
+    }];
+
+    let points = branch_points_for_path(&lane_path, &points_by_oid, &rewritten);
+
+    assert_eq!(
+        points,
+        vec![BranchPointOnPath {
+            point: point_ref("child", &["feature/child"]),
+            commit_count: 1,
+        }]
+    );
+}
+
+#[test]
+fn detects_rewritten_commits_whose_current_target_is_selected() {
+    let git = FakeLaneBackend::default()
+        .with_revset("current(old)", true, &["replacement"])
+        .with_revset("current(other)", true, &["other"]);
+    let points_by_oid = HashMap::from([
+        (
+            "replacement".to_string(),
+            point_ref("replacement", &["base"]),
+        ),
+        ("child".to_string(), point_ref("child", &["feature/child"])),
+    ]);
+    let lane_path = LanePath {
+        head_oid: "child".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "other".to_string(), "child".to_string()],
+    };
+
+    let rewritten = rewritten_commits_for_path(&git, &lane_path, &points_by_oid).unwrap();
+
+    assert_eq!(
+        rewritten,
+        vec![RewrittenCommitRef {
+            oid: "old".to_string(),
+            replacement_oid: "replacement".to_string(),
+        }]
     );
 }
 
@@ -700,6 +760,58 @@ fn builds_lane_from_path_with_metadata_and_current_status() {
             point_with_count_at("b", &["feature/two"], 1, "second", 20),
             point_with_count_at("a", &["feature/one"], 1, "first", 10),
         ]
+    );
+}
+
+#[test]
+fn builds_lane_from_path_with_rewritten_commit_marker() {
+    let git = FakeLaneBackend::default()
+        .with_revset("current(old)", true, &["replacement"])
+        .with_meta("child", "child", 20)
+        .with_meta("old", "old base", 10)
+        .with_meta("replacement", "new base", 30);
+    let points_by_oid = HashMap::from([
+        (
+            "replacement".to_string(),
+            point_ref("replacement", &["feature/base"]),
+        ),
+        ("child".to_string(), point_ref("child", &["feature/child"])),
+    ]);
+    let lane_path = LanePath {
+        head_oid: "child".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "child".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let lane = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        None,
+        None,
+        Verbosity::Medium,
+        &mut cache,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        lane.branch_points,
+        vec![point_with_count_at(
+            "child",
+            &["feature/child"],
+            1,
+            "child",
+            20
+        )]
+    );
+    assert_eq!(
+        lane.rewritten_commits,
+        vec![RewrittenCommit::new(
+            CommitMeta::new("old", 10, "old base"),
+            CommitMeta::new("replacement", 30, "new base"),
+        )]
     );
 }
 
@@ -786,7 +898,7 @@ fn includes_head_branch_point_when_ancestry_path_does_not_contain_it() {
         ancestry_path: vec!["root".to_string(), "parent".to_string()],
     };
 
-    let points = branch_points_for_path(&lane_path, &points_by_oid);
+    let points = branch_points_for_path(&lane_path, &points_by_oid, &[]);
 
     assert_eq!(
         points,
@@ -806,7 +918,7 @@ fn counts_head_fallback_as_one_commit_for_empty_ancestry_paths() {
         ancestry_path: Vec::new(),
     };
 
-    let points = branch_points_for_path(&lane_path, &points_by_oid);
+    let points = branch_points_for_path(&lane_path, &points_by_oid, &[]);
 
     assert_eq!(
         points,

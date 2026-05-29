@@ -9,6 +9,7 @@ pub(super) const MAIN_SPINE_GLYPH: &str = "│";
 pub(super) const MAIN_COMMIT_GLYPH: &str = "◇";
 pub(super) const CURRENT_MAIN_COMMIT_GLYPH: &str = "◆";
 pub(super) const ORPHANED_BRANCH_GLYPH: &str = "⦸";
+pub(super) const REWRITTEN_COMMIT_GLYPH: &str = "✕";
 pub(super) const TREE_LEFT_PADDING: &str = "";
 pub(super) const BRANCH_LABEL_GAP: &str = " ";
 
@@ -102,6 +103,22 @@ pub(super) fn row_prefix(
     main_spine: MainSpine,
     colours: &Colours,
 ) -> String {
+    row_prefix_with_marker(
+        lane_index,
+        layout,
+        marker_for(point, current_branch, head),
+        main_spine,
+        colours,
+    )
+}
+
+pub(super) fn row_prefix_with_marker(
+    lane_index: usize,
+    layout: LaneRenderLayout,
+    marker: &str,
+    main_spine: MainSpine,
+    colours: &Colours,
+) -> String {
     let mut slots = Vec::new();
     match main_spine {
         MainSpine::Hidden => {}
@@ -123,7 +140,7 @@ pub(super) fn row_prefix(
         match index.cmp(&lane_index) {
             Ordering::Less => slots.push(colours.stack(colour_index, "│")),
             Ordering::Equal => {
-                slots.push(colours.stack(colour_index, marker_for(point, current_branch, head)));
+                slots.push(colours.stack(colour_index, marker));
             }
             Ordering::Greater => slots.push(" ".to_string()),
         }

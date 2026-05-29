@@ -3,10 +3,11 @@ use crate::model::{Lane, LaneGroup};
 use super::branch::display_names;
 use super::context::RenderContext;
 use super::graph::{
-    BRANCH_LABEL_GAP, LaneRenderLayout, MainSpine, current_row_indicator, is_current_branch_point,
-    render_row, row_prefix,
+    BRANCH_LABEL_GAP, LaneRenderLayout, MainSpine, REWRITTEN_COMMIT_GLYPH, current_row_indicator,
+    is_current_branch_point, render_row, row_prefix, row_prefix_with_marker,
 };
 use super::orphan::render_orphaned_group;
+use super::rewrite::display_rewritten_commit;
 use super::trunk::{
     TrunkLabel, main_is_current, render_collapsed_main_segment, render_main_tip,
     render_omitted_main_past, render_top_spacer, trunk_label, trunk_prefix,
@@ -22,19 +23,23 @@ pub(super) fn render_group(
 ) -> Vec<String> {
     let lane_count = lanes.len();
     let layout = LaneRenderLayout::new(lane_count, lane_field_width, colour_offset);
-    let point_count: usize = lanes.iter().map(|lane| lane.branch_points.len()).sum();
-    let mut rendered_points = 0;
+    let content_row_count: usize = lanes
+        .iter()
+        .map(|lane| lane.branch_points.len() + lane.rewritten_commits.len())
+        .sum();
+    let mut rendered_content_rows = 0;
     let mut output = Vec::new();
 
     for (lane_index, lane) in lanes.iter().enumerate() {
         for point in &lane.branch_points {
-            rendered_points += 1;
-            let row_main_spine =
-                if matches!(main_spine, MainSpine::Future) && rendered_points == point_count {
-                    MainSpine::FutureLine
-                } else {
-                    main_spine
-                };
+            rendered_content_rows += 1;
+            let row_main_spine = if matches!(main_spine, MainSpine::Future)
+                && rendered_content_rows == content_row_count
+            {
+                MainSpine::FutureLine
+            } else {
+                main_spine
+            };
             let colour_index = colour_offset + lane_index;
             let prefix = row_prefix(
                 lane_index,
@@ -61,6 +66,31 @@ pub(super) fn render_group(
                     colour_index,
                     ctx.colours,
                 ),
+                &line,
+            ));
+        }
+
+        for commit in &lane.rewritten_commits {
+            rendered_content_rows += 1;
+            let row_main_spine = if matches!(main_spine, MainSpine::Future)
+                && rendered_content_rows == content_row_count
+            {
+                MainSpine::FutureLine
+            } else {
+                main_spine
+            };
+            let colour_index = colour_offset + lane_index;
+            let prefix = row_prefix_with_marker(
+                lane_index,
+                layout,
+                REWRITTEN_COMMIT_GLYPH,
+                row_main_spine,
+                ctx.colours,
+            );
+            let label = display_rewritten_commit(commit, ctx);
+            let line = format!("{prefix}{BRANCH_LABEL_GAP}{label}");
+            output.push(render_row(
+                &current_row_indicator(false, colour_index, ctx.colours),
                 &line,
             ));
         }

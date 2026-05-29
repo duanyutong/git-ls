@@ -8,7 +8,7 @@ use crate::cli::{Order, RuntimeOptions, Verbosity};
 use crate::error::{GitLsError, Result};
 use crate::model::{
     BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane, LaneGroup,
-    RepositorySnapshot,
+    RepositorySnapshot, RewrittenCommit,
 };
 
 fn branch_revset(user_revset: &str) -> String {
@@ -44,6 +44,12 @@ struct LanePath {
     head_oid: String,
     base_oid: Option<String>,
     ancestry_path: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RewrittenCommitRef {
+    oid: String,
+    replacement_oid: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,29 +134,67 @@ fn collect_lane_path(git: &dyn GitBackend, main_oid: &str, head_oid: &str) -> Re
     })
 }
 
+fn rewritten_commits_for_path(
+    git: &dyn GitBackend,
+    lane_path: &LanePath,
+    points_by_oid: &HashMap<String, BranchPointRef>,
+) -> Result<Vec<RewrittenCommitRef>> {
+    let mut rewritten_commits = Vec::new();
+    for oid in &lane_path.ancestry_path {
+        if points_by_oid.contains_key(oid) {
+            continue;
+        }
+
+        let current_revset = format!("current({oid})");
+        let current_oids = BranchlessQueries::query_revset(git, &current_revset, true)?;
+        let [replacement_oid] = current_oids.as_slice() else {
+            continue;
+        };
+        if replacement_oid != oid && points_by_oid.contains_key(replacement_oid) {
+            rewritten_commits.push(RewrittenCommitRef {
+                oid: oid.clone(),
+                replacement_oid: replacement_oid.clone(),
+            });
+        }
+    }
+    Ok(rewritten_commits)
+}
+
 fn branch_points_for_path(
     lane_path: &LanePath,
     points_by_oid: &HashMap<String, BranchPointRef>,
+    rewritten_commits: &[RewrittenCommitRef],
 ) -> Vec<BranchPointOnPath> {
     let mut branch_points = Vec::new();
-    let mut previous_branch_point_index = None;
+    let rewritten_oids: HashSet<&str> = rewritten_commits
+        .iter()
+        .map(|commit| commit.oid.as_str())
+        .collect();
+    let mut commits_since_previous_branch = 0;
 
-    for (index, oid) in lane_path.ancestry_path.iter().enumerate() {
+    for oid in &lane_path.ancestry_path {
+        if rewritten_oids.contains(oid.as_str()) {
+            continue;
+        }
+        commits_since_previous_branch += 1;
         if let Some(point) = points_by_oid.get(oid) {
-            let commit_count = previous_branch_point_index
-                .map_or(index + 1, |previous| index.saturating_sub(previous));
             branch_points.push(BranchPointOnPath {
                 point: point.clone(),
-                commit_count,
+                commit_count: commits_since_previous_branch,
             });
-            previous_branch_point_index = Some(index);
+            commits_since_previous_branch = 0;
         }
     }
 
     if branch_points.is_empty()
         && let Some(point) = points_by_oid.get(&lane_path.head_oid)
     {
-        let commit_count = lane_path.ancestry_path.len().max(1);
+        let commit_count = lane_path
+            .ancestry_path
+            .iter()
+            .filter(|oid| !rewritten_oids.contains(oid.as_str()))
+            .count()
+            .max(1);
         branch_points.push(BranchPointOnPath {
             point: point.clone(),
             commit_count,
@@ -159,6 +203,22 @@ fn branch_points_for_path(
 
     branch_points.reverse();
     branch_points
+}
+
+fn build_rewritten_commits(
+    git: &dyn GitBackend,
+    rewritten_refs: &[RewrittenCommitRef],
+    meta_cache: &mut HashMap<String, CommitMeta>,
+) -> Result<Vec<RewrittenCommit>> {
+    rewritten_refs
+        .iter()
+        .rev()
+        .map(|commit| {
+            let meta = get_commit_meta(git, &commit.oid, meta_cache)?;
+            let replacement = get_commit_meta(git, &commit.replacement_oid, meta_cache)?;
+            Ok(RewrittenCommit::new(meta, replacement))
+        })
+        .collect()
 }
 
 fn build_branch_point(
@@ -193,15 +253,18 @@ fn build_lane_from_path(
     verbosity: Verbosity,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
-    let branch_points = branch_points_for_path(lane_path, points_by_oid);
+    let branch_points = branch_points_for_path(lane_path, points_by_oid, &[]);
     if branch_points.is_empty() {
         return Ok(None);
     }
 
+    let rewritten_refs = rewritten_commits_for_path(git, lane_path, points_by_oid)?;
+    let branch_points = branch_points_for_path(lane_path, points_by_oid, &rewritten_refs);
     let branch_points = branch_points
         .iter()
         .map(|point| build_branch_point(git, point, verbosity, meta_cache))
         .collect::<Result<Vec<_>>>()?;
+    let rewritten_commits = build_rewritten_commits(git, &rewritten_refs, meta_cache)?;
     let head_meta = get_commit_meta(git, &lane_path.head_oid, meta_cache)?;
     let contains_current = branch_points.iter().any(|point| {
         current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
@@ -209,10 +272,11 @@ fn build_lane_from_path(
     });
 
     let head_timestamp = head_meta.timestamp;
-    Ok(Some(Lane::new(
+    Ok(Some(Lane::new_with_rewritten_commits(
         head_meta.oid,
         lane_path.base_oid.clone(),
         branch_points,
+        rewritten_commits,
         head_timestamp,
         contains_current,
     )))

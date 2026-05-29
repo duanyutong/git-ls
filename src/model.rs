@@ -81,15 +81,29 @@ pub(crate) fn display_short_oid(oid: &str) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RewrittenCommit {
+    pub(crate) meta: CommitMeta,
+    pub(crate) replacement: CommitMeta,
+}
+
+impl RewrittenCommit {
+    pub(crate) fn new(meta: CommitMeta, replacement: CommitMeta) -> Self {
+        Self { meta, replacement }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Lane {
     pub(crate) head_oid: String,
     pub(crate) base_oid: Option<String>,
     pub(crate) branch_points: Vec<BranchPoint>,
+    pub(crate) rewritten_commits: Vec<RewrittenCommit>,
     pub(crate) head_timestamp: i64,
     pub(crate) contains_current: bool,
 }
 
 impl Lane {
+    #[cfg(test)]
     pub(crate) fn new(
         head_oid: impl Into<String>,
         base_oid: Option<String>,
@@ -97,10 +111,29 @@ impl Lane {
         head_timestamp: i64,
         contains_current: bool,
     ) -> Self {
+        Self::new_with_rewritten_commits(
+            head_oid,
+            base_oid,
+            branch_points,
+            Vec::new(),
+            head_timestamp,
+            contains_current,
+        )
+    }
+
+    pub(crate) fn new_with_rewritten_commits(
+        head_oid: impl Into<String>,
+        base_oid: Option<String>,
+        branch_points: Vec<BranchPoint>,
+        rewritten_commits: Vec<RewrittenCommit>,
+        head_timestamp: i64,
+        contains_current: bool,
+    ) -> Self {
         Self {
             head_oid: head_oid.into(),
             base_oid,
             branch_points,
+            rewritten_commits,
             head_timestamp,
             contains_current,
         }
@@ -213,6 +246,8 @@ mod tests {
         let meta = CommitMeta::new("abcdef123456", 99, "topic");
         let annotation = BranchAnnotation::new(meta.clone(), 2);
         let point = BranchPoint::new("abcdef123456", ["feature"], Some(annotation.clone()));
+        let rewritten =
+            RewrittenCommit::new(meta.clone(), CommitMeta::new("fedcba654321", 98, "new"));
         let lane = Lane::new(
             "abcdef123456",
             Some("base".to_string()),
@@ -233,6 +268,7 @@ mod tests {
         );
 
         assert_eq!(annotation.commit_count, 2);
+        assert_eq!(rewritten.replacement.subject, "new");
         assert_eq!(lane.head_oid, "abcdef123456");
         assert_eq!(group.lanes, vec![lane]);
         assert_eq!(repository.main_name, "main");

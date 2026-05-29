@@ -1,5 +1,5 @@
 use crate::cli::Verbosity;
-use crate::model::{Lane, LaneGroup};
+use crate::model::{Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
 use crate::render::graph::{COLLAPSED_MAIN_GLYPH, MainSpine};
 use crate::render::layout::{render_group, render_lane_groups};
@@ -17,6 +17,7 @@ fn renders_markers_names_and_trunk() {
             head_oid: "a".to_string(),
             base_oid: Some("main".to_string()),
             branch_points: vec![point("a", &["feature/one"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 1,
             contains_current: false,
         },
@@ -24,6 +25,7 @@ fn renders_markers_names_and_trunk() {
             head_oid: "b".to_string(),
             base_oid: Some("main".to_string()),
             branch_points: vec![point("b", &["feature/two"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 2,
             contains_current: true,
         },
@@ -66,6 +68,7 @@ fn renders_exactly_one_future_line_above_main_node() {
             head_oid: "a".to_string(),
             base_oid: Some("main".to_string()),
             branch_points: vec![point("a", &["feature/one"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 1,
             contains_current: false,
         },
@@ -73,6 +76,7 @@ fn renders_exactly_one_future_line_above_main_node() {
             head_oid: "b".to_string(),
             base_oid: Some("main".to_string()),
             branch_points: vec![point("b", &["feature/two"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 2,
             contains_current: true,
         },
@@ -115,6 +119,7 @@ fn renders_single_main_based_lane_with_main_spine() {
         head_oid: "a".to_string(),
         base_oid: Some("main".to_string()),
         branch_points: vec![point("a", &["feature/one"])],
+        rewritten_commits: Vec::new(),
         head_timestamp: 1,
         contains_current: true,
     }];
@@ -145,12 +150,61 @@ fn renders_single_main_based_lane_with_main_spine() {
 }
 
 #[test]
+fn renders_rewritten_commit_marker_below_stale_lane_branch_points() {
+    let colours = test_colours(false);
+    let lanes = vec![Lane {
+        head_oid: "docs".to_string(),
+        base_oid: Some("main".to_string()),
+        branch_points: vec![
+            point("docs", &["feature/docs"]),
+            point("eval", &["feature/eval"]),
+        ],
+        rewritten_commits: vec![RewrittenCommit::new(
+            meta("old-base", "old base"),
+            meta("new-base", "new base"),
+        )],
+        head_timestamp: 1,
+        contains_current: false,
+    }];
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
+
+    let output = render_group(
+        &lanes,
+        lanes.len(),
+        0,
+        &ctx,
+        TrunkLabel::Main,
+        MainSpine::Future,
+    );
+
+    assert_eq!(
+        output,
+        vec![
+            "    ◯ feature/docs".to_string(),
+            "    ◯ feature/eval".to_string(),
+            "  ⁝ ✕ old-bas rewritten as new-bas".to_string(),
+            "  ◇─┘ main".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn renders_current_main_on_trunk_row() {
     let colours = test_colours(false);
     let lanes = vec![Lane {
         head_oid: "a".to_string(),
         base_oid: Some("main".to_string()),
         branch_points: vec![point("a", &["feature/one"])],
+        rewritten_commits: Vec::new(),
         head_timestamp: 1,
         contains_current: false,
     }];
@@ -191,6 +245,7 @@ fn renders_orphaned_only_groups_around_main_tip() {
             head_oid: "backup".to_string(),
             base_oid: None,
             branch_points: vec![point("backup", &["test-branch-name"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 1,
             contains_current: false,
         }],
@@ -231,6 +286,7 @@ fn renders_orphaned_groups_below_connected_stacks() {
                 head_oid: "feature".to_string(),
                 base_oid: Some("main".to_string()),
                 branch_points: vec![point("feature", &["feature/current"])],
+                rewritten_commits: Vec::new(),
                 head_timestamp: 2,
                 contains_current: true,
             }],
@@ -244,6 +300,7 @@ fn renders_orphaned_groups_below_connected_stacks() {
                     head_oid: "orphan-a".to_string(),
                     base_oid: None,
                     branch_points: vec![point("orphan-a", &["orphan-A"])],
+                    rewritten_commits: Vec::new(),
                     head_timestamp: 1,
                     contains_current: false,
                 },
@@ -251,6 +308,7 @@ fn renders_orphaned_groups_below_connected_stacks() {
                     head_oid: "orphan-b".to_string(),
                     base_oid: None,
                     branch_points: vec![point("orphan-b", &["orphan-B"])],
+                    rewritten_commits: Vec::new(),
                     head_timestamp: 1,
                     contains_current: false,
                 },
@@ -296,6 +354,7 @@ fn renders_old_main_groups_with_collapsed_main_history() {
                     head_oid: "feature-one".to_string(),
                     base_oid: Some("main".to_string()),
                     branch_points: vec![point("feature-one", &["feature/one"])],
+                    rewritten_commits: Vec::new(),
                     head_timestamp: 4,
                     contains_current: false,
                 },
@@ -303,6 +362,7 @@ fn renders_old_main_groups_with_collapsed_main_history() {
                     head_oid: "feature-two".to_string(),
                     base_oid: Some("main".to_string()),
                     branch_points: vec![point("feature-two", &["feature/two"])],
+                    rewritten_commits: Vec::new(),
                     head_timestamp: 3,
                     contains_current: false,
                 },
@@ -310,6 +370,7 @@ fn renders_old_main_groups_with_collapsed_main_history() {
                     head_oid: "feature-current".to_string(),
                     base_oid: Some("main".to_string()),
                     branch_points: vec![point("feature-current", &["feature/current"])],
+                    rewritten_commits: Vec::new(),
                     head_timestamp: 2,
                     contains_current: false,
                 },
@@ -326,6 +387,7 @@ fn renders_old_main_groups_with_collapsed_main_history() {
                 head_oid: "old-feature".to_string(),
                 base_oid: Some("old-main".to_string()),
                 branch_points: vec![point("old-feature", &["dyt/tgs_api"])],
+                rewritten_commits: Vec::new(),
                 head_timestamp: 1,
                 contains_current: true,
             }],
@@ -373,6 +435,7 @@ fn renders_main_tip_before_first_group_from_older_main_history() {
             head_oid: "feature".to_string(),
             base_oid: Some("old-main".to_string()),
             branch_points: vec![point("feature", &["feature"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 1,
             contains_current: false,
         }],
