@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::error::{GitLsError, Result};
-use crate::model::{CommitMeta, display_short_oid};
+use crate::model::CommitMeta;
 
 use super::traits::CommitMetadataBackend;
 
@@ -49,14 +49,10 @@ pub(super) fn parse_shell_commit_meta(alias: &str, record: &str) -> Result<Commi
         return Err(GitLsError::unexpected_git_show(alias));
     }
 
-    Ok(CommitMeta {
-        oid: parts[0].to_string(),
-        short_oid: display_short_oid(parts[0]),
-        timestamp: parts[1]
-            .parse()
-            .map_err(|source| GitLsError::invalid_commit_timestamp(alias, source))?,
-        subject: parts[2].to_string(),
-    })
+    let timestamp = parts[1]
+        .parse()
+        .map_err(|source| GitLsError::invalid_commit_timestamp(alias, source))?;
+    Ok(CommitMeta::new(parts[0], timestamp, parts[2]))
 }
 
 pub(super) fn insert_commit_meta(

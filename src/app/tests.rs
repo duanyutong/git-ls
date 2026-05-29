@@ -26,20 +26,15 @@ fn runtime_options(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
 }
 
 fn repository_snapshot(current_branch: Option<&str>, head: Option<&str>) -> RepositorySnapshot {
-    RepositorySnapshot {
-        current_branch: current_branch.map(str::to_string),
-        head: head.map(str::to_string),
-        main_name: "main".to_string(),
-    }
+    RepositorySnapshot::new(
+        current_branch.map(str::to_string),
+        head.map(str::to_string),
+        "main",
+    )
 }
 
 fn commit_meta(oid: &str, timestamp: i64, subject: &str) -> CommitMeta {
-    CommitMeta {
-        oid: oid.to_string(),
-        short_oid: oid.chars().take(7).collect(),
-        subject: subject.to_string(),
-        timestamp,
-    }
+    CommitMeta::new(oid, timestamp, subject)
 }
 
 fn populated_workflow_git(config_verbosity: &str) -> MockGit {
@@ -305,25 +300,22 @@ fn render_session_supplies_shared_context_to_populated_plan() {
     let repository = repository_snapshot(Some("feature"), Some("feature-oid"));
     let main_meta = commit_meta("main-oid", TEST_NOW - 120, "main tip");
     let branch_meta = commit_meta("feature-oid", TEST_NOW - 60, "feature tip");
-    let groups = vec![LaneGroup {
-        base_oid: Some("main-oid".to_string()),
-        base_meta: None,
-        main_distance: Some(0),
-        lanes: vec![Lane {
-            head_oid: "feature-oid".to_string(),
-            base_oid: Some("main-oid".to_string()),
-            branch_points: vec![BranchPoint {
-                oid: "feature-oid".to_string(),
-                names: vec!["feature".to_string()],
-                annotation: Some(BranchAnnotation {
-                    meta: branch_meta,
-                    commit_count: 1,
-                }),
-            }],
-            head_timestamp: TEST_NOW - 60,
-            contains_current: true,
-        }],
-    }];
+    let groups = vec![LaneGroup::new(
+        Some("main-oid".to_string()),
+        None,
+        Some(0),
+        vec![Lane::new(
+            "feature-oid",
+            Some("main-oid".to_string()),
+            vec![BranchPoint::new(
+                "feature-oid",
+                ["feature"],
+                Some(BranchAnnotation::new(branch_meta, 1)),
+            )],
+            TEST_NOW - 60,
+            true,
+        )],
+    )];
     let session = RenderSession::new(
         &args,
         &repository,

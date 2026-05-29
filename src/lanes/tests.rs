@@ -77,15 +77,8 @@ impl FakeLaneBackend {
     }
 
     fn with_meta(mut self, oid: &str, subject: &str, timestamp: i64) -> Self {
-        self.metas.insert(
-            oid.to_string(),
-            CommitMeta {
-                oid: oid.to_string(),
-                short_oid: oid.to_string(),
-                subject: subject.to_string(),
-                timestamp,
-            },
-        );
+        self.metas
+            .insert(oid.to_string(), CommitMeta::new(oid, timestamp, subject));
         self
     }
 
@@ -177,11 +170,11 @@ impl AncestryBackend for FakeLaneBackend {
 }
 
 fn point(oid: &str, names: &[&str]) -> BranchPoint {
-    BranchPoint {
-        oid: oid.to_string(),
-        names: names.iter().map(|name| (*name).to_string()).collect(),
-        annotation: None,
-    }
+    BranchPoint::new(oid, names.iter().copied(), None)
+}
+
+fn point_ref(oid: &str, names: &[&str]) -> BranchPointRef {
+    BranchPointRef::new(oid, names.iter().copied())
 }
 
 fn point_with_count_at(
@@ -191,38 +184,28 @@ fn point_with_count_at(
     subject: &str,
     timestamp: i64,
 ) -> BranchPoint {
-    BranchPoint {
-        oid: oid.to_string(),
-        names: names.iter().map(|name| (*name).to_string()).collect(),
-        annotation: Some(BranchAnnotation {
-            meta: CommitMeta {
-                oid: oid.to_string(),
-                short_oid: oid.to_string(),
-                subject: subject.to_string(),
-                timestamp,
-            },
+    BranchPoint::new(
+        oid,
+        names.iter().copied(),
+        Some(BranchAnnotation::new(
+            CommitMeta::new(oid, timestamp, subject),
             commit_count,
-        }),
-    }
+        )),
+    )
 }
 
 fn lane(oid: &str, base: Option<&str>, timestamp: i64, contains_current: bool) -> Lane {
-    Lane {
-        head_oid: oid.to_string(),
-        base_oid: base.map(ToOwned::to_owned),
-        branch_points: vec![point(oid, &[oid])],
-        head_timestamp: timestamp,
+    Lane::new(
+        oid,
+        base.map(ToOwned::to_owned),
+        vec![point(oid, &[oid])],
+        timestamp,
         contains_current,
-    }
+    )
 }
 
 fn lane_group(base: Option<&str>, main_distance: Option<usize>, lanes: Vec<Lane>) -> LaneGroup {
-    LaneGroup {
-        base_oid: base.map(ToOwned::to_owned),
-        base_meta: None,
-        main_distance,
-        lanes,
-    }
+    LaneGroup::new(base.map(ToOwned::to_owned), None, main_distance, lanes)
 }
 
 #[test]
@@ -248,10 +231,7 @@ fn maps_selected_branch_points_by_oid() {
     assert_eq!(points.len(), 1);
     assert_eq!(
         points.get("a").unwrap(),
-        &BranchPointRef {
-            oid: "a".to_string(),
-            names: vec!["alpha".to_string(), "zeta".to_string()],
-        }
+        &point_ref("a", &["alpha", "zeta"])
     );
 }
 
@@ -406,20 +386,8 @@ fn lane_group_order_uses_base_oid_after_timestamp_ties() {
 #[test]
 fn counts_each_branch_point_from_previous_visible_stack_point() {
     let mut points_by_oid = HashMap::new();
-    points_by_oid.insert(
-        "a".to_string(),
-        BranchPointRef {
-            oid: "a".to_string(),
-            names: vec!["feature/one".to_string()],
-        },
-    );
-    points_by_oid.insert(
-        "b".to_string(),
-        BranchPointRef {
-            oid: "b".to_string(),
-            names: vec!["feature/two".to_string()],
-        },
-    );
+    points_by_oid.insert("a".to_string(), point_ref("a", &["feature/one"]));
+    points_by_oid.insert("b".to_string(), point_ref("b", &["feature/two"]));
     let lane_path = LanePath {
         head_oid: "b".to_string(),
         base_oid: Some("main-oid".to_string()),
@@ -432,17 +400,11 @@ fn counts_each_branch_point_from_previous_visible_stack_point() {
         points,
         vec![
             BranchPointOnPath {
-                point: BranchPointRef {
-                    oid: "b".to_string(),
-                    names: vec!["feature/two".to_string()],
-                },
+                point: point_ref("b", &["feature/two"]),
                 commit_count: 1,
             },
             BranchPointOnPath {
-                point: BranchPointRef {
-                    oid: "a".to_string(),
-                    names: vec!["feature/one".to_string()],
-                },
+                point: point_ref("a", &["feature/one"]),
                 commit_count: 1,
             },
         ]
@@ -455,20 +417,8 @@ fn builds_lane_from_path_with_metadata_and_current_status() {
         .with_meta("a", "first", 10)
         .with_meta("b", "second", 20);
     let points_by_oid = HashMap::from([
-        (
-            "a".to_string(),
-            BranchPointRef {
-                oid: "a".to_string(),
-                names: vec!["feature/one".to_string()],
-            },
-        ),
-        (
-            "b".to_string(),
-            BranchPointRef {
-                oid: "b".to_string(),
-                names: vec!["feature/two".to_string()],
-            },
-        ),
+        ("a".to_string(), point_ref("a", &["feature/one"])),
+        ("b".to_string(), point_ref("b", &["feature/two"])),
     ]);
     let lane_path = LanePath {
         head_oid: "b".to_string(),
@@ -503,13 +453,7 @@ fn builds_lane_from_path_with_metadata_and_current_status() {
 
 #[test]
 fn includes_head_branch_point_when_ancestry_path_does_not_contain_it() {
-    let points_by_oid = HashMap::from([(
-        "head".to_string(),
-        BranchPointRef {
-            oid: "head".to_string(),
-            names: vec!["feature/head".to_string()],
-        },
-    )]);
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
     let lane_path = LanePath {
         head_oid: "head".to_string(),
         base_oid: None,
@@ -521,10 +465,7 @@ fn includes_head_branch_point_when_ancestry_path_does_not_contain_it() {
     assert_eq!(
         points,
         vec![BranchPointOnPath {
-            point: BranchPointRef {
-                oid: "head".to_string(),
-                names: vec!["feature/head".to_string()],
-            },
+            point: point_ref("head", &["feature/head"]),
             commit_count: 2,
         }]
     );
