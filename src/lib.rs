@@ -6,9 +6,8 @@ mod lanes;
 mod model;
 mod render;
 mod terminal;
+#[cfg(test)]
+mod test_support;
 
 pub use app::run_from_env;
 pub use error::{GitLsError, Result};
-
-#[cfg(test)]
-mod tests;

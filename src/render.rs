@@ -7,7 +7,7 @@ use anstyle::{Ansi256Color, Style};
 use crate::cli::{ColourMode, Palette, Verbosity};
 use crate::model::{BranchAnnotation, BranchPoint, CommitMeta, Lane, LaneGroup};
 
-pub(crate) const COLLAPSED_MAIN_GLYPH: &str = "⁝";
+const COLLAPSED_MAIN_GLYPH: &str = "⁝";
 const MAIN_SPINE_GLYPH: &str = "│";
 const MAIN_COMMIT_GLYPH: &str = "◇";
 const CURRENT_MAIN_COMMIT_GLYPH: &str = "◆";
@@ -19,8 +19,8 @@ const ANSI_MUTED_TEXT: u8 = 251;
 const ANSI_ORPHANED_LABEL: u8 = 255;
 
 pub(crate) struct Colours {
-    pub(crate) enabled: bool,
-    pub(crate) palette: &'static [u8],
+    enabled: bool,
+    palette: &'static [u8],
 }
 
 impl Colours {
@@ -36,7 +36,7 @@ impl Colours {
         }
     }
 
-    pub(crate) fn paint(&self, text: &str, style: Style) -> String {
+    fn paint(&self, text: &str, style: Style) -> String {
         if !self.enabled || text.is_empty() {
             text.to_string()
         } else {
@@ -44,14 +44,14 @@ impl Colours {
         }
     }
 
-    pub(crate) fn stack(&self, index: usize, text: &str) -> String {
+    fn stack(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
             Ansi256Color(self.palette[index % self.palette.len()]).on_default(),
         )
     }
 
-    pub(crate) fn current_stack(&self, index: usize, text: &str) -> String {
+    fn current_stack(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
             Ansi256Color(self.palette[index % self.palette.len()])
@@ -61,7 +61,7 @@ impl Colours {
         )
     }
 
-    pub(crate) fn current_indicator(&self, index: usize, text: &str) -> String {
+    fn current_indicator(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
             Ansi256Color(self.palette[index % self.palette.len()])
@@ -70,48 +70,48 @@ impl Colours {
         )
     }
 
-    pub(crate) fn dim(&self, text: &str) -> String {
+    fn dim(&self, text: &str) -> String {
         self.paint(text, Style::new().dimmed())
     }
 
-    pub(crate) fn muted_text(&self, text: &str) -> String {
+    fn muted_text(&self, text: &str) -> String {
         self.paint(text, Ansi256Color(ANSI_MUTED_TEXT).on_default())
     }
 
-    pub(crate) fn metadata_age(&self, text: &str) -> String {
+    fn metadata_age(&self, text: &str) -> String {
         self.muted_text(text)
     }
 
-    pub(crate) fn metadata_count(&self, text: &str) -> String {
+    fn metadata_count(&self, text: &str) -> String {
         self.paint(text, Ansi256Color(ANSI_METADATA_COUNT).on_default())
     }
 
-    pub(crate) fn metadata_oid(&self, text: &str) -> String {
+    fn metadata_oid(&self, text: &str) -> String {
         self.muted_text(text)
     }
 
-    pub(crate) fn metadata_punctuation(&self, text: &str) -> String {
+    fn metadata_punctuation(&self, text: &str) -> String {
         self.muted_text(text)
     }
 
-    pub(crate) fn commit_title(&self, text: &str) -> String {
+    fn commit_title(&self, text: &str) -> String {
         self.muted_text(text)
     }
 
-    pub(crate) fn orphaned_name(&self, text: &str) -> String {
+    fn orphaned_name(&self, text: &str) -> String {
         self.metadata_count(text)
     }
 
-    pub(crate) fn orphaned_glyph(&self, text: &str) -> String {
+    fn orphaned_glyph(&self, text: &str) -> String {
         self.paint(text, Ansi256Color(ANSI_METADATA_COUNT).on_default().bold())
     }
 
-    pub(crate) fn orphaned_status(&self, text: &str) -> String {
+    fn orphaned_status(&self, text: &str) -> String {
         self.paint(text, Ansi256Color(ANSI_ORPHANED_LABEL).on_default().bold())
     }
 }
 
-pub(crate) fn marker_for(
+fn marker_for(
     point: &BranchPoint,
     current_branch: Option<&str>,
     head: Option<&str>,
@@ -125,7 +125,7 @@ pub(crate) fn marker_for(
     }
 }
 
-pub(crate) fn is_current_branch_point(point: &BranchPoint, current_branch: Option<&str>) -> bool {
+fn is_current_branch_point(point: &BranchPoint, current_branch: Option<&str>) -> bool {
     current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
 }
 
@@ -136,7 +136,7 @@ pub(crate) fn current_unix_timestamp() -> i64 {
     }
 }
 
-pub(crate) fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
+fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
     const MINUTE: i64 = 60;
     const HOUR: i64 = 60 * MINUTE;
     const DAY: i64 = 24 * HOUR;
@@ -159,29 +159,26 @@ pub(crate) fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct MetadataWidths {
-    pub(crate) age: usize,
-    pub(crate) count: usize,
+    age: usize,
+    count: usize,
 }
 
-pub(crate) fn branch_metadata_columns(
-    annotation: &BranchAnnotation,
-    now_timestamp: i64,
-) -> (String, String) {
+fn branch_metadata_columns(annotation: &BranchAnnotation, now_timestamp: i64) -> (String, String) {
     (
         format_age(now_timestamp, annotation.meta.timestamp),
         annotation.commit_count.to_string(),
     )
 }
 
-pub(crate) fn trunk_metadata_age(meta: &CommitMeta, now_timestamp: i64) -> String {
+fn trunk_metadata_age(meta: &CommitMeta, now_timestamp: i64) -> String {
     format_age(now_timestamp, meta.timestamp)
 }
 
-pub(crate) fn trunk_count_placeholder(widths: MetadataWidths) -> String {
+fn trunk_count_placeholder(widths: MetadataWidths) -> String {
     "-".repeat(widths.count.max(1))
 }
 
-pub(crate) fn format_metadata_prefix(
+fn format_metadata_prefix(
     age: &str,
     count: &str,
     short_oid: &str,
@@ -198,7 +195,7 @@ pub(crate) fn format_metadata_prefix(
     format!("{age} {open}{count}{comma}{short_oid}{close}")
 }
 
-pub(crate) fn display_names(
+fn display_names(
     point: &BranchPoint,
     current_branch: Option<&str>,
     colour_index: usize,
@@ -246,7 +243,7 @@ pub(crate) fn display_names(
     }
 }
 
-pub(crate) fn display_orphaned_names(
+fn display_orphaned_names(
     point: &BranchPoint,
     now_timestamp: i64,
     verbosity: Verbosity,
@@ -287,11 +284,7 @@ pub(crate) fn display_orphaned_names(
     }
 }
 
-pub(crate) fn current_row_indicator(
-    is_current: bool,
-    colour_index: usize,
-    colours: &Colours,
-) -> String {
+fn current_row_indicator(is_current: bool, colour_index: usize, colours: &Colours) -> String {
     if is_current {
         colours.current_indicator(colour_index, "▶")
     } else {
@@ -299,7 +292,7 @@ pub(crate) fn current_row_indicator(
     }
 }
 
-pub(crate) fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> String {
+fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> String {
     if is_current {
         colours.orphaned_glyph("▶")
     } else {
@@ -307,19 +300,19 @@ pub(crate) fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> Str
     }
 }
 
-pub(crate) fn render_row(indicator: &str, content: &str) -> String {
+fn render_row(indicator: &str, content: &str) -> String {
     format!("{indicator} {content}")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct LaneRenderLayout {
-    pub(crate) lane_count: usize,
-    pub(crate) lane_field_width: usize,
-    pub(crate) colour_offset: usize,
+struct LaneRenderLayout {
+    lane_count: usize,
+    lane_field_width: usize,
+    colour_offset: usize,
 }
 
 impl LaneRenderLayout {
-    pub(crate) fn new(lane_count: usize, lane_field_width: usize, colour_offset: usize) -> Self {
+    fn new(lane_count: usize, lane_field_width: usize, colour_offset: usize) -> Self {
         Self {
             lane_count,
             lane_field_width,
@@ -327,16 +320,16 @@ impl LaneRenderLayout {
         }
     }
 
-    pub(crate) fn empty() -> Self {
+    fn empty() -> Self {
         Self::new(0, 0, 0)
     }
 
-    pub(crate) fn lane_padding(self) -> usize {
+    fn lane_padding(self) -> usize {
         self.lane_field_width.saturating_sub(self.lane_count)
     }
 }
 
-pub(crate) fn row_prefix(
+fn row_prefix(
     lane_index: usize,
     layout: LaneRenderLayout,
     point: &BranchPoint,
@@ -374,11 +367,11 @@ pub(crate) fn row_prefix(
     format!("{TREE_LEFT_PADDING}{}", slots.join(" "))
 }
 
-pub(crate) fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
+fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
     current_branch.is_some_and(|branch| branch == main_name)
 }
 
-pub(crate) fn main_label(ctx: &RenderContext<'_>) -> String {
+fn main_label(ctx: &RenderContext<'_>) -> String {
     let name = if main_is_current(ctx.main_name, ctx.current_branch) {
         ctx.colours.current_stack(0, ctx.main_name)
     } else {
@@ -402,7 +395,7 @@ pub(crate) fn main_label(ctx: &RenderContext<'_>) -> String {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MainSpine {
+enum MainSpine {
     Hidden,
     Future,
     FutureLine,
@@ -410,12 +403,12 @@ pub(crate) enum MainSpine {
 }
 
 impl MainSpine {
-    pub(crate) fn is_connected(self) -> bool {
+    fn is_connected(self) -> bool {
         matches!(self, Self::Future | Self::FutureLine | Self::Connected)
     }
 }
 
-pub(crate) fn trunk_prefix(
+fn trunk_prefix(
     layout: LaneRenderLayout,
     main_is_current: bool,
     main_spine: MainSpine,
@@ -453,12 +446,12 @@ pub(crate) fn trunk_prefix(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum TrunkLabel<'a> {
+enum TrunkLabel<'a> {
     Main,
     Commit(&'a CommitMeta),
 }
 
-pub(crate) fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> String {
+fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> String {
     match label {
         TrunkLabel::Main => main_label(ctx),
         TrunkLabel::Commit(meta) => {
@@ -515,7 +508,7 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) colours: &'a Colours,
 }
 
-pub(crate) fn render_group(
+fn render_group(
     lanes: &[Lane],
     lane_field_width: usize,
     colour_offset: usize,
@@ -584,7 +577,7 @@ pub(crate) fn render_group(
     output
 }
 
-pub(crate) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<String> {
+fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<String> {
     let mut output = Vec::new();
 
     for lane in lanes {
@@ -614,7 +607,7 @@ pub(crate) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> 
     output
 }
 
-pub(crate) fn render_collapsed_main_segment(
+fn render_collapsed_main_segment(
     commit_count: usize,
     ctx: &RenderContext<'_>,
 ) -> impl IntoIterator<Item = String> {
@@ -658,7 +651,7 @@ pub(crate) fn render_omitted_main_past(colours: &Colours) -> String {
     render_row(" ", &line)
 }
 
-pub(crate) fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
+fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
     groups
         .iter()
         .filter(|group| group.main_distance.is_some())
@@ -667,7 +660,7 @@ pub(crate) fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
         .unwrap_or(0)
 }
 
-pub(crate) fn record_metadata_widths(widths: &mut MetadataWidths, age: &str, count: &str) {
+fn record_metadata_widths(widths: &mut MetadataWidths, age: &str, count: &str) {
     widths.age = widths.age.max(age.len());
     widths.count = widths.count.max(count.len());
 }
@@ -769,4 +762,634 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{Palette, Verbosity};
+    use crate::model::{BranchAnnotation, BranchPoint, CommitMeta, Lane, LaneGroup};
+    use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
+
+    fn point(oid: &str, names: &[&str]) -> BranchPoint {
+        BranchPoint {
+            oid: oid.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: None,
+        }
+    }
+
+    fn point_with_count(
+        oid: &str,
+        names: &[&str],
+        commit_count: usize,
+        subject: &str,
+    ) -> BranchPoint {
+        point_with_count_at(oid, names, commit_count, subject, TEST_COMMIT_TIME)
+    }
+
+    fn point_with_count_at(
+        oid: &str,
+        names: &[&str],
+        commit_count: usize,
+        subject: &str,
+        timestamp: i64,
+    ) -> BranchPoint {
+        BranchPoint {
+            oid: oid.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: Some(BranchAnnotation {
+                meta: CommitMeta {
+                    oid: oid.to_string(),
+                    short_oid: oid.to_string(),
+                    subject: subject.to_string(),
+                    timestamp,
+                },
+                commit_count,
+            }),
+        }
+    }
+
+    fn meta(oid: &str, subject: &str) -> CommitMeta {
+        CommitMeta {
+            oid: oid.to_string(),
+            short_oid: oid.to_string(),
+            subject: subject.to_string(),
+            timestamp: 0,
+        }
+    }
+
+    fn test_colours(enabled: bool) -> Colours {
+        Colours {
+            enabled,
+            palette: Palette::Classic.ansi_colours(),
+        }
+    }
+
+    #[test]
+    fn renders_markers_names_and_trunk() {
+        let colours = test_colours(false);
+        let lanes = vec![
+            Lane {
+                head_oid: "a".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("a", &["feature/one"])],
+                head_timestamp: 1,
+                contains_current: false,
+            },
+            Lane {
+                head_oid: "b".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("b", &["feature/two"])],
+                head_timestamp: 2,
+                contains_current: true,
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature/two"),
+            head: Some("b"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
+
+        assert_eq!(
+            output,
+            vec![
+                "    ◯   feature/one".to_string(),
+                "▶ ⁝ │ ● feature/two".to_string(),
+                "  ◇─┴─┘ main".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_exactly_one_future_line_above_main_node() {
+        let colours = test_colours(false);
+        let lanes = vec![
+            Lane {
+                head_oid: "a".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("a", &["feature/one"])],
+                head_timestamp: 1,
+                contains_current: false,
+            },
+            Lane {
+                head_oid: "b".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("b", &["feature/two"])],
+                head_timestamp: 2,
+                contains_current: true,
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature/two"),
+            head: Some("b"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
+
+        assert_eq!(
+            output
+                .iter()
+                .filter(|line| line.contains(COLLAPSED_MAIN_GLYPH))
+                .count(),
+            1
+        );
+        assert_eq!(output[output.len() - 2], "▶ ⁝ │ ● feature/two");
+        assert_eq!(output[output.len() - 1], "  ◇─┴─┘ main");
+    }
+
+    #[test]
+    fn renders_branch_metadata_with_commit_count_for_multi_commit_branch() {
+        let colours = test_colours(false);
+        let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
+
+        let label = display_names(
+            &point,
+            Some("other"),
+            0,
+            TEST_NOW,
+            Verbosity::High,
+            MetadataWidths::default(),
+            &colours,
+        );
+
+        assert_eq!(label, "2m (3, branch-head) feature/topic finish topic");
+    }
+
+    #[test]
+    fn renders_summary_branch_metadata_without_commit_title() {
+        let colours = test_colours(false);
+        let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
+
+        let label = display_names(
+            &point,
+            Some("other"),
+            0,
+            TEST_NOW,
+            Verbosity::Medium,
+            MetadataWidths::default(),
+            &colours,
+        );
+
+        assert_eq!(label, "2m (3, branch-head) feature/topic");
+    }
+
+    #[test]
+    fn renders_single_main_based_lane_with_main_spine() {
+        let colours = test_colours(false);
+        let lanes = vec![Lane {
+            head_oid: "a".to_string(),
+            base_oid: Some("main".to_string()),
+            branch_points: vec![point("a", &["feature/one"])],
+            head_timestamp: 1,
+            contains_current: true,
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature/one"),
+            head: Some("a"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
+
+        assert_eq!(
+            output,
+            vec!["▶ ⁝ ● feature/one".to_string(), "  ◇─┘ main".to_string()]
+        );
+    }
+
+    #[test]
+    fn renders_current_main_on_trunk_row() {
+        let colours = test_colours(false);
+        let lanes = vec![Lane {
+            head_oid: "a".to_string(),
+            base_oid: Some("main".to_string()),
+            branch_points: vec![point("a", &["feature/one"])],
+            head_timestamp: 1,
+            contains_current: false,
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("main"),
+            head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
+
+        assert_eq!(
+            output,
+            vec!["  ⁝ ◯ feature/one".to_string(), "▶ ◆─┘ main".to_string()]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_lane_with_single_warning_marker() {
+        let colours = test_colours(false);
+        let lanes = vec![Lane {
+            head_oid: "backup".to_string(),
+            base_oid: None,
+            branch_points: vec![point("backup", &["test-branch-name"])],
+            head_timestamp: 1,
+            contains_current: false,
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("main"),
+            head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_orphaned_group(&lanes, &ctx);
+
+        assert_eq!(
+            output,
+            vec!["  ⁝ ⦸ test-branch-name (orphaned)".to_string()]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_only_groups_around_main_tip() {
+        let colours = test_colours(false);
+        let groups = vec![LaneGroup {
+            base_oid: None,
+            base_meta: None,
+            main_distance: None,
+            lanes: vec![Lane {
+                head_oid: "backup".to_string(),
+                base_oid: None,
+                branch_points: vec![point("backup", &["test-branch-name"])],
+                head_timestamp: 1,
+                contains_current: false,
+            }],
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("main"),
+            head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                "  ⁝".to_string(),
+                "▶ ◆── main".to_string(),
+                "  ⁝ ⦸ test-branch-name (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_main_metadata_in_aligned_annotation_column() {
+        let colours = test_colours(false);
+        let main_meta = CommitMeta {
+            oid: "main-oid".to_string(),
+            short_oid: "main-oi".to_string(),
+            subject: "main tip".to_string(),
+            timestamp: TEST_COMMIT_TIME,
+        };
+        let groups = vec![LaneGroup {
+            base_oid: None,
+            base_meta: None,
+            main_distance: None,
+            lanes: vec![Lane {
+                head_oid: "backup-oid".to_string(),
+                base_oid: None,
+                branch_points: vec![point_with_count_at(
+                    "backup-oid",
+                    &["backup"],
+                    10,
+                    "backup tip",
+                    TEST_COMMIT_TIME,
+                )],
+                head_timestamp: TEST_COMMIT_TIME,
+                contains_current: false,
+            }],
+        }];
+        let metadata_widths =
+            calculate_metadata_widths(&groups, Some(&main_meta), TEST_NOW, Verbosity::Medium);
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: Some(&main_meta),
+            current_branch: Some("main"),
+            head: Some("main-oid"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Medium,
+            metadata_widths,
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                "  ⁝".to_string(),
+                "▶ ◆── 2m (--, main-oi) main".to_string(),
+                "  ⁝ ⦸ 2m (10, backup-oid) backup (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_groups_below_connected_stacks() {
+        let colours = test_colours(false);
+        let groups = vec![
+            LaneGroup {
+                base_oid: Some("main".to_string()),
+                base_meta: None,
+                main_distance: Some(0),
+                lanes: vec![Lane {
+                    head_oid: "feature".to_string(),
+                    base_oid: Some("main".to_string()),
+                    branch_points: vec![point("feature", &["feature/current"])],
+                    head_timestamp: 2,
+                    contains_current: true,
+                }],
+            },
+            LaneGroup {
+                base_oid: None,
+                base_meta: None,
+                main_distance: None,
+                lanes: vec![
+                    Lane {
+                        head_oid: "orphan-a".to_string(),
+                        base_oid: None,
+                        branch_points: vec![point("orphan-a", &["orphan-A"])],
+                        head_timestamp: 1,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "orphan-b".to_string(),
+                        base_oid: None,
+                        branch_points: vec![point("orphan-b", &["orphan-B"])],
+                        head_timestamp: 1,
+                        contains_current: false,
+                    },
+                ],
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature/current"),
+            head: Some("feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                String::new(),
+                "▶ ⁝ ● feature/current".to_string(),
+                "  ◇─┘ main".to_string(),
+                "  ⁝ ⦸ orphan-A (orphaned)".to_string(),
+                "  ⁝ ⦸ orphan-B (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_old_main_groups_with_collapsed_main_history() {
+        let colours = test_colours(false);
+        let groups = vec![
+            LaneGroup {
+                base_oid: Some("main".to_string()),
+                base_meta: Some(meta("main", "main tip")),
+                main_distance: Some(0),
+                lanes: vec![
+                    Lane {
+                        head_oid: "feature-one".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-one", &["feature/one"])],
+                        head_timestamp: 4,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "feature-two".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-two", &["feature/two"])],
+                        head_timestamp: 3,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "feature-current".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-current", &["feature/current"])],
+                        head_timestamp: 2,
+                        contains_current: false,
+                    },
+                ],
+            },
+            LaneGroup {
+                base_oid: Some("old-main".to_string()),
+                base_meta: Some(meta(
+                    "old-main",
+                    "chore: this is an old commit in main history",
+                )),
+                main_distance: Some(842),
+                lanes: vec![Lane {
+                    head_oid: "old-feature".to_string(),
+                    base_oid: Some("old-main".to_string()),
+                    branch_points: vec![point("old-feature", &["dyt/tgs_api"])],
+                    head_timestamp: 1,
+                    contains_current: true,
+                }],
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("dyt/tgs_api"),
+            head: Some("old-feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                String::new(),
+                "    ◯     feature/one".to_string(),
+                "    │ ◯   feature/two".to_string(),
+                "  ⁝ │ │ ◯ feature/current".to_string(),
+                "  ◇─┴─┴─┘ main".to_string(),
+                "  │".to_string(),
+                "  ⁝ (842 commits on main)".to_string(),
+                "  │".to_string(),
+                "▶ │     ● dyt/tgs_api".to_string(),
+                "  ◇─────┘ chore: this is an old commit in main history".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn colours_text_when_enabled() {
+        let colours = test_colours(true);
+
+        assert_eq!(colours.stack(0, "x"), "\x1b[38;5;41mx\x1b[0m");
+        assert_eq!(
+            colours.current_stack(0, "x"),
+            "\x1b[1m\x1b[4m\x1b[38;5;41mx\x1b[0m"
+        );
+        assert_eq!(
+            colours.current_indicator(0, "x"),
+            "\x1b[1m\x1b[38;5;41mx\x1b[0m"
+        );
+        assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
+        assert_eq!(colours.muted_text("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_age("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_count("x"), "\x1b[38;5;255mx\x1b[0m");
+        assert_eq!(colours.metadata_oid("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_punctuation("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.commit_title("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.orphaned_name("x"), "\x1b[38;5;255mx\x1b[0m");
+        assert_eq!(colours.orphaned_glyph("x"), "\x1b[1m\x1b[38;5;255mx\x1b[0m");
+        assert_eq!(
+            colours.orphaned_status("x"),
+            "\x1b[1m\x1b[38;5;255mx\x1b[0m"
+        );
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("main"),
+            head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+        assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m");
+        assert_eq!(
+            trunk_prefix(LaneRenderLayout::empty(), true, MainSpine::Hidden, &colours),
+            "\x1b[38;5;41m◆\x1b[0m\x1b[38;5;41m──\x1b[0m"
+        );
+        let inactive_main_ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature"),
+            head: Some("feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+        assert_eq!(main_label(&inactive_main_ctx), "\x1b[38;5;41mmain\x1b[0m");
+        assert_eq!(
+            trunk_prefix(
+                LaneRenderLayout::empty(),
+                false,
+                MainSpine::Hidden,
+                &colours
+            ),
+            "\x1b[38;5;41m◇\x1b[0m\x1b[38;5;41m──\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn main_reserves_first_palette_colour() {
+        let colours = test_colours(true);
+        let groups = vec![LaneGroup {
+            base_oid: Some("main".to_string()),
+            base_meta: None,
+            main_distance: Some(0),
+            lanes: vec![Lane {
+                head_oid: "feature".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("feature", &["feature/one"])],
+                head_timestamp: 1,
+                contains_current: false,
+            }],
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature/one"),
+            head: Some("feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert!(output[1].contains("\x1b[38;5;203m●\x1b[0m"));
+        assert!(output[2].contains("\x1b[38;5;41m◇\x1b[0m"));
+        assert!(output[2].contains("\x1b[38;5;41mmain\x1b[0m"));
+    }
 }

@@ -67,3 +67,17 @@ pub(crate) enum BuiltLanes {
         repository: RepositorySnapshot,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_short_oid_uses_fixed_seven_character_width() {
+        assert_eq!(
+            display_short_oid("309567f69abcdef0123456789abcdef01234567"),
+            "309567f"
+        );
+        assert_eq!(display_short_oid("abc123"), "abc123");
+    }
+}

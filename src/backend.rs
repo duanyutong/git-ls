@@ -115,7 +115,7 @@ fn shell_query_branch_names<G: GitCommand + ?Sized>(
     Ok(lines(&git.run(&args, false)?))
 }
 
-pub(crate) fn lines(output: &str) -> Vec<String> {
+fn lines(output: &str) -> Vec<String> {
     output
         .lines()
         .map(str::trim)
@@ -186,7 +186,7 @@ fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
     Ok(())
 }
 
-pub(crate) fn shell_cache_commit_meta(
+fn shell_cache_commit_meta(
     alias: &str,
     record: &str,
     cache: &mut HashMap<String, CommitMeta>,
@@ -304,7 +304,7 @@ impl GixBackend {
         Self::discover_from(".")
     }
 
-    pub(crate) fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
+    fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
         let mut repo = gix::discover_with_environment_overrides(directory)
             .map_err(|source| gix_error("discover repository", source))?;
         repo.object_cache_size_if_unset(4 * 1024 * 1024);
@@ -502,5 +502,143 @@ fn gix_error(context: &'static str, source: impl std::fmt::Display) -> GitLsErro
     GitLsError::Gix {
         context,
         detail: source.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::process::Command as TestCommand;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn shell_commit_metadata_uses_fixed_display_oid() {
+        let mut cache = HashMap::new();
+
+        shell_cache_commit_meta(
+            "branch-head",
+            "309567f69abcdef0123456789abcdef01234567\x001700000001\x00subject",
+            &mut cache,
+        )
+        .unwrap();
+
+        let meta = cache.get("branch-head").unwrap();
+        assert_eq!(meta.oid, "309567f69abcdef0123456789abcdef01234567");
+        assert_eq!(meta.short_oid, "309567f");
+    }
+
+    fn git(repo: &Path, args: &[&str]) -> String {
+        let output = TestCommand::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim_end_matches('\n')
+            .to_string()
+    }
+
+    fn commit_file(repo: &Path, path: &str, content: &str, message: &str) -> String {
+        std::fs::write(repo.join(path), content).unwrap();
+        git(repo, &["add", path]);
+        git(repo, &["commit", "-m", message]);
+        git(repo, &["rev-parse", "HEAD"])
+    }
+
+    fn parity_repo() -> (TempDir, String, String, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        git(repo, &["init", "--initial-branch", "main"]);
+        git(repo, &["config", "user.name", "git-ls tests"]);
+        git(repo, &["config", "user.email", "git-ls@example.invalid"]);
+
+        commit_file(repo, "root.txt", "root\n", "root");
+        git(repo, &["checkout", "-b", "side"]);
+        let side_oid = commit_file(repo, "side.txt", "side\n", "side before base");
+
+        git(repo, &["checkout", "main"]);
+        let base_oid = commit_file(repo, "base.txt", "base\n", "base");
+        git(repo, &["checkout", "-b", "topic"]);
+        commit_file(repo, "topic.txt", "topic\n", "topic");
+        git(repo, &["merge", "--no-ff", "side", "-m", "merge side"]);
+        let head_oid = git(repo, &["rev-parse", "HEAD"]);
+
+        (temp, base_oid, head_oid, side_oid)
+    }
+
+    #[test]
+    fn normalises_line_output() {
+        assert_eq!(
+            lines("  a\n\n b \n\t\nc"),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(non_empty("  value \n"), Some("value".to_string()));
+        assert_eq!(non_empty(" \n"), None);
+    }
+
+    #[test]
+    fn gix_backend_matches_git_ancestry_path() {
+        let (temp, base_oid, head_oid, side_oid) = parity_repo();
+        let repo = temp.path();
+        let backend = GixBackend::discover_from(repo).unwrap();
+        let shell_path = lines(&git(
+            repo,
+            &[
+                "rev-list",
+                "--reverse",
+                "--ancestry-path",
+                &format!("{base_oid}..{head_oid}"),
+            ],
+        ));
+
+        assert_eq!(
+            backend.merge_base(&base_oid, &head_oid).unwrap(),
+            Some(base_oid.clone())
+        );
+        assert_eq!(
+            backend.ancestry_path(Some(&base_oid), &head_oid).unwrap(),
+            shell_path
+        );
+        assert!(!shell_path.contains(&side_oid));
+    }
+
+    #[test]
+    fn gix_backend_reads_repository_snapshot_and_commit_metadata() {
+        let (temp, _base_oid, head_oid, _side_oid) = parity_repo();
+        let repo = temp.path();
+        git(repo, &["config", "branchless.core.mainBranch", "trunk"]);
+
+        let backend = GixBackend::discover_from(repo).unwrap();
+        let (head, current_branch) = backend.current_head_and_branch().unwrap();
+        let branches = backend.local_branches_by_oid().unwrap();
+        let mut cache = HashMap::new();
+        backend
+            .cache_commit_metas(&[&head_oid], &mut cache)
+            .unwrap();
+
+        assert_eq!(head, Some(head_oid.clone()));
+        assert_eq!(current_branch, Some("topic".to_string()));
+        assert!(
+            branches
+                .get(&head_oid)
+                .is_some_and(|names| names.contains(&"topic".to_string()))
+        );
+        assert_eq!(backend.main_branch_name().unwrap(), "trunk");
+        let meta = cache.get(&head_oid).unwrap();
+        assert_eq!(meta.short_oid, display_short_oid(&head_oid));
+        assert_eq!(meta.subject, "merge side");
     }
 }
