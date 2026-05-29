@@ -5,7 +5,7 @@
 
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
-git_ls_unit_ignore_regex := '(^|/)(src/main\.rs|src/backend/process\.rs|src/test_support\.rs)$'
+git_ls_unit_ignore_regex := '(^|/)(src/main\.rs|src/app/env\.rs|src/backend/(gix|process)\.rs|src/terminal/detect\.rs|src/test_support\.rs)$'
 xtask_unit_ignore_regex := '(^|/)xtask/src/(git|main|version)\.rs$'
 
 # Show every recipe with its docstring.
@@ -34,8 +34,8 @@ coverage-package-baseline:
 
 # Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
 coverage-unit-baseline:
-    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90 --fail-under-file-lines 80 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
-    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95 --fail-under-file-lines 90 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
+    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 99 --fail-under-file-lines 99 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
+    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 100 --fail-under-file-lines 99 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
 
 # Build the optimised binary.
 build-release:

@@ -115,6 +115,20 @@ mod tests {
     }
 
     #[test]
+    fn treats_malformed_conventional_scopes_as_patch() {
+        let policy = policy_from_message("feat(cli: add json output").expect("policy parses");
+
+        assert_eq!(policy.bump, Bump::Patch);
+    }
+
+    #[test]
+    fn treats_non_lowercase_conventional_types_as_patch() {
+        let policy = policy_from_message("Feat(cli): add json output").expect("policy parses");
+
+        assert_eq!(policy.bump, Bump::Patch);
+    }
+
+    #[test]
     fn treats_feature_commits_as_minor() {
         let policy = policy_from_message("feat(cli): add json output").expect("policy parses");
 

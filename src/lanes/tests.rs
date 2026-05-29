@@ -236,6 +236,28 @@ fn maps_selected_branch_points_by_oid() {
 }
 
 #[test]
+fn rejects_ambiguous_main_revsets_before_lane_construction() {
+    let git = FakeLaneBackend::default().with_revset("main()", false, &["one", "two"]);
+    let args = RuntimeOptions {
+        revset: "draft()".to_string(),
+        hidden: false,
+        verbosity: Verbosity::Low,
+        backend: Backend::Gix,
+        order: Order::Newest,
+        colour_mode: ColourMode::Never,
+        palette: Palette::Classic,
+    };
+    let mut cache = HashMap::new();
+
+    let error = build_lanes(&git, &args, &mut cache).unwrap_err();
+
+    assert!(matches!(
+        error,
+        GitLsError::AmbiguousMainRevset { count } if count == 2
+    ));
+}
+
+#[test]
 fn orders_lanes_by_time_and_oid_without_current_promotion() {
     let lanes = vec![
         lane("older", Some("main"), 10, false),
@@ -297,6 +319,53 @@ fn groups_lanes_by_base_time_without_current_promotion() {
 }
 
 #[test]
+fn groups_lanes_with_base_oid_tie_breaker_when_timestamps_match() {
+    let lanes = vec![
+        lane("b", Some("base-b"), 10, false),
+        lane("a", Some("base-a"), 10, false),
+    ];
+
+    let groups = grouped_by_base(lanes, Order::Newest);
+
+    assert_eq!(groups[0].0, Some("base-a".to_string()));
+    assert_eq!(groups[1].0, Some("base-b".to_string()));
+}
+
+#[test]
+fn lane_group_order_places_main_history_before_orphaned_groups() {
+    let mut groups = [
+        lane_group(None, None, vec![lane("orphan", None, 100, false)]),
+        lane_group(
+            Some("main"),
+            Some(0),
+            vec![lane("connected", Some("main"), 1, false)],
+        ),
+    ];
+
+    groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, Order::Newest));
+
+    assert_eq!(groups[0].base_oid, Some("main".to_string()));
+    assert_eq!(groups[1].base_oid, None);
+}
+
+#[test]
+fn lane_group_order_places_orphaned_groups_after_main_history() {
+    let mut groups = [
+        lane_group(
+            Some("main"),
+            Some(0),
+            vec![lane("connected", Some("main"), 1, false)],
+        ),
+        lane_group(None, None, vec![lane("orphan", None, 100, false)]),
+    ];
+
+    groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, Order::Newest));
+
+    assert_eq!(groups[0].base_oid, Some("main".to_string()));
+    assert_eq!(groups[1].base_oid, None);
+}
+
+#[test]
 fn builds_lane_groups_with_main_history_distances() {
     let git = FakeLaneBackend::default()
         .with_meta("old-main", "old base", 1_700_000_001)
@@ -326,6 +395,24 @@ fn builds_lane_groups_with_main_history_distances() {
             .map(|meta| meta.subject.as_str()),
         Some("old base")
     );
+}
+
+#[test]
+fn builds_lane_groups_without_main_distance_for_empty_or_orphaned_base_paths() {
+    let git = FakeLaneBackend::default()
+        .with_meta("old-main", "old base", 1_700_000_001)
+        .with_ancestry_path(Some("old-main"), "main-oid", &[]);
+    let lanes = vec![
+        lane("old", Some("old-main"), 2, false),
+        lane("orphan", None, 1, false),
+    ];
+    let mut cache = HashMap::new();
+
+    let groups = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap();
+
+    assert_eq!(groups.len(), 2);
+    assert!(groups.iter().all(|group| group.main_distance.is_none()));
+    assert!(groups.iter().any(|group| group.base_oid.is_none()));
 }
 
 #[test]
@@ -449,6 +536,30 @@ fn builds_lane_from_path_with_metadata_and_current_status() {
             point_with_count_at("a", &["feature/one"], 1, "first", 10),
         ]
     );
+}
+
+#[test]
+fn skips_lane_paths_without_visible_branch_points() {
+    let git = FakeLaneBackend::default();
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main".to_string()),
+        ancestry_path: vec!["parent".to_string(), "head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let lane = build_lane_from_path(
+        &git,
+        &lane_path,
+        &HashMap::new(),
+        None,
+        None,
+        Verbosity::Low,
+        &mut cache,
+    )
+    .unwrap();
+
+    assert_eq!(lane, None);
 }
 
 #[test]

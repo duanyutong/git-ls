@@ -1,4 +1,7 @@
-use crate::render::graph::{current_row_indicator, marker_for, orphaned_row_indicator};
+use crate::render::graph::{
+    LaneRenderLayout, MainSpine, current_row_indicator, marker_for, orphaned_row_indicator,
+    row_prefix,
+};
 
 use super::{point, test_colours};
 
@@ -21,4 +24,24 @@ fn renders_current_and_orphaned_row_indicators() {
     assert_eq!(current_row_indicator(false, 0, &colours), " ");
     assert_eq!(orphaned_row_indicator(true, &colours), "▶");
     assert_eq!(orphaned_row_indicator(false, &colours), " ");
+}
+
+#[test]
+fn row_prefix_can_hide_main_spine_for_branch_only_rows() {
+    let colours = test_colours(false);
+    let point = point("feature", &["feature"]);
+    let layout = LaneRenderLayout::new(1, 1, 1);
+
+    assert_eq!(
+        row_prefix(
+            0,
+            layout,
+            &point,
+            Some("main"),
+            Some("main"),
+            MainSpine::Hidden,
+            &colours,
+        ),
+        "◯"
+    );
 }

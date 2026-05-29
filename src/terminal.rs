@@ -1,13 +1,14 @@
 use std::borrow::Cow;
 use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use console::{Term, truncate_str};
+use console::truncate_str;
 
 use crate::cli::ColourMode;
 use crate::error::Result;
 
 const TRUNCATION_TAIL: &str = "...";
+
+mod detect;
 
 fn truncation_tail(width: usize) -> &'static str {
     match width {
@@ -26,19 +27,6 @@ pub(crate) struct RenderEnvironment {
 }
 
 impl RenderEnvironment {
-    pub(crate) fn detect() -> Self {
-        let terminal = Term::stdout();
-        let stdout_is_terminal = terminal.is_term();
-        let terminal_width = if stdout_is_terminal {
-            terminal
-                .size_checked()
-                .map(|(_, columns)| usize::from(columns))
-        } else {
-            None
-        };
-        Self::new(current_unix_timestamp(), terminal_width, stdout_is_terminal)
-    }
-
     pub(crate) const fn new(
         now_timestamp: i64,
         terminal_width: Option<usize>,
@@ -68,13 +56,6 @@ impl RenderEnvironment {
     }
 }
 
-fn current_unix_timestamp() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
-        Err(_) => 0,
-    }
-}
-
 fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<'_, str> {
     let Some(width) = terminal_width else {
         return Cow::Borrowed(line);
@@ -85,8 +66,8 @@ fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<
     truncate_str(line, width, truncation_tail(width))
 }
 
-pub(crate) fn write_rendered_line<W: Write>(
-    stdout: &mut W,
+pub(crate) fn write_rendered_line(
+    stdout: &mut dyn Write,
     line: &str,
     environment: RenderEnvironment,
 ) -> Result<()> {
@@ -147,6 +128,7 @@ mod tests {
 
     #[test]
     fn fits_rows_to_tiny_terminal_widths() {
+        assert_eq!(truncation_tail(0), "");
         assert_eq!(fit_line_to_terminal_width("abcdef", Some(0)).as_ref(), "");
         assert_eq!(fit_line_to_terminal_width("abcdef", Some(1)).as_ref(), ".");
         assert_eq!(fit_line_to_terminal_width("abcdef", Some(2)).as_ref(), "..");
@@ -164,5 +146,28 @@ mod tests {
         write_rendered_line(&mut output, "abcdefgh", environment).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "ab...\n");
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("closed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn propagates_output_write_errors() {
+        let environment = RenderEnvironment::new(1_700_000_000, None, false);
+        let mut writer = FailingWriter;
+
+        assert!(writer.flush().is_ok());
+        let error = write_rendered_line(&mut writer, "line", environment).unwrap_err();
+
+        assert_eq!(error.to_string(), "failed to write output: closed");
     }
 }

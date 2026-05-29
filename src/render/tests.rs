@@ -3,6 +3,7 @@ mod graph;
 mod layout;
 mod metadata;
 mod orphan;
+mod trunk;
 
 use super::Colours;
 
