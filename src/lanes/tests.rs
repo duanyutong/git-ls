@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use super::*;
+use crate::backend::{
+    AncestryBackend, BranchlessQueries, CommitMetadataBackend, RepositoryStateBackend,
+};
 use crate::cli::{Backend, ColourMode, Order, Palette, RuntimeOptions, Verbosity};
 use crate::model::{BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane};
 
@@ -13,6 +16,9 @@ struct FakeLaneBackend {
     current_head: Option<String>,
     current_branch: Option<String>,
     main_name: String,
+    local_branches_error: Option<String>,
+    current_state_error: Option<String>,
+    main_name_error: Option<String>,
     merge_bases: HashMap<(String, String), Option<String>>,
     ancestry_paths: HashMap<(Option<String>, String), Vec<String>>,
     metas: HashMap<String, CommitMeta>,
@@ -57,6 +63,21 @@ impl FakeLaneBackend {
 
     fn with_main_name(mut self, main_name: &str) -> Self {
         self.main_name = main_name.to_string();
+        self
+    }
+
+    fn with_local_branches_error(mut self, message: &str) -> Self {
+        self.local_branches_error = Some(message.to_string());
+        self
+    }
+
+    fn with_current_state_error(mut self, message: &str) -> Self {
+        self.current_state_error = Some(message.to_string());
+        self
+    }
+
+    fn with_main_name_error(mut self, message: &str) -> Self {
+        self.main_name_error = Some(message.to_string());
         self
     }
 
@@ -116,14 +137,23 @@ impl BranchlessQueries for FakeLaneBackend {
 
 impl RepositoryStateBackend for FakeLaneBackend {
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
+        if let Some(message) = self.local_branches_error.as_ref() {
+            return Err(GitLsError::TestFixture(message.clone()));
+        }
         Ok(self.local_branches.clone())
     }
 
     fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)> {
+        if let Some(message) = self.current_state_error.as_ref() {
+            return Err(GitLsError::TestFixture(message.clone()));
+        }
         Ok((self.current_head.clone(), self.current_branch.clone()))
     }
 
     fn main_branch_name(&self) -> Result<String> {
+        if let Some(message) = self.main_name_error.as_ref() {
+            return Err(GitLsError::TestFixture(message.clone()));
+        }
         if self.main_name.is_empty() {
             Ok("main".to_string())
         } else {
@@ -208,6 +238,28 @@ fn lane_group(base: Option<&str>, main_distance: Option<usize>, lanes: Vec<Lane>
     LaneGroup::new(base.map(ToOwned::to_owned), None, main_distance, lanes)
 }
 
+fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
+    RuntimeOptions {
+        revset: "draft()".to_string(),
+        hidden: false,
+        verbosity,
+        backend: Backend::Gix,
+        order: Order::Newest,
+        colour_mode: ColourMode::Never,
+        palette: Palette::Classic,
+    }
+}
+
+fn assert_test_fixture_error(error: GitLsError, expected: &str) {
+    let GitLsError::TestFixture(message) = error else {
+        panic!("expected test fixture error");
+    };
+    assert!(
+        message.contains(expected),
+        "expected {message:?} to contain {expected:?}"
+    );
+}
+
 #[test]
 fn creates_branch_revset() {
     assert_eq!(
@@ -238,15 +290,7 @@ fn maps_selected_branch_points_by_oid() {
 #[test]
 fn rejects_ambiguous_main_revsets_before_lane_construction() {
     let git = FakeLaneBackend::default().with_revset("main()", false, &["one", "two"]);
-    let args = RuntimeOptions {
-        revset: "draft()".to_string(),
-        hidden: false,
-        verbosity: Verbosity::Low,
-        backend: Backend::Gix,
-        order: Order::Newest,
-        colour_mode: ColourMode::Never,
-        palette: Palette::Classic,
-    };
+    let args = runtime_options(Verbosity::Low);
     let mut cache = HashMap::new();
 
     let error = build_lanes(&git, &args, &mut cache).unwrap_err();
@@ -255,6 +299,95 @@ fn rejects_ambiguous_main_revsets_before_lane_construction() {
         error,
         GitLsError::AmbiguousMainRevset { count } if count == 2
     ));
+}
+
+#[test]
+fn propagates_lane_selection_query_and_repository_errors() {
+    let revset = "((draft()) & branches()) - public()";
+    let cases = [
+        (
+            FakeLaneBackend::default().with_revset("main()", false, &["main-oid"]),
+            "branch names",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &[])
+                .with_current_state_error("current state failed"),
+            "current state failed",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &[])
+                .with_main_name_error("main branch failed"),
+            "main branch failed",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_local_branches_error("local branches failed"),
+            "local branches failed",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_local_branches(&[("head", &["feature/one"])]),
+            "revset",
+        ),
+    ];
+
+    for (git, expected) in cases {
+        let mut cache = HashMap::new();
+
+        let error = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap_err();
+
+        assert_test_fixture_error(error, expected);
+    }
+}
+
+#[test]
+fn propagates_lane_build_metadata_and_ancestry_errors() {
+    let revset = "((draft()) & branches()) - public()";
+    let cases = [
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_local_branches(&[("head", &["feature/one"])])
+                .with_revset(&format!("heads({revset})"), false, &["head"]),
+            "metadata",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_local_branches(&[("head", &["feature/one"])])
+                .with_revset(&format!("heads({revset})"), false, &["head"])
+                .with_meta("head", "head", 10),
+            "merge base",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_local_branches(&[("head", &["feature/one"])])
+                .with_revset(&format!("heads({revset})"), false, &["head"])
+                .with_meta("head", "head", 10)
+                .with_merge_base("main-oid", "head", Some("main-oid")),
+            "ancestry path",
+        ),
+    ];
+
+    for (git, expected) in cases {
+        let mut cache = HashMap::new();
+
+        let error = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap_err();
+
+        assert_test_fixture_error(error, expected);
+    }
 }
 
 #[test]
@@ -416,6 +549,17 @@ fn builds_lane_groups_without_main_distance_for_empty_or_orphaned_base_paths() {
 }
 
 #[test]
+fn build_lane_groups_propagates_main_distance_path_errors() {
+    let git = FakeLaneBackend::default().with_meta("old-main", "old base", 1_700_000_001);
+    let lanes = vec![lane("old", Some("old-main"), 2, false)];
+    let mut cache = HashMap::new();
+
+    let error = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap_err();
+
+    assert_test_fixture_error(error, "ancestry path");
+}
+
+#[test]
 fn lane_group_order_prefers_main_distance_before_timestamp() {
     let mut groups = [
         lane_group(
@@ -434,6 +578,27 @@ fn lane_group_order_prefers_main_distance_before_timestamp() {
 
     assert_eq!(groups[0].base_oid, Some("near-main".to_string()));
     assert_eq!(groups[1].base_oid, Some("far-main".to_string()));
+}
+
+#[test]
+fn lane_group_order_uses_fallback_after_equal_main_distances() {
+    let mut groups = [
+        lane_group(
+            Some("older-main"),
+            Some(2),
+            vec![lane("older", None, 1, false)],
+        ),
+        lane_group(
+            Some("newer-main"),
+            Some(2),
+            vec![lane("newer", None, 100, false)],
+        ),
+    ];
+
+    groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, Order::Newest));
+
+    assert_eq!(groups[0].base_oid, Some("newer-main".to_string()));
+    assert_eq!(groups[1].base_oid, Some("older-main".to_string()));
 }
 
 #[test]
@@ -563,6 +728,56 @@ fn skips_lane_paths_without_visible_branch_points() {
 }
 
 #[test]
+fn build_lane_from_path_propagates_branch_point_metadata_errors() {
+    let git = FakeLaneBackend::default();
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let error = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        None,
+        None,
+        Verbosity::Medium,
+        &mut cache,
+    )
+    .unwrap_err();
+
+    assert_test_fixture_error(error, "metadata");
+}
+
+#[test]
+fn build_lane_from_path_propagates_head_metadata_errors() {
+    let git = FakeLaneBackend::default();
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let error = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        None,
+        None,
+        Verbosity::Low,
+        &mut cache,
+    )
+    .unwrap_err();
+
+    assert_test_fixture_error(error, "metadata");
+}
+
+#[test]
 fn includes_head_branch_point_when_ancestry_path_does_not_contain_it() {
     let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
     let lane_path = LanePath {
@@ -580,6 +795,52 @@ fn includes_head_branch_point_when_ancestry_path_does_not_contain_it() {
             commit_count: 2,
         }]
     );
+}
+
+#[test]
+fn counts_head_fallback_as_one_commit_for_empty_ancestry_paths() {
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: None,
+        ancestry_path: Vec::new(),
+    };
+
+    let points = branch_points_for_path(&lane_path, &points_by_oid);
+
+    assert_eq!(
+        points,
+        vec![BranchPointOnPath {
+            point: point_ref("head", &["feature/head"]),
+            commit_count: 1,
+        }]
+    );
+}
+
+#[test]
+fn marks_lane_current_when_detached_head_matches_branch_point() {
+    let git = FakeLaneBackend::default().with_meta("head", "detached", 10);
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let lane = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        Some("other"),
+        Some("head"),
+        Verbosity::Low,
+        &mut cache,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(lane.contains_current);
 }
 
 #[test]
@@ -642,4 +903,30 @@ fn builds_lanes_from_backend_facts() {
         git.metadata_requests(),
         vec![vec!["b".to_string(), "c".to_string()]]
     );
+}
+
+#[test]
+fn build_lanes_skips_head_paths_without_visible_branch_points() {
+    let revset = "((draft()) & branches()) - public()";
+    let git = FakeLaneBackend::default()
+        .with_revset("main()", false, &["main-oid"])
+        .with_branch_names(revset, false, &["feature/one"])
+        .with_local_branches(&[("visible", &["feature/one"])])
+        .with_revset(&format!("heads({revset})"), false, &["visible", "hidden"])
+        .with_meta("hidden", "hidden", 1_700_000_001)
+        .with_meta("visible", "visible", 1_700_000_002)
+        .with_merge_base("main-oid", "hidden", Some("main-oid"))
+        .with_merge_base("main-oid", "visible", Some("main-oid"))
+        .with_ancestry_path(Some("main-oid"), "hidden", &["hidden"])
+        .with_ancestry_path(Some("main-oid"), "visible", &["visible"]);
+    let mut cache = HashMap::new();
+
+    let BuiltLanes::Populated { lanes, .. } =
+        build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap()
+    else {
+        panic!("expected populated lanes");
+    };
+
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].head_oid, "visible");
 }

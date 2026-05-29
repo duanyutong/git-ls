@@ -2,8 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::backend::{
-    AncestryBackend, BranchlessQueries, CommitMetadataBackend, GitBackend, RepositoryStateBackend,
-    get_commit_meta,
+    AncestryBackend, BranchlessQueries, GitBackend, RepositoryStateBackend, get_commit_meta,
 };
 use crate::cli::{Order, RuntimeOptions, Verbosity};
 use crate::error::{GitLsError, Result};
@@ -66,20 +65,21 @@ enum LaneSelection {
     },
 }
 
-fn query_lane_selection<G>(git: &G, user_revset: &str, hidden: bool) -> Result<LaneSelection>
-where
-    G: BranchlessQueries + RepositoryStateBackend + ?Sized,
-{
+fn query_lane_selection(
+    git: &dyn GitBackend,
+    user_revset: &str,
+    hidden: bool,
+) -> Result<LaneSelection> {
     let revset = branch_revset(user_revset);
-    let main_oids = git.query_revset("main()", hidden)?;
+    let main_oids = BranchlessQueries::query_revset(git, "main()", hidden)?;
     if main_oids.len() != 1 {
         return Err(GitLsError::ambiguous_main_revset(main_oids.len()));
     }
     let main_oid = main_oids[0].clone();
 
-    let branch_names = git.query_branch_names(&revset, hidden)?;
-    let (head, current_branch) = git.current_head_and_branch()?;
-    let main_name = git.main_branch_name()?;
+    let branch_names = BranchlessQueries::query_branch_names(git, &revset, hidden)?;
+    let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
+    let main_name = RepositoryStateBackend::main_branch_name(git)?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
 
     if branch_names.is_empty() {
@@ -89,10 +89,10 @@ where
         });
     }
 
-    let branch_oid_map = git.local_branches_by_oid()?;
+    let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let heads_revset = format!("heads({revset})");
-    let head_oids = git.query_revset(&heads_revset, hidden)?;
+    let head_oids = BranchlessQueries::query_revset(git, &heads_revset, hidden)?;
 
     Ok(LaneSelection::Populated {
         main_oid,
@@ -102,8 +102,8 @@ where
     })
 }
 
-fn prefetch_lane_metadata<G: CommitMetadataBackend + ?Sized>(
-    git: &G,
+fn prefetch_lane_metadata(
+    git: &dyn GitBackend,
     head_oids: &[String],
     points_by_oid: &HashMap<String, BranchPointRef>,
     verbosity: Verbosity,
@@ -118,13 +118,9 @@ fn prefetch_lane_metadata<G: CommitMetadataBackend + ?Sized>(
     git.cache_commit_metas(&meta_refs, meta_cache)
 }
 
-fn collect_lane_path<G: AncestryBackend + ?Sized>(
-    git: &G,
-    main_oid: &str,
-    head_oid: &str,
-) -> Result<LanePath> {
-    let base_oid = git.merge_base(main_oid, head_oid)?;
-    let ancestry_path = git.ancestry_path(base_oid.as_deref(), head_oid)?;
+fn collect_lane_path(git: &dyn GitBackend, main_oid: &str, head_oid: &str) -> Result<LanePath> {
+    let base_oid = AncestryBackend::merge_base(git, main_oid, head_oid)?;
+    let ancestry_path = AncestryBackend::ancestry_path(git, base_oid.as_deref(), head_oid)?;
     Ok(LanePath {
         head_oid: head_oid.to_string(),
         base_oid,
@@ -154,11 +150,7 @@ fn branch_points_for_path(
     if branch_points.is_empty()
         && let Some(point) = points_by_oid.get(&lane_path.head_oid)
     {
-        let commit_count = lane_path
-            .ancestry_path
-            .iter()
-            .position(|oid| oid == &lane_path.head_oid)
-            .map_or_else(|| lane_path.ancestry_path.len().max(1), |index| index + 1);
+        let commit_count = lane_path.ancestry_path.len().max(1);
         branch_points.push(BranchPointOnPath {
             point: point.clone(),
             commit_count,
@@ -169,8 +161,8 @@ fn branch_points_for_path(
     branch_points
 }
 
-fn build_branch_point<G: CommitMetadataBackend + ?Sized>(
-    git: &G,
+fn build_branch_point(
+    git: &dyn GitBackend,
     branch_point: &BranchPointOnPath,
     verbosity: Verbosity,
     meta_cache: &mut HashMap<String, CommitMeta>,
@@ -192,8 +184,8 @@ fn build_branch_point<G: CommitMetadataBackend + ?Sized>(
     ))
 }
 
-fn build_lane_from_path<G: CommitMetadataBackend + ?Sized>(
-    git: &G,
+fn build_lane_from_path(
+    git: &dyn GitBackend,
     lane_path: &LanePath,
     points_by_oid: &HashMap<String, BranchPointRef>,
     current_branch: Option<&str>,
@@ -226,8 +218,8 @@ fn build_lane_from_path<G: CommitMetadataBackend + ?Sized>(
     )))
 }
 
-fn build_lane<G: AncestryBackend + CommitMetadataBackend + ?Sized>(
-    git: &G,
+fn build_lane(
+    git: &dyn GitBackend,
     head_oid: &str,
     main_oid: &str,
     points_by_oid: &HashMap<String, BranchPointRef>,
@@ -248,8 +240,8 @@ fn build_lane<G: AncestryBackend + CommitMetadataBackend + ?Sized>(
     )
 }
 
-pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
-    git: &G,
+pub(crate) fn build_lanes(
+    git: &dyn GitBackend,
     args: &RuntimeOptions,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
@@ -319,8 +311,8 @@ fn grouped_by_base(lanes: Vec<Lane>, order: Order) -> Vec<(Option<String>, Vec<L
     groups
 }
 
-pub(crate) fn build_lane_groups<G: GitBackend + ?Sized>(
-    git: &G,
+pub(crate) fn build_lane_groups(
+    git: &dyn GitBackend,
     lanes: Vec<Lane>,
     main_oid: &str,
     order: Order,
@@ -337,7 +329,7 @@ pub(crate) fn build_lane_groups<G: GitBackend + ?Sized>(
         let main_distance = match base_oid.as_deref() {
             Some(base_oid) if base_oid == main_oid => Some(0),
             Some(base_oid) => {
-                let path = git.ancestry_path(Some(base_oid), main_oid)?;
+                let path = AncestryBackend::ancestry_path(git, Some(base_oid), main_oid)?;
                 if path.is_empty() {
                     None
                 } else {

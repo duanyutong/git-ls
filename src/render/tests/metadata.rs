@@ -9,7 +9,7 @@ use crate::render::metadata::{
 use crate::render::trunk::{TrunkLabel, trunk_label};
 use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
 
-use super::{point_with_count, point_with_count_at, test_colours};
+use super::{point, point_with_count, point_with_count_at, test_colours};
 
 #[test]
 fn formats_metadata_prefix_with_aligned_placeholders() {
@@ -68,6 +68,27 @@ fn metadata_widths_include_non_main_base_commits() {
     assert_eq!(
         calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Medium),
         MetadataWidths { age: 2, count: 0 }
+    );
+}
+
+#[test]
+fn metadata_widths_ignore_unannotated_branch_points() {
+    let groups = vec![LaneGroup {
+        base_oid: None,
+        base_meta: None,
+        main_distance: None,
+        lanes: vec![Lane {
+            head_oid: "feature-oid".to_string(),
+            base_oid: None,
+            branch_points: vec![point("feature-oid", &["feature"])],
+            head_timestamp: TEST_NOW,
+            contains_current: false,
+        }],
+    }];
+
+    assert_eq!(
+        calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Medium),
+        MetadataWidths::default()
     );
 }
 

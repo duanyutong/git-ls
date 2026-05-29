@@ -393,3 +393,22 @@ fn renders_main_tip_before_first_group_from_older_main_history() {
     assert_eq!(output[1], "▶ ◆── main");
     assert!(output.iter().any(|line| line == "  ⁝ (2 commits on main)"));
 }
+
+#[test]
+fn renders_no_omitted_main_past_when_group_list_is_empty() {
+    let colours = test_colours(false);
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
+
+    let output = render_lane_groups(&[], &ctx);
+
+    assert_eq!(output, Vec::<String>::new());
+}
