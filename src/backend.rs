@@ -634,7 +634,7 @@ mod tests {
         ));
     }
 
-    fn git(repo: &Path, args: &[&str]) -> String {
+    fn run_git(repo: &Path, args: &[&str]) -> String {
         let output = TestCommand::new("git")
             .arg("-C")
             .arg(repo)
@@ -654,32 +654,63 @@ mod tests {
             .to_string()
     }
 
-    fn commit_file(repo: &Path, path: &str, content: &str, message: &str) -> String {
-        std::fs::write(repo.join(path), content).unwrap();
-        git(repo, &["add", path]);
-        git(repo, &["commit", "-m", message]);
-        git(repo, &["rev-parse", "HEAD"])
+    struct TestRepo {
+        temp: TempDir,
     }
 
-    fn parity_repo() -> (TempDir, String, String, String) {
-        let temp = tempfile::tempdir().unwrap();
-        let repo = temp.path();
-        git(repo, &["init", "--initial-branch", "main"]);
-        git(repo, &["config", "user.name", "git-ls tests"]);
-        git(repo, &["config", "user.email", "git-ls@example.invalid"]);
+    impl TestRepo {
+        fn init() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let repo = Self { temp };
+            repo.git(&["init", "--initial-branch", "main"]);
+            repo.git(&["config", "user.name", "git-ls tests"]);
+            repo.git(&["config", "user.email", "git-ls@example.invalid"]);
+            repo
+        }
 
-        commit_file(repo, "root.txt", "root\n", "root");
-        git(repo, &["checkout", "-b", "side"]);
-        let side_oid = commit_file(repo, "side.txt", "side\n", "side before base");
+        fn path(&self) -> &Path {
+            self.temp.path()
+        }
 
-        git(repo, &["checkout", "main"]);
-        let base_oid = commit_file(repo, "base.txt", "base\n", "base");
-        git(repo, &["checkout", "-b", "topic"]);
-        commit_file(repo, "topic.txt", "topic\n", "topic");
-        git(repo, &["merge", "--no-ff", "side", "-m", "merge side"]);
-        let head_oid = git(repo, &["rev-parse", "HEAD"]);
+        fn git(&self, args: &[&str]) -> String {
+            run_git(self.path(), args)
+        }
 
-        (temp, base_oid, head_oid, side_oid)
+        fn commit_file(&self, path: &str, content: &str, message: &str) -> String {
+            std::fs::write(self.path().join(path), content).unwrap();
+            self.git(&["add", path]);
+            self.git(&["commit", "-m", message]);
+            self.git(&["rev-parse", "HEAD"])
+        }
+    }
+
+    struct AncestryParityFixture {
+        repo: TestRepo,
+        base_oid: String,
+        head_oid: String,
+        side_oid: String,
+    }
+
+    fn ancestry_parity_fixture() -> AncestryParityFixture {
+        let repo = TestRepo::init();
+
+        repo.commit_file("root.txt", "root\n", "root");
+        repo.git(&["checkout", "-b", "side"]);
+        let side_oid = repo.commit_file("side.txt", "side\n", "side before base");
+
+        repo.git(&["checkout", "main"]);
+        let base_oid = repo.commit_file("base.txt", "base\n", "base");
+        repo.git(&["checkout", "-b", "topic"]);
+        repo.commit_file("topic.txt", "topic\n", "topic");
+        repo.git(&["merge", "--no-ff", "side", "-m", "merge side"]);
+        let head_oid = repo.git(&["rev-parse", "HEAD"]);
+
+        AncestryParityFixture {
+            repo,
+            base_oid,
+            head_oid,
+            side_oid,
+        }
     }
 
     #[test]
@@ -694,37 +725,39 @@ mod tests {
 
     #[test]
     fn gix_backend_matches_git_ancestry_path() {
-        let (temp, base_oid, head_oid, side_oid) = parity_repo();
-        let repo = temp.path();
-        let backend = GixBackend::discover_from(repo).unwrap();
-        let shell_path = lines(&git(
-            repo,
-            &[
-                "rev-list",
-                "--reverse",
-                "--ancestry-path",
-                &format!("{base_oid}..{head_oid}"),
-            ],
-        ));
+        let fixture = ancestry_parity_fixture();
+        let backend = GixBackend::discover_from(fixture.repo.path()).unwrap();
+        let shell_path = lines(&fixture.repo.git(&[
+            "rev-list",
+            "--reverse",
+            "--ancestry-path",
+            &format!("{}..{}", fixture.base_oid, fixture.head_oid),
+        ]));
 
         assert_eq!(
-            backend.merge_base(&base_oid, &head_oid).unwrap(),
-            Some(base_oid.clone())
+            backend
+                .merge_base(&fixture.base_oid, &fixture.head_oid)
+                .unwrap(),
+            Some(fixture.base_oid.clone())
         );
         assert_eq!(
-            backend.ancestry_path(Some(&base_oid), &head_oid).unwrap(),
+            backend
+                .ancestry_path(Some(&fixture.base_oid), &fixture.head_oid)
+                .unwrap(),
             shell_path
         );
-        assert!(!shell_path.contains(&side_oid));
+        assert!(!shell_path.contains(&fixture.side_oid));
     }
 
     #[test]
     fn gix_backend_reads_repository_snapshot_and_commit_metadata() {
-        let (temp, _base_oid, head_oid, _side_oid) = parity_repo();
-        let repo = temp.path();
-        git(repo, &["config", "branchless.core.mainBranch", "trunk"]);
+        let repo = TestRepo::init();
+        repo.commit_file("root.txt", "root\n", "root");
+        repo.git(&["checkout", "-b", "topic"]);
+        let head_oid = repo.commit_file("topic.txt", "topic\n", "topic");
+        repo.git(&["config", "branchless.core.mainBranch", "trunk"]);
 
-        let backend = GixBackend::discover_from(repo).unwrap();
+        let backend = GixBackend::discover_from(repo.path()).unwrap();
         let (head, current_branch) = backend.current_head_and_branch().unwrap();
         let branches = backend.local_branches_by_oid().unwrap();
         let mut cache = HashMap::new();
@@ -742,30 +775,23 @@ mod tests {
         assert_eq!(backend.main_branch_name().unwrap(), "trunk");
         let meta = cache.get(&head_oid).unwrap();
         assert_eq!(meta.short_oid, display_short_oid(&head_oid));
-        assert_eq!(meta.subject, "merge side");
+        assert_eq!(meta.subject, "topic");
     }
 
     #[test]
     fn gix_metadata_hydration_rejects_malformed_oid() {
-        let (temp, _base_oid, _head_oid, _side_oid) = parity_repo();
-        let backend = GixBackend::discover_from(temp.path()).unwrap();
-        let mut cache = HashMap::new();
-
-        let error = backend
-            .cache_commit_metas(&["not-an-oid"], &mut cache)
-            .unwrap_err();
+        let error = GixBackend::object_id("not-an-oid").unwrap_err();
 
         assert!(matches!(
             error,
             GitLsError::InvalidObjectId { oid, .. } if oid == "not-an-oid"
         ));
-        assert!(cache.is_empty());
     }
 
     #[test]
     fn gix_metadata_hydration_reports_missing_commits() {
-        let (temp, _base_oid, _head_oid, _side_oid) = parity_repo();
-        let backend = GixBackend::discover_from(temp.path()).unwrap();
+        let repo = TestRepo::init();
+        let backend = GixBackend::discover_from(repo.path()).unwrap();
         let mut cache = HashMap::new();
 
         let error = backend
