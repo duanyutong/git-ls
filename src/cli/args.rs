@@ -21,7 +21,7 @@ const VERSION: &str = concat!(
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
 #[command(
     name = "git ls",
-    about = "Render git-branchless draft branches as coloured stack lanes.",
+    about = "Render local Git branch stacks as coloured lanes.",
     version = VERSION
 )]
 pub(crate) struct Args {

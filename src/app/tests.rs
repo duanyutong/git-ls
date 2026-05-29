@@ -304,6 +304,14 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "")
         .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main",
+        )
+        .with(
             &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
             "main-oid\nmain",
         )
@@ -331,10 +339,53 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
             "  ⁝".to_string(),
         ])
     );
+}
+
+#[test]
+fn build_render_plan_falls_back_to_plain_git_when_branchless_is_unavailable() {
+    let git = MockGit::default()
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main\nbase\x00feature/base\ntip\x00feature/tip",
+        )
+        .with(
+            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            "tip\nfeature/tip",
+        )
+        .with(&["merge-base", "base", "main-oid"], "main-oid")
+        .with(&["merge-base", "tip", "main-oid"], "main-oid")
+        .with(&["merge-base", "base", "tip"], "base")
+        .with(&["merge-base", "tip", "base"], "base")
+        .with(&["merge-base", "main-oid", "tip"], "main-oid")
+        .with(
+            &[
+                "show",
+                "-s",
+                "--format=%H%x00%ct%x00%s%x1e",
+                "--no-walk=unsorted",
+                "tip",
+            ],
+            &format!("tip\x00{}\x00tip\x1e", TEST_NOW - 60),
+        )
+        .with(
+            &["rev-list", "--reverse", "--ancestry-path", "main-oid..tip"],
+            "base\ntip",
+        );
+    let args = runtime_options("draft()", Verbosity::Low);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+
+    let plan = build_render_plan(&args, &git, environment).unwrap();
+
+    assert!(plan.lines.iter().any(|line| line.contains("feature/base")));
+    assert!(plan.lines.iter().any(|line| line.contains("feature/tip")));
     assert!(
         git.calls()
             .iter()
-            .all(|call| call.first().is_none_or(|arg| arg != "for-each-ref"))
+            .any(|call| call == &["branchless", "query", "-r", "main()"])
     );
 }
 
@@ -461,7 +512,11 @@ fn build_render_plan_propagates_lane_selection_errors() {
 
     assert_eq!(
         error.to_string(),
-        missing_mock_response(&["branchless", "query", "-r", "main()"])
+        missing_mock_response(&[
+            "for-each-ref",
+            "--format=%(objectname)%00%(refname:short)",
+            "refs/heads"
+        ])
     );
 }
 
@@ -476,7 +531,11 @@ fn execute_propagates_plan_errors_before_writing() {
 
     assert_eq!(
         error.to_string(),
-        missing_mock_response(&["branchless", "query", "-r", "main()"])
+        missing_mock_response(&[
+            "for-each-ref",
+            "--format=%(objectname)%00%(refname:short)",
+            "refs/heads"
+        ])
     );
     assert!(output.is_empty());
 }
@@ -487,6 +546,20 @@ fn build_render_plan_propagates_empty_selection_main_metadata_errors() {
     let git = MockGit::default()
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "");
+    let git = git
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main",
+        )
+        .with(&["config", "--get", "branchless.core.mainBranch"], "")
+        .with(
+            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            "main-oid\nmain",
+        );
     let args = runtime_options("draft()", Verbosity::Medium);
     let environment = RenderEnvironment::new(TEST_NOW, None, false);
 
@@ -631,6 +704,14 @@ fn run_passes_hidden_selection_to_branchless_queries() {
         )
         .with(&["branchless", "query", "-b", "--hidden", revset], "")
         .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main",
+        )
+        .with(
             &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
             "main-oid\nmain",
         )
@@ -674,6 +755,14 @@ fn run_renders_empty_selection_as_trunk() {
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "")
         .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main",
+        )
+        .with(
             &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
             "main-oid\nmain",
         )
@@ -695,11 +784,6 @@ fn run_renders_empty_selection_as_trunk() {
     assert_eq!(
         output.into_string(),
         "  ⁝\n▶ ◆── 2m (-, main-oi) main\n  ⁝\n"
-    );
-    assert!(
-        git.calls()
-            .iter()
-            .all(|call| call.first().is_none_or(|arg| arg != "for-each-ref"))
     );
     assert_eq!(
         git.calls(),
@@ -732,15 +816,20 @@ fn run_renders_empty_selection_as_trunk() {
                 revset.to_string()
             ],
             vec![
-                "rev-parse".to_string(),
-                "HEAD".to_string(),
-                "--abbrev-ref".to_string(),
-                "HEAD".to_string()
+                "for-each-ref".to_string(),
+                "--format=%(objectname)%00%(refname:short)".to_string(),
+                "refs/heads".to_string()
             ],
             vec![
                 "config".to_string(),
                 "--get".to_string(),
                 "branchless.core.mainBranch".to_string()
+            ],
+            vec![
+                "rev-parse".to_string(),
+                "HEAD".to_string(),
+                "--abbrev-ref".to_string(),
+                "HEAD".to_string()
             ],
             vec![
                 "show".to_string(),

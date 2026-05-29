@@ -1,9 +1,9 @@
 [package]
 name = "git-ls"
-version = "0.8.27"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Graphite-style stack lane renderer for git-branchless"
+description = "Graphite-style stack lane renderer for local Git branch stacks"
 license = "GPL-3.0-only"
 repository = "https://github.com/duanyutong/git-ls"
 readme = "README.md"
