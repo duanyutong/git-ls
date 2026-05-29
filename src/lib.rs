@@ -5,12 +5,28 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
+use std::fmt;
 use std::io::{self, IsTerminal, Write};
 use std::num::ParseIntError;
 use std::process::Command;
 use thiserror::Error;
 
-const PALETTE: [u8; 10] = [39, 208, 141, 82, 203, 220, 45, 177, 114, 214];
+const OKABE_PALETTE: [u8; 7] = [214, 45, 35, 220, 32, 202, 176];
+const TABLEAU_PALETTE: [u8; 10] = [67, 215, 167, 73, 71, 221, 139, 217, 137, 249];
+const DARK2_PALETTE: [u8; 8] = [36, 166, 98, 162, 70, 178, 136, 242];
+const SET1_PALETTE: [u8; 9] = [196, 33, 34, 127, 208, 226, 130, 211, 246];
+const SET2_PALETTE: [u8; 8] = [79, 209, 110, 176, 149, 220, 180, 249];
+const PAIRED_PALETTE: [u8; 12] = [153, 32, 150, 34, 210, 196, 215, 208, 183, 97, 228, 130];
+const BOLD_PALETTE: [u8; 12] = [91, 36, 67, 220, 168, 107, 208, 30, 163, 209, 60, 145];
+const VIVID_PALETTE: [u8; 12] = [208, 61, 73, 149, 170, 30, 178, 32, 97, 203, 162, 145];
+const TOL_PALETTE: [u8; 7] = [67, 203, 29, 179, 81, 125, 250];
+const CLASSIC_PALETTE: [u8; 7] = [41, 203, 45, 220, 176, 33, 214];
+const DEFAULT_PALETTE: Palette = Palette::Classic;
+const MAIN_SPINE_GLYPH: &str = "│";
+const COLLAPSED_MAIN_GLYPH: &str = "⁝";
+const MAIN_COMMIT_GLYPH: &str = "◇";
+const CURRENT_MAIN_COMMIT_GLYPH: &str = "◆";
+const ORPHANED_BRANCH_GLYPH: &str = "⦸";
 const TREE_LEFT_PADDING: &str = "";
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -174,6 +190,65 @@ enum ColourMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum Palette {
+    #[value(name = "okabe")]
+    Okabe,
+    Tableau,
+    Dark2,
+    Set1,
+    Set2,
+    Paired,
+    Bold,
+    Vivid,
+    Tol,
+    Classic,
+}
+
+impl Palette {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Okabe => "okabe",
+            Self::Tableau => "tableau",
+            Self::Dark2 => "dark2",
+            Self::Set1 => "set1",
+            Self::Set2 => "set2",
+            Self::Paired => "paired",
+            Self::Bold => "bold",
+            Self::Vivid => "vivid",
+            Self::Tol => "tol",
+            Self::Classic => "classic",
+        }
+    }
+
+    fn ansi_colours(self) -> &'static [u8] {
+        match self {
+            Self::Okabe => &OKABE_PALETTE,
+            Self::Tableau => &TABLEAU_PALETTE,
+            Self::Dark2 => &DARK2_PALETTE,
+            Self::Set1 => &SET1_PALETTE,
+            Self::Set2 => &SET2_PALETTE,
+            Self::Paired => &PAIRED_PALETTE,
+            Self::Bold => &BOLD_PALETTE,
+            Self::Vivid => &VIVID_PALETTE,
+            Self::Tol => &TOL_PALETTE,
+            Self::Classic => &CLASSIC_PALETTE,
+        }
+    }
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        DEFAULT_PALETTE
+    }
+}
+
+impl fmt::Display for Palette {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum Order {
     Newest,
     Oldest,
@@ -212,21 +287,34 @@ struct Args {
         value_name = "VALUE"
     )]
     colour_mode: ColourMode,
+
+    #[arg(
+        short = 'p',
+        long,
+        value_enum,
+        default_value_t = DEFAULT_PALETTE,
+        value_name = "VALUE"
+    )]
+    palette: Palette,
 }
 
 #[derive(Debug)]
 struct Colours {
     enabled: bool,
+    palette: &'static [u8],
 }
 
 impl Colours {
-    fn new(mode: ColourMode) -> Self {
+    fn new(mode: ColourMode, palette: Palette) -> Self {
         let enabled = match mode {
             ColourMode::Auto => std::io::stdout().is_terminal(),
             ColourMode::Always => true,
             ColourMode::Never => false,
         };
-        Self { enabled }
+        Self {
+            enabled,
+            palette: palette.ansi_colours(),
+        }
     }
 
     fn paint(&self, text: &str, style: Style) -> String {
@@ -240,14 +328,14 @@ impl Colours {
     fn stack(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
-            Ansi256Color(PALETTE[index % PALETTE.len()]).on_default(),
+            Ansi256Color(self.palette[index % self.palette.len()]).on_default(),
         )
     }
 
     fn current_stack(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
-            Ansi256Color(PALETTE[index % PALETTE.len()])
+            Ansi256Color(self.palette[index % self.palette.len()])
                 .on_default()
                 .bold()
                 .underline(),
@@ -257,7 +345,7 @@ impl Colours {
     fn current_indicator(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
-            Ansi256Color(PALETTE[index % PALETTE.len()])
+            Ansi256Color(self.palette[index % self.palette.len()])
                 .on_default()
                 .bold(),
         )
@@ -265,6 +353,10 @@ impl Colours {
 
     fn dim(&self, text: &str) -> String {
         self.paint(text, Style::new().dimmed())
+    }
+
+    fn orphaned(&self, text: &str) -> String {
+        self.paint(text, Ansi256Color(250).on_default())
     }
 }
 
@@ -989,17 +1081,42 @@ fn display_names(
         .iter()
         .map(|name| {
             if current_branch.is_some_and(|branch| branch == name) {
-                format!(
-                    "{} {}",
-                    colours.current_indicator(colour_index, "▶"),
-                    colours.current_stack(colour_index, name)
-                )
+                format!("  {}", colours.current_stack(colour_index, name))
             } else {
                 format!("  {}", colours.stack(colour_index, name))
             }
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn display_orphaned_names(point: &BranchPoint, colours: &Colours) -> String {
+    point
+        .names
+        .iter()
+        .map(|name| format!("  {}", colours.orphaned(name)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn current_row_indicator(is_current: bool, colour_index: usize, colours: &Colours) -> String {
+    if is_current {
+        colours.current_indicator(colour_index, "▶")
+    } else {
+        " ".to_string()
+    }
+}
+
+fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> String {
+    if is_current {
+        colours.orphaned("▶")
+    } else {
+        " ".to_string()
+    }
+}
+
+fn render_row(indicator: &str, content: &str) -> String {
+    format!("{indicator} {content}")
 }
 
 fn row_prefix(
@@ -1009,12 +1126,21 @@ fn row_prefix(
     point: &BranchPoint,
     current_branch: Option<&str>,
     head: Option<&str>,
-    show_main_spine: bool,
+    main_spine: MainSpine,
     colours: &Colours,
 ) -> String {
     let mut slots = Vec::new();
-    if show_main_spine {
-        slots.push(colours.dim("│"));
+    match main_spine {
+        MainSpine::Hidden => {}
+        MainSpine::Future => {
+            slots.push(" ".to_string());
+        }
+        MainSpine::FutureLine => {
+            slots.push(colours.dim(COLLAPSED_MAIN_GLYPH));
+        }
+        MainSpine::Connected => {
+            slots.push(colours.dim(MAIN_SPINE_GLYPH));
+        }
     }
     for index in 0..lane_count {
         let colour_index = colour_offset + index;
@@ -1035,13 +1161,23 @@ fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
 
 fn main_label(main_name: &str, current_branch: Option<&str>, colours: &Colours) -> String {
     if main_is_current(main_name, current_branch) {
-        format!(
-            "{} {}",
-            colours.current_indicator(0, "▶"),
-            colours.current_stack(0, main_name)
-        )
+        format!("  {}", colours.current_stack(0, main_name))
     } else {
         format!("  {}", colours.dim(main_name))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainSpine {
+    Hidden,
+    Future,
+    FutureLine,
+    Connected,
+}
+
+impl MainSpine {
+    fn is_connected(self) -> bool {
+        matches!(self, Self::Future | Self::FutureLine | Self::Connected)
     }
 }
 
@@ -1049,23 +1185,31 @@ fn trunk_prefix(
     lane_count: usize,
     colour_offset: usize,
     main_is_current: bool,
-    show_main_spine: bool,
+    main_spine: MainSpine,
     colours: &Colours,
 ) -> String {
     let marker = if main_is_current {
-        colours.current_stack(0, "●")
+        colours.stack(0, CURRENT_MAIN_COMMIT_GLYPH)
     } else {
-        colours.dim("◯")
+        colours.dim(MAIN_COMMIT_GLYPH)
     };
 
     if lane_count == 0 {
+        return format!("{TREE_LEFT_PADDING}{marker}{}", colours.dim("──"));
+    }
+
+    if !main_spine.is_connected() {
         return format!("{TREE_LEFT_PADDING}{marker}");
     }
 
     let mut parts = vec![marker];
-    let first_connected_lane = usize::from(!show_main_spine);
-    for index in first_connected_lane..lane_count {
-        parts.push(colours.stack(colour_offset + index, "─┴"));
+    for index in 0..lane_count {
+        let glyph = if index + 1 == lane_count {
+            "─┘"
+        } else {
+            "─┴"
+        };
+        parts.push(colours.stack(colour_offset + index, glyph));
     }
     format!("{TREE_LEFT_PADDING}{}", parts.join(""))
 }
@@ -1085,11 +1229,20 @@ fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> String {
 
 fn render_main_tip(ctx: &RenderContext<'_>) -> String {
     let current_main = main_is_current(ctx.main_name, ctx.current_branch);
-    format!(
+    let line = format!(
         "{}  {}",
-        trunk_prefix(0, 0, current_main, false, ctx.colours),
+        trunk_prefix(0, 0, current_main, MainSpine::Hidden, ctx.colours),
         main_label(ctx.main_name, ctx.current_branch, ctx.colours)
-    )
+    );
+    render_row(&current_row_indicator(current_main, 0, ctx.colours), &line)
+}
+
+fn render_top_spacer(colours: &Colours, has_visible_rows_above_main: bool) -> String {
+    if has_visible_rows_above_main {
+        String::new()
+    } else {
+        render_omitted_main_past(colours)
+    }
 }
 
 struct RenderContext<'a> {
@@ -1104,13 +1257,22 @@ fn render_group(
     colour_offset: usize,
     ctx: &RenderContext<'_>,
     label: TrunkLabel<'_>,
-    show_main_spine: bool,
+    main_spine: MainSpine,
 ) -> Vec<String> {
     let lane_count = lanes.len();
+    let point_count: usize = lanes.iter().map(|lane| lane.branch_points.len()).sum();
+    let mut rendered_points = 0;
     let mut output = Vec::new();
 
     for (lane_index, lane) in lanes.iter().enumerate() {
         for point in &lane.branch_points {
+            rendered_points += 1;
+            let row_main_spine =
+                if matches!(main_spine, MainSpine::Future) && rendered_points == point_count {
+                    MainSpine::FutureLine
+                } else {
+                    main_spine
+                };
             let colour_index = colour_offset + lane_index;
             let prefix = row_prefix(
                 lane_index,
@@ -1119,28 +1281,65 @@ fn render_group(
                 point,
                 ctx.current_branch,
                 ctx.head,
-                show_main_spine,
+                row_main_spine,
                 ctx.colours,
             );
             let label = display_names(point, ctx.current_branch, colour_index, ctx.colours);
-            output.push(format!("{prefix}  {label}"));
+            let line = format!("{prefix}  {label}");
+            output.push(render_row(
+                &current_row_indicator(
+                    is_current_branch_point(point, ctx.current_branch),
+                    colour_index,
+                    ctx.colours,
+                ),
+                &line,
+            ));
         }
     }
 
     let current_main =
         matches!(label, TrunkLabel::Main) && main_is_current(ctx.main_name, ctx.current_branch);
     let label = trunk_label(label, ctx);
-    output.push(format!(
+    let line = format!(
         "{}  {}",
         trunk_prefix(
             lane_count,
             colour_offset,
             current_main,
-            show_main_spine,
+            main_spine,
             ctx.colours
         ),
         label
+    );
+    output.push(render_row(
+        &current_row_indicator(current_main, 0, ctx.colours),
+        &line,
     ));
+    output
+}
+
+fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<String> {
+    let mut output = Vec::new();
+
+    for lane in lanes {
+        for point in &lane.branch_points {
+            let label = display_orphaned_names(point, ctx.colours);
+            let status = ctx.colours.orphaned("(orphaned)");
+            let line = format!(
+                "{TREE_LEFT_PADDING}{} {}  {label}",
+                ctx.colours.dim(COLLAPSED_MAIN_GLYPH),
+                ctx.colours.orphaned(ORPHANED_BRANCH_GLYPH)
+            );
+            output.push(render_row(
+                &orphaned_row_indicator(
+                    is_current_branch_point(point, ctx.current_branch),
+                    ctx.colours,
+                ),
+                &format!("{line} {status}"),
+            ));
+        }
+    }
+
     output
 }
 
@@ -1155,26 +1354,47 @@ fn render_collapsed_main_segment(
     };
     let label = format!("({commit_count} {noun} on {})", ctx.main_name);
     [
-        format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim("│")),
-        format!(
-            "{TREE_LEFT_PADDING}{} {}",
-            ctx.colours.dim("⋮"),
-            ctx.colours.dim(&label)
+        render_row(
+            " ",
+            &format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim(MAIN_SPINE_GLYPH)),
         ),
-        format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim("│")),
+        render_row(
+            " ",
+            &format!(
+                "{TREE_LEFT_PADDING}{} {}",
+                ctx.colours.dim(COLLAPSED_MAIN_GLYPH),
+                ctx.colours.dim(&label)
+            ),
+        ),
+        render_row(
+            " ",
+            &format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim(MAIN_SPINE_GLYPH)),
+        ),
     ]
+}
+
+fn render_omitted_main_past(colours: &Colours) -> String {
+    let line = format!("{TREE_LEFT_PADDING}{}", colours.dim(COLLAPSED_MAIN_GLYPH));
+    render_row(" ", &line)
 }
 
 fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<String> {
     let mut output = Vec::new();
-    let mut colour_offset = 0;
+    let mut colour_offset = usize::from(main_is_current(ctx.main_name, ctx.current_branch));
     let mut connected_started = false;
+    let mut rendered_connected_group = false;
     let mut previous_main_distance = 0;
 
     for group in groups {
         if let Some(main_distance) = group.main_distance {
-            if !connected_started && main_distance > 0 {
-                output.push(render_main_tip(ctx));
+            if !connected_started {
+                output.push(render_top_spacer(
+                    ctx.colours,
+                    main_distance == 0 && !group.lanes.is_empty(),
+                ));
+                if main_distance > 0 {
+                    output.push(render_main_tip(ctx));
+                }
                 connected_started = true;
             }
             if connected_started && main_distance > previous_main_distance {
@@ -1188,29 +1408,36 @@ fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<Stri
                 (0, _) | (_, None) => TrunkLabel::Main,
                 (_, Some(base_meta)) => TrunkLabel::Commit(base_meta),
             };
+            let main_spine = if main_distance == 0 {
+                MainSpine::Future
+            } else {
+                MainSpine::Connected
+            };
             output.extend(render_group(
                 &group.lanes,
                 colour_offset,
                 ctx,
                 label,
-                main_distance > 0,
+                main_spine,
             ));
+            rendered_connected_group = true;
             previous_main_distance = main_distance;
             connected_started = true;
         } else {
-            if !output.is_empty() {
-                output.push(String::new());
+            if !rendered_connected_group && !connected_started {
+                output.push(render_top_spacer(ctx.colours, false));
+                output.push(render_main_tip(ctx));
+                connected_started = true;
             }
-            output.extend(render_group(
-                &group.lanes,
-                colour_offset,
-                ctx,
-                TrunkLabel::Main,
-                false,
-            ));
+            output.extend(render_orphaned_group(&group.lanes, ctx));
+            continue;
         }
 
         colour_offset += group.lanes.len();
+    }
+
+    if !output.is_empty() {
+        output.push(render_omitted_main_past(ctx.colours));
     }
 
     output
@@ -1231,7 +1458,7 @@ where
     W: Write,
     G: GitBackend + ?Sized,
 {
-    let colours = Colours::new(args.colour_mode);
+    let colours = Colours::new(args.colour_mode, args.palette);
 
     let mut meta_cache = HashMap::new();
     let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
@@ -1240,12 +1467,21 @@ where
             current_branch,
         } => {
             let current_main = main_is_current(&main_name, current_branch.as_deref());
+            writeln!(stdout, "{}", render_top_spacer(&colours, false))?;
+            let main_line = format!(
+                "{}  {}",
+                trunk_prefix(0, 0, current_main, MainSpine::Hidden, &colours),
+                main_label(&main_name, current_branch.as_deref(), &colours)
+            );
             writeln!(
                 stdout,
-                "{}  {}",
-                trunk_prefix(0, 0, current_main, false, &colours),
-                main_label(&main_name, current_branch.as_deref(), &colours)
+                "{}",
+                render_row(
+                    &current_row_indicator(current_main, 0, &colours),
+                    &main_line
+                )
             )?;
+            writeln!(stdout, "{}", render_omitted_main_past(&colours))?;
             return Ok(());
         }
         BuiltLanes::Populated {
@@ -1368,6 +1604,13 @@ mod tests {
         }
     }
 
+    fn test_colours(enabled: bool) -> Colours {
+        Colours {
+            enabled,
+            palette: DEFAULT_PALETTE.ansi_colours(),
+        }
+    }
+
     fn lane(oid: &str, base: Option<&str>, timestamp: i64, contains_current: bool) -> Lane {
         Lane {
             head_oid: oid.to_string(),
@@ -1436,6 +1679,7 @@ mod tests {
                 backend: Backend::Gix,
                 order: Order::Newest,
                 colour_mode: ColourMode::Auto,
+                palette: DEFAULT_PALETTE,
             }
         );
     }
@@ -1449,6 +1693,8 @@ mod tests {
                 "--order=oldest",
                 "--colour",
                 "never",
+                "--palette",
+                "tableau",
                 "draft() & branches(feature/)",
             ])
             .unwrap(),
@@ -1458,7 +1704,44 @@ mod tests {
                 backend: Backend::Shell,
                 order: Order::Oldest,
                 colour_mode: ColourMode::Never,
+                palette: Palette::Tableau,
             }
+        );
+    }
+
+    #[test]
+    fn parses_palette_names() {
+        assert_eq!(
+            parse_args_from(["-p", "classic"]).unwrap().palette,
+            Palette::Classic
+        );
+        assert_eq!(
+            parse_args_from(["--palette", "okabe"]).unwrap().palette,
+            Palette::Okabe
+        );
+    }
+
+    #[test]
+    fn parses_additional_palette_names() {
+        assert_eq!(
+            parse_args_from(["-p", "set1"]).unwrap().palette,
+            Palette::Set1
+        );
+        assert_eq!(
+            parse_args_from(["-p", "paired"]).unwrap().palette,
+            Palette::Paired
+        );
+        assert_eq!(
+            parse_args_from(["-p", "bold"]).unwrap().palette,
+            Palette::Bold
+        );
+        assert_eq!(
+            parse_args_from(["-p", "vivid"]).unwrap().palette,
+            Palette::Vivid
+        );
+        assert_eq!(
+            parse_args_from(["-p", "tol"]).unwrap().palette,
+            Palette::Tol
         );
     }
 
@@ -1472,6 +1755,7 @@ mod tests {
                 backend: Backend::Gix,
                 order: Order::Newest,
                 colour_mode: ColourMode::Auto,
+                palette: DEFAULT_PALETTE,
             }
         );
     }
@@ -1496,6 +1780,18 @@ mod tests {
         );
         assert_eq!(
             clap_error_kind(parse_args_from(["--colour=maybe"]).unwrap_err()),
+            ErrorKind::InvalidValue
+        );
+        assert_eq!(
+            clap_error_kind(parse_args_from(["--palette=maybe"]).unwrap_err()),
+            ErrorKind::InvalidValue
+        );
+        assert_eq!(
+            clap_error_kind(parse_args_from(["--palette=safe"]).unwrap_err()),
+            ErrorKind::InvalidValue
+        );
+        assert_eq!(
+            clap_error_kind(parse_args_from(["--palette=okabe-ito"]).unwrap_err()),
             ErrorKind::InvalidValue
         );
         assert_eq!(
@@ -1684,7 +1980,7 @@ mod tests {
 
     #[test]
     fn renders_markers_names_and_trunk() {
-        let colours = Colours { enabled: false };
+        let colours = test_colours(false);
         let lanes = vec![
             Lane {
                 head_oid: "a".to_string(),
@@ -1708,21 +2004,60 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
 
         assert_eq!(
             output,
             vec![
-                "◯      feature/one".to_string(),
-                "│ ●  ▶ feature/two".to_string(),
-                "◯─┴    main".to_string()
+                "    ◯      feature/one".to_string(),
+                "▶ ⁝ │ ●    feature/two".to_string(),
+                "  ◇─┴─┘    main".to_string()
             ]
         );
     }
 
     #[test]
-    fn renders_single_main_based_lane_without_empty_spine() {
-        let colours = Colours { enabled: false };
+    fn renders_exactly_one_future_line_above_main_node() {
+        let colours = test_colours(false);
+        let lanes = vec![
+            Lane {
+                head_oid: "a".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("a", &["feature/one"])],
+                head_timestamp: 1,
+                contains_current: false,
+            },
+            Lane {
+                head_oid: "b".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("b", &["feature/two"])],
+                head_timestamp: 2,
+                contains_current: true,
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("feature/two"),
+            head: Some("b"),
+            colours: &colours,
+        };
+
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
+
+        assert_eq!(
+            output
+                .iter()
+                .filter(|line| line.contains(COLLAPSED_MAIN_GLYPH))
+                .count(),
+            1
+        );
+        assert_eq!(output[output.len() - 2], "▶ ⁝ │ ●    feature/two");
+        assert_eq!(output[output.len() - 1], "  ◇─┴─┘    main");
+    }
+
+    #[test]
+    fn renders_single_main_based_lane_with_main_spine() {
+        let colours = test_colours(false);
         let lanes = vec![Lane {
             head_oid: "a".to_string(),
             base_oid: Some("main".to_string()),
@@ -1737,17 +2072,20 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
 
         assert_eq!(
             output,
-            vec!["●  ▶ feature/one".to_string(), "◯    main".to_string()]
+            vec![
+                "▶ ⁝ ●    feature/one".to_string(),
+                "  ◇─┘    main".to_string()
+            ]
         );
     }
 
     #[test]
     fn renders_current_main_on_trunk_row() {
-        let colours = Colours { enabled: false };
+        let colours = test_colours(false);
         let lanes = vec![Lane {
             head_oid: "a".to_string(),
             base_oid: Some("main".to_string()),
@@ -1762,17 +2100,140 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
 
         assert_eq!(
             output,
-            vec!["◯    feature/one".to_string(), "●  ▶ main".to_string()]
+            vec![
+                "  ⁝ ◯    feature/one".to_string(),
+                "▶ ◆─┘    main".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_lane_with_single_warning_marker() {
+        let colours = test_colours(false);
+        let lanes = vec![Lane {
+            head_oid: "backup".to_string(),
+            base_oid: None,
+            branch_points: vec![point("backup", &["test-branch-name"])],
+            head_timestamp: 1,
+            contains_current: false,
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("main"),
+            head: Some("main"),
+            colours: &colours,
+        };
+
+        let output = render_orphaned_group(&lanes, &ctx);
+
+        assert_eq!(
+            output,
+            vec!["  ⁝ ⦸    test-branch-name (orphaned)".to_string()]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_only_groups_around_main_tip() {
+        let colours = test_colours(false);
+        let groups = vec![LaneGroup {
+            base_oid: None,
+            base_meta: None,
+            main_distance: None,
+            lanes: vec![Lane {
+                head_oid: "backup".to_string(),
+                base_oid: None,
+                branch_points: vec![point("backup", &["test-branch-name"])],
+                head_timestamp: 1,
+                contains_current: false,
+            }],
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("main"),
+            head: Some("main"),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                "  ⁝".to_string(),
+                "▶ ◆──    main".to_string(),
+                "  ⁝ ⦸    test-branch-name (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_orphaned_groups_below_connected_stacks() {
+        let colours = test_colours(false);
+        let groups = vec![
+            LaneGroup {
+                base_oid: Some("main".to_string()),
+                base_meta: None,
+                main_distance: Some(0),
+                lanes: vec![Lane {
+                    head_oid: "feature".to_string(),
+                    base_oid: Some("main".to_string()),
+                    branch_points: vec![point("feature", &["feature/current"])],
+                    head_timestamp: 2,
+                    contains_current: true,
+                }],
+            },
+            LaneGroup {
+                base_oid: None,
+                base_meta: None,
+                main_distance: None,
+                lanes: vec![
+                    Lane {
+                        head_oid: "orphan-a".to_string(),
+                        base_oid: None,
+                        branch_points: vec![point("orphan-a", &["orphan-A"])],
+                        head_timestamp: 1,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "orphan-b".to_string(),
+                        base_oid: None,
+                        branch_points: vec![point("orphan-b", &["orphan-B"])],
+                        head_timestamp: 1,
+                        contains_current: false,
+                    },
+                ],
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("feature/current"),
+            head: Some("feature"),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                String::new(),
+                "▶ ⁝ ●    feature/current".to_string(),
+                "  ◇─┘    main".to_string(),
+                "  ⁝ ⦸    orphan-A (orphaned)".to_string(),
+                "  ⁝ ⦸    orphan-B (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
         );
     }
 
     #[test]
     fn renders_old_main_groups_with_collapsed_main_history() {
-        let colours = Colours { enabled: false };
+        let colours = test_colours(false);
         let groups = vec![
             LaneGroup {
                 base_oid: Some("main".to_string()),
@@ -1814,31 +2275,70 @@ mod tests {
         assert_eq!(
             output,
             vec![
-                "◯    feature/current".to_string(),
-                "◯    main".to_string(),
-                "│".to_string(),
-                "⋮ (842 commits on main)".to_string(),
-                "│".to_string(),
-                "│ ●  ▶ dyt/tgs_api".to_string(),
-                "◯─┴    chore: this is an old commit in main history".to_string(),
+                String::new(),
+                "  ⁝ ◯    feature/current".to_string(),
+                "  ◇─┘    main".to_string(),
+                "  │".to_string(),
+                "  ⁝ (842 commits on main)".to_string(),
+                "  │".to_string(),
+                "▶ │ ●    dyt/tgs_api".to_string(),
+                "  ◇─┘    chore: this is an old commit in main history".to_string(),
+                "  ⁝".to_string(),
             ]
         );
     }
 
     #[test]
     fn colours_text_when_enabled() {
-        let colours = Colours { enabled: true };
+        let colours = test_colours(true);
 
-        assert_eq!(colours.stack(0, "x"), "\x1b[38;5;39mx\x1b[0m");
+        assert_eq!(colours.stack(0, "x"), "\x1b[38;5;41mx\x1b[0m");
         assert_eq!(
             colours.current_stack(0, "x"),
-            "\x1b[1m\x1b[4m\x1b[38;5;39mx\x1b[0m"
+            "\x1b[1m\x1b[4m\x1b[38;5;41mx\x1b[0m"
         );
         assert_eq!(
             colours.current_indicator(0, "x"),
-            "\x1b[1m\x1b[38;5;39mx\x1b[0m"
+            "\x1b[1m\x1b[38;5;41mx\x1b[0m"
         );
         assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
+        assert_eq!(colours.orphaned("x"), "\x1b[38;5;250mx\x1b[0m");
+        assert_eq!(
+            main_label("main", Some("main"), &colours),
+            "  \x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m"
+        );
+        assert_eq!(
+            trunk_prefix(0, 0, true, MainSpine::Hidden, &colours),
+            "\x1b[38;5;41m◆\x1b[0m\x1b[2m──\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn active_main_reserves_first_palette_colour() {
+        let colours = test_colours(true);
+        let groups = vec![LaneGroup {
+            base_oid: Some("main".to_string()),
+            base_meta: None,
+            main_distance: Some(0),
+            lanes: vec![Lane {
+                head_oid: "feature".to_string(),
+                base_oid: Some("main".to_string()),
+                branch_points: vec![point("feature", &["feature/one"])],
+                head_timestamp: 1,
+                contains_current: false,
+            }],
+        }];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("main"),
+            head: Some("main"),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert!(output[1].contains("\x1b[38;5;203m◯\x1b[0m"));
+        assert!(output[2].contains("\x1b[38;5;41m◆\x1b[0m"));
     }
 
     #[test]
@@ -1894,6 +2394,7 @@ mod tests {
             backend: Backend::Gix,
             order: Order::Newest,
             colour_mode: ColourMode::Never,
+            palette: DEFAULT_PALETTE,
         };
         let mut cache = HashMap::new();
 
@@ -1951,7 +2452,10 @@ mod tests {
 
         run(["--color", "never"], &git, &mut output).unwrap();
 
-        assert_eq!(String::from_utf8(output).unwrap(), "●  ▶ main\n");
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "  ⁝\n▶ ◆──    main\n  ⁝\n"
+        );
         assert!(
             git.calls()
                 .iter()

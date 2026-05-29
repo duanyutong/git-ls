@@ -10,7 +10,8 @@ fn help_exits_successfully_without_git() {
             .and(predicate::str::contains("--hidden"))
             .and(predicate::str::contains("--backend <VALUE>"))
             .and(predicate::str::contains("--order <VALUE>"))
-            .and(predicate::str::contains("--color <VALUE>")),
+            .and(predicate::str::contains("--color <VALUE>"))
+            .and(predicate::str::contains("-p, --palette <VALUE>")),
     );
 }
 
