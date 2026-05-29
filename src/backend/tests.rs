@@ -9,9 +9,21 @@ use super::metadata::{
 };
 use super::shell::{lines, shell_cache_commit_metas};
 use super::*;
-use crate::error::GitLsError;
+use crate::error::{GitLsError, Result};
 use crate::model::{CommitMeta, display_short_oid};
 use crate::test_support::MockGit;
+
+struct EmptyMetadataBackend;
+
+impl CommitMetadataBackend for EmptyMetadataBackend {
+    fn cache_commit_metas(
+        &self,
+        _oids: &[&str],
+        _cache: &mut HashMap<String, CommitMeta>,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn shell_metadata_hydration_indexes_alias_and_full_oid() {
@@ -46,6 +58,29 @@ fn metadata_cache_deduplicates_missing_aliases() {
         missing_commit_aliases(&["cached", "cached-alias", "new", "new"], &cache),
         vec!["new"]
     );
+}
+
+#[test]
+fn get_commit_meta_reports_backends_that_do_not_populate_cache() {
+    let mut cache = HashMap::new();
+
+    let error = get_commit_meta(&EmptyMetadataBackend, "missing", &mut cache).unwrap_err();
+
+    assert!(matches!(
+        error,
+        GitLsError::UnexpectedGitShow { oid } if oid == "missing"
+    ));
+}
+
+#[test]
+fn shell_metadata_hydration_skips_fully_cached_aliases() {
+    let git = MockGit::default();
+    let mut cache = HashMap::new();
+    insert_commit_meta(&mut cache, "cached", CommitMeta::new("cached", 1, "cached"));
+
+    shell_cache_commit_metas(&git, &["cached"], &mut cache).unwrap();
+
+    assert!(git.calls().is_empty());
 }
 
 #[test]
@@ -184,6 +219,47 @@ fn normalises_line_output() {
     );
     assert_eq!(non_empty("  value \n"), Some("value".to_string()));
     assert_eq!(non_empty(" \n"), None);
+}
+
+#[test]
+fn shell_repository_state_ignores_malformed_branch_records() {
+    let git = MockGit::default().with(
+        &[
+            "for-each-ref",
+            "--format=%(objectname)%00%(refname:short)",
+            "refs/heads",
+        ],
+        "oid-a\x00feature/a\nmalformed\n",
+    );
+
+    let branches = RepositoryStateBackend::local_branches_by_oid(&git).unwrap();
+
+    assert_eq!(branches.len(), 1);
+    assert_eq!(branches.get("oid-a"), Some(&vec!["feature/a".to_string()]));
+}
+
+#[test]
+fn shell_repository_state_propagates_branch_listing_errors() {
+    let error = RepositoryStateBackend::local_branches_by_oid(&MockGit::default()).unwrap_err();
+
+    assert!(matches!(error, GitLsError::TestFixture(_)));
+}
+
+#[test]
+fn shell_ancestry_path_reads_unbounded_head_history() {
+    let git = MockGit::default().with(&["rev-list", "--reverse", "head-oid"], "root\nhead-oid\n");
+
+    let path = AncestryBackend::ancestry_path(&git, None, "head-oid").unwrap();
+
+    assert_eq!(path, vec!["root".to_string(), "head-oid".to_string()]);
+}
+
+#[test]
+fn shell_ancestry_path_propagates_bounded_history_errors() {
+    let error =
+        AncestryBackend::ancestry_path(&MockGit::default(), Some("base"), "head").unwrap_err();
+
+    assert!(matches!(error, GitLsError::TestFixture(_)));
 }
 
 #[test]

@@ -152,4 +152,23 @@ mod tests {
         assert_eq!(config.backend, Some(Backend::Shell));
         assert_eq!(config.palette, Some(Palette::Okabe));
     }
+
+    #[test]
+    fn rejects_invalid_backend_and_palette_config_values() {
+        let backend_error = parse_backend_config(ConfigKey::Backend, "native").unwrap_err();
+        assert!(matches!(
+            backend_error,
+            GitLsError::InvalidGitConfig { key, expected, .. }
+                if key == ConfigKey::Backend.name()
+                    && expected == ConfigKey::Backend.expected()
+        ));
+
+        let palette_error = parse_palette_config(ConfigKey::Palette, "safe").unwrap_err();
+        assert!(matches!(
+            palette_error,
+            GitLsError::InvalidGitConfig { key, expected, .. }
+                if key == ConfigKey::Palette.name()
+                    && expected == ConfigKey::Palette.expected()
+        ));
+    }
 }

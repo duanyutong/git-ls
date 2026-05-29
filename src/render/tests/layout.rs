@@ -361,3 +361,35 @@ fn renders_old_main_groups_with_collapsed_main_history() {
         ]
     );
 }
+
+#[test]
+fn renders_main_tip_before_first_group_from_older_main_history() {
+    let colours = test_colours(false);
+    let groups = vec![LaneGroup {
+        base_oid: Some("old-main".to_string()),
+        base_meta: Some(meta("old-main", "old main point")),
+        main_distance: Some(2),
+        lanes: vec![Lane {
+            head_oid: "feature".to_string(),
+            base_oid: Some("old-main".to_string()),
+            branch_points: vec![point("feature", &["feature"])],
+            head_timestamp: 1,
+            contains_current: false,
+        }],
+    }];
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
+
+    let output = render_lane_groups(&groups, &ctx);
+
+    assert_eq!(output[1], "▶ ◆── main");
+    assert!(output.iter().any(|line| line == "  ⁝ (2 commits on main)"));
+}

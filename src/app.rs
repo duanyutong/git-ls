@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::env;
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::Write;
 
 use clap::Parser;
 
 #[cfg(test)]
 use crate::backend::GitCommand;
-use crate::backend::{CommitMetadataBackend, GitBackend, GixBackend, ProcessGit, get_commit_meta};
-use crate::cli::{Args, Backend, RuntimeOptions, Verbosity, read_git_ls_config};
+use crate::backend::{CommitMetadataBackend, GitBackend, get_commit_meta};
+#[cfg(test)]
+use crate::cli::read_git_ls_config;
+use crate::cli::{Args, RuntimeOptions, Verbosity};
 use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
@@ -17,6 +18,9 @@ use crate::render::{
     render_empty_selection as render_empty_lines, render_lane_groups,
 };
 use crate::terminal::{RenderEnvironment, write_rendered_line};
+
+mod env;
+pub(crate) use env::run_from_env;
 
 fn parse_args_from<I, S>(args: I) -> Result<Args>
 where
@@ -82,9 +86,9 @@ impl<'a> RenderSession<'a> {
     }
 }
 
-fn main_metadata<G: CommitMetadataBackend + ?Sized>(
+fn main_metadata(
     args: &RuntimeOptions,
-    git: &G,
+    git: &dyn CommitMetadataBackend,
     main_oid: &str,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<CommitMeta>> {
@@ -105,14 +109,11 @@ fn render_populated_selection(groups: &[LaneGroup], session: &RenderSession<'_>)
     RenderPlan::new(render_lane_groups(groups, &context))
 }
 
-fn build_render_plan<G>(
+fn build_render_plan(
     args: &RuntimeOptions,
-    git: &G,
+    git: &dyn GitBackend,
     environment: RenderEnvironment,
-) -> Result<RenderPlan>
-where
-    G: GitBackend + ?Sized,
-{
+) -> Result<RenderPlan> {
     let colours = Colours::new(environment.colour_enabled(args.colour_mode), args.palette);
 
     let mut meta_cache = HashMap::new();
@@ -152,15 +153,14 @@ fn write_render_plan<W: Write>(
     Ok(())
 }
 
-fn execute<W, G>(
+fn execute<W>(
     args: &RuntimeOptions,
-    git: &G,
+    git: &dyn GitBackend,
     stdout: &mut W,
     environment: RenderEnvironment,
 ) -> Result<()>
 where
     W: Write,
-    G: GitBackend + ?Sized,
 {
     let plan = build_render_plan(args, git, environment)?;
     write_render_plan(stdout, &plan, environment)
@@ -172,7 +172,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
     W: Write,
-    G: GitBackend + GitCommand + ?Sized,
+    G: GitBackend + GitCommand,
 {
     let args = parse_args_from(args)?;
     let config = read_git_ls_config(git)?;
@@ -183,27 +183,6 @@ where
         stdout,
         RenderEnvironment::new(crate::test_support::TEST_NOW, None, false),
     )
-}
-
-/// Executes the command-line entry point with process arguments and detected
-/// terminal capabilities.
-pub(crate) fn run_from_env() -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    let environment = RenderEnvironment::detect();
-    let args = parse_args_from(env::args().skip(1))?;
-    let config_git = ProcessGit;
-    let config = read_git_ls_config(&config_git)?;
-    let args = args.resolve(&config);
-    match args.backend {
-        Backend::Gix => {
-            let git = GixBackend::discover()?;
-            execute(&args, &git, &mut stdout, environment)
-        }
-        Backend::Shell => {
-            let git = ProcessGit;
-            execute(&args, &git, &mut stdout, environment)
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use clap::error::ErrorKind;
+use std::collections::HashMap;
 
 use super::*;
 use crate::cli::{Args, Backend, ColourMode, Order, Palette, Verbosity};
@@ -280,6 +281,18 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
             .iter()
             .all(|call| call.first().is_none_or(|arg| arg != "for-each-ref"))
     );
+}
+
+#[test]
+fn skips_main_metadata_lookup_when_metadata_is_not_rendered() {
+    let args = runtime_options("draft()", Verbosity::Low);
+    let git = MockGit::default();
+    let mut cache = HashMap::new();
+
+    let meta = main_metadata(&args, &git, "main-oid", &mut cache).unwrap();
+
+    assert_eq!(meta, None);
+    assert!(git.calls().is_empty());
 }
 
 #[test]

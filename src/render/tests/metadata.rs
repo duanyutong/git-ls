@@ -3,7 +3,9 @@ use crate::model::{CommitMeta, Lane, LaneGroup};
 use crate::render::RenderContext;
 use crate::render::branch::display_names;
 use crate::render::layout::render_lane_groups;
-use crate::render::metadata::{MetadataWidths, calculate_metadata_widths, format_metadata_prefix};
+use crate::render::metadata::{
+    MetadataWidths, calculate_metadata_widths, format_age, format_metadata_prefix,
+};
 use crate::render::trunk::{TrunkLabel, trunk_label};
 use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
 
@@ -21,6 +23,51 @@ fn formats_metadata_prefix_with_aligned_placeholders() {
     assert_eq!(
         crate::render::metadata::trunk_count_placeholder(widths),
         "--"
+    );
+}
+
+#[test]
+fn formats_age_across_all_display_units() {
+    let now = TEST_NOW;
+
+    assert_eq!(format_age(now, now), "0s");
+    assert_eq!(format_age(now, now - 59), "59s");
+    assert_eq!(format_age(now, now - 60), "1m");
+    assert_eq!(format_age(now, now - 3_600), "1h");
+    assert_eq!(format_age(now, now - 86_400), "1d");
+    assert_eq!(format_age(now, now - 604_800), "1w");
+    assert_eq!(format_age(now, now - 2_592_000), "1mo");
+    assert_eq!(format_age(now, now - 31_536_000), "1y");
+    assert_eq!(format_age(now, now + 60), "0s");
+}
+
+#[test]
+fn metadata_widths_are_empty_when_metadata_is_not_rendered() {
+    let groups = vec![LaneGroup {
+        base_oid: Some("old-main".to_string()),
+        base_meta: Some(CommitMeta::new("old-main", TEST_NOW - 3_600, "old main")),
+        main_distance: Some(1),
+        lanes: Vec::new(),
+    }];
+
+    assert_eq!(
+        calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Low),
+        MetadataWidths::default()
+    );
+}
+
+#[test]
+fn metadata_widths_include_non_main_base_commits() {
+    let groups = vec![LaneGroup {
+        base_oid: Some("old-main".to_string()),
+        base_meta: Some(CommitMeta::new("old-main", TEST_NOW - 3_600, "old main")),
+        main_distance: Some(1),
+        lanes: Vec::new(),
+    }];
+
+    assert_eq!(
+        calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Medium),
+        MetadataWidths { age: 2, count: 0 }
     );
 }
 
