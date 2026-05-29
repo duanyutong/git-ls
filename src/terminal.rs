@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use console::{Term, truncate_str};
 
+use crate::cli::ColourMode;
 use crate::error::Result;
 
 const TRUNCATION_TAIL: &str = "...";
@@ -13,6 +15,63 @@ fn truncation_tail(width: usize) -> &'static str {
         1 => ".",
         2 => "..",
         _ => TRUNCATION_TAIL,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RenderEnvironment {
+    now_timestamp: i64,
+    terminal_width: Option<usize>,
+    stdout_is_terminal: bool,
+}
+
+impl RenderEnvironment {
+    pub(crate) fn detect() -> Self {
+        let terminal = Term::stdout();
+        let stdout_is_terminal = terminal.is_term();
+        let terminal_width = if stdout_is_terminal {
+            terminal
+                .size_checked()
+                .map(|(_, columns)| usize::from(columns))
+        } else {
+            None
+        };
+        Self::new(current_unix_timestamp(), terminal_width, stdout_is_terminal)
+    }
+
+    pub(crate) const fn new(
+        now_timestamp: i64,
+        terminal_width: Option<usize>,
+        stdout_is_terminal: bool,
+    ) -> Self {
+        Self {
+            now_timestamp,
+            terminal_width,
+            stdout_is_terminal,
+        }
+    }
+
+    pub(crate) fn now_timestamp(self) -> i64 {
+        self.now_timestamp
+    }
+
+    fn terminal_width(self) -> Option<usize> {
+        self.terminal_width
+    }
+
+    pub(crate) fn colour_enabled(self, mode: ColourMode) -> bool {
+        match mode {
+            ColourMode::Auto => self.stdout_is_terminal,
+            ColourMode::Always => true,
+            ColourMode::Never => false,
+        }
+    }
+}
+
+fn current_unix_timestamp() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
     }
 }
 
@@ -29,29 +88,38 @@ fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<
 pub(crate) fn write_rendered_line<W: Write>(
     stdout: &mut W,
     line: &str,
-    terminal_width: Option<usize>,
+    environment: RenderEnvironment,
 ) -> Result<()> {
     writeln!(
         stdout,
         "{}",
-        fit_line_to_terminal_width(line, terminal_width)
+        fit_line_to_terminal_width(line, environment.terminal_width())
     )?;
     Ok(())
-}
-
-pub(crate) fn terminal_output_width() -> Option<usize> {
-    let terminal = Term::stdout();
-    if !terminal.is_term() {
-        return None;
-    }
-    terminal
-        .size_checked()
-        .map(|(_, columns)| usize::from(columns))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_colour_capability_without_reading_process_state() {
+        let terminal = RenderEnvironment::new(1_700_000_000, Some(80), true);
+        let pipe = RenderEnvironment::new(1_700_000_000, None, false);
+
+        assert!(terminal.colour_enabled(ColourMode::Auto));
+        assert!(!pipe.colour_enabled(ColourMode::Auto));
+        assert!(pipe.colour_enabled(ColourMode::Always));
+        assert!(!terminal.colour_enabled(ColourMode::Never));
+    }
+
+    #[test]
+    fn carries_clock_and_terminal_width_capabilities() {
+        let environment = RenderEnvironment::new(1_700_000_123, Some(42), true);
+
+        assert_eq!(environment.now_timestamp(), 1_700_000_123);
+        assert_eq!(environment.terminal_width(), Some(42));
+    }
 
     #[test]
     fn fits_plain_rows_to_terminal_width() {
@@ -86,5 +154,15 @@ mod tests {
             fit_line_to_terminal_width("abcdef", None).as_ref(),
             "abcdef"
         );
+    }
+
+    #[test]
+    fn writes_lines_with_environment_terminal_width() {
+        let mut output = Vec::new();
+        let environment = RenderEnvironment::new(1_700_000_000, Some(5), false);
+
+        write_rendered_line(&mut output, "abcdefgh", environment).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "ab...\n");
     }
 }
