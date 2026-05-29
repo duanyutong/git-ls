@@ -354,6 +354,41 @@ fn renders_orphaned_lane_with_single_warning_marker() {
 }
 
 #[test]
+fn renders_orphaned_lane_with_main_coloured_history_marker() {
+    let colours = test_colours(true);
+    let lanes = vec![Lane::new(
+        "backup",
+        None,
+        vec![point("backup", &["test-branch-name"])],
+        1,
+        false,
+    )];
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
+
+    let output = render_orphaned_group(&lanes, &ctx);
+
+    assert_eq!(
+        output,
+        vec![format!(
+            "  {} {} {} {}",
+            colours.stack(0, COLLAPSED_MAIN_GLYPH),
+            colours.orphaned_glyph("⦸"),
+            colours.orphaned_name("test-branch-name"),
+            colours.orphaned_status("(orphaned)")
+        )]
+    );
+}
+
+#[test]
 fn renders_orphaned_only_groups_around_main_tip() {
     let colours = test_colours(false);
     let groups = vec![LaneGroup {
