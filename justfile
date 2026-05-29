@@ -5,6 +5,9 @@
 
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
+git_ls_unit_ignore_regex := '(^|/)(src/main\.rs|src/backend/process\.rs|src/test_support\.rs)$'
+xtask_unit_ignore_regex := '(^|/)xtask/src/(git|main|version)\.rs$'
+
 # Show every recipe with its docstring.
 default:
     @just --list
@@ -17,14 +20,22 @@ typecheck:
 test:
     cargo test --workspace --all-targets --all-features --locked
 
-# Generate coverage once, then enforce package and testable-module baselines.
+# Generate coverage once, then enforce package and unit-testable baselines.
 coverage:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --workspace --all-targets --all-features --locked --no-report
+    just coverage-package-baseline
+    just coverage-unit-baseline
+
+# Enforce broad package baselines, including binary and process-boundary adapters.
+coverage-package-baseline:
     cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90
     cargo llvm-cov report -p xtask --summary-only --fail-under-lines 40
-    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90 --fail-under-file-lines 80 --ignore-filename-regex '(^|/)(src/main\.rs|src/backend/process\.rs|src/test_support\.rs)$'
-    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95 --fail-under-file-lines 90 --ignore-filename-regex '(^|/)xtask/src/(git|main|version)\.rs$'
+
+# Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
+coverage-unit-baseline:
+    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90 --fail-under-file-lines 80 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
+    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95 --fail-under-file-lines 90 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
 
 # Build the optimised binary.
 build-release:
