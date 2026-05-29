@@ -14,11 +14,7 @@ use crate::model::{BranchAnnotation, BranchPoint, CommitMeta, Lane, LaneGroup};
 use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
 
 fn point(oid: &str, names: &[&str]) -> BranchPoint {
-    BranchPoint {
-        oid: oid.to_string(),
-        names: names.iter().map(|name| (*name).to_string()).collect(),
-        annotation: None,
-    }
+    BranchPoint::new(oid, names.iter().copied(), None)
 }
 
 fn point_with_count(oid: &str, names: &[&str], commit_count: usize, subject: &str) -> BranchPoint {
@@ -32,28 +28,18 @@ fn point_with_count_at(
     subject: &str,
     timestamp: i64,
 ) -> BranchPoint {
-    BranchPoint {
-        oid: oid.to_string(),
-        names: names.iter().map(|name| (*name).to_string()).collect(),
-        annotation: Some(BranchAnnotation {
-            meta: CommitMeta {
-                oid: oid.to_string(),
-                short_oid: oid.to_string(),
-                subject: subject.to_string(),
-                timestamp,
-            },
+    BranchPoint::new(
+        oid,
+        names.iter().copied(),
+        Some(BranchAnnotation::new(
+            CommitMeta::new(oid, timestamp, subject),
             commit_count,
-        }),
-    }
+        )),
+    )
 }
 
 fn meta(oid: &str, subject: &str) -> CommitMeta {
-    CommitMeta {
-        oid: oid.to_string(),
-        short_oid: oid.to_string(),
-        subject: subject.to_string(),
-        timestamp: 0,
-    }
+    CommitMeta::new(oid, 0, subject)
 }
 
 fn test_colours(enabled: bool) -> Colours {
@@ -96,12 +82,7 @@ fn renders_current_and_orphaned_row_indicators() {
 #[test]
 fn renders_trunk_commit_label_with_main_placeholder_count() {
     let colours = test_colours(false);
-    let base_meta = CommitMeta {
-        oid: "old-main".to_string(),
-        short_oid: "old-mai".to_string(),
-        subject: "old main point".to_string(),
-        timestamp: TEST_COMMIT_TIME,
-    };
+    let base_meta = CommitMeta::new("old-main", TEST_COMMIT_TIME, "old main point");
     let ctx = RenderContext::new(
         "main",
         None,
@@ -132,7 +113,7 @@ fn renders_orphaned_names_with_status_metadata_and_title() {
             MetadataWidths::default(),
             &colours,
         ),
-        "2m (2, backup-oid) backup (orphaned) backup tip"
+        "2m (2, backup-) backup (orphaned) backup tip"
     );
 }
 
@@ -250,7 +231,7 @@ fn renders_branch_metadata_with_commit_count_for_multi_commit_branch() {
         &colours,
     );
 
-    assert_eq!(label, "2m (3, branch-head) feature/topic finish topic");
+    assert_eq!(label, "2m (3, branch-) feature/topic finish topic");
 }
 
 #[test]
@@ -268,7 +249,7 @@ fn renders_summary_branch_metadata_without_commit_title() {
         &colours,
     );
 
-    assert_eq!(label, "2m (3, branch-head) feature/topic");
+    assert_eq!(label, "2m (3, branch-) feature/topic");
 }
 
 #[test]
@@ -414,12 +395,7 @@ fn renders_orphaned_only_groups_around_main_tip() {
 #[test]
 fn renders_main_metadata_in_aligned_annotation_column() {
     let colours = test_colours(false);
-    let main_meta = CommitMeta {
-        oid: "main-oid".to_string(),
-        short_oid: "main-oi".to_string(),
-        subject: "main tip".to_string(),
-        timestamp: TEST_COMMIT_TIME,
-    };
+    let main_meta = CommitMeta::new("main-oid", TEST_COMMIT_TIME, "main tip");
     let groups = vec![LaneGroup {
         base_oid: None,
         base_meta: None,
@@ -458,7 +434,7 @@ fn renders_main_metadata_in_aligned_annotation_column() {
         vec![
             "  ⁝".to_string(),
             "▶ ◆── 2m (--, main-oi) main".to_string(),
-            "  ⁝ ⦸ 2m (10, backup-oid) backup (orphaned)".to_string(),
+            "  ⁝ ⦸ 2m (10, backup-) backup (orphaned)".to_string(),
             "  ⁝".to_string(),
         ]
     );

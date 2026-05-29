@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use gix::bstr::ByteSlice as _;
 
 use crate::error::{GitLsError, Result};
-use crate::model::{CommitMeta, display_short_oid};
+use crate::model::CommitMeta;
 
 use super::metadata::{insert_commit_meta, missing_commit_aliases};
 use super::process::ProcessGit;
@@ -56,14 +56,7 @@ impl GixBackend {
             .time()
             .map_err(|source| GitLsError::gix("read commit timestamp", source))?
             .seconds;
-        let short_oid = display_short_oid(&full_oid);
-
-        Ok(CommitMeta {
-            oid: full_oid,
-            short_oid,
-            subject,
-            timestamp,
-        })
+        Ok(CommitMeta::new(full_oid, timestamp, subject))
     }
 
     fn is_descendant_of(

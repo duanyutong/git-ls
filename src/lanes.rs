@@ -34,13 +34,7 @@ fn branch_points_by_oid(
         }
         point_names.sort();
 
-        result.insert(
-            oid.clone(),
-            BranchPointRef {
-                oid: oid.clone(),
-                names: point_names,
-            },
-        );
+        result.insert(oid.clone(), BranchPointRef::new(oid, point_names));
     }
 
     result
@@ -86,11 +80,7 @@ where
     let branch_names = git.query_branch_names(&revset, hidden)?;
     let (head, current_branch) = git.current_head_and_branch()?;
     let main_name = git.main_branch_name()?;
-    let repository = RepositorySnapshot {
-        current_branch,
-        head,
-        main_name,
-    };
+    let repository = RepositorySnapshot::new(current_branch, head, main_name);
 
     if branch_names.is_empty() {
         return Ok(LaneSelection::Empty {
@@ -187,19 +177,19 @@ fn build_branch_point<G: CommitMetadataBackend + ?Sized>(
 ) -> Result<BranchPoint> {
     let point = &branch_point.point;
     let annotation = if verbosity.includes_metadata() {
-        Some(BranchAnnotation {
-            meta: get_commit_meta(git, &point.oid, meta_cache)?,
-            commit_count: branch_point.commit_count,
-        })
+        Some(BranchAnnotation::new(
+            get_commit_meta(git, &point.oid, meta_cache)?,
+            branch_point.commit_count,
+        ))
     } else {
         None
     };
 
-    Ok(BranchPoint {
-        oid: point.oid.clone(),
-        names: point.names.clone(),
+    Ok(BranchPoint::new(
+        point.oid.clone(),
+        point.names.clone(),
         annotation,
-    })
+    ))
 }
 
 fn build_lane_from_path<G: CommitMetadataBackend + ?Sized>(
@@ -226,13 +216,14 @@ fn build_lane_from_path<G: CommitMetadataBackend + ?Sized>(
             || head.is_some_and(|head| point.oid == head)
     });
 
-    Ok(Some(Lane {
-        head_oid: head_meta.oid,
-        base_oid: lane_path.base_oid.clone(),
+    let head_timestamp = head_meta.timestamp;
+    Ok(Some(Lane::new(
+        head_meta.oid,
+        lane_path.base_oid.clone(),
         branch_points,
-        head_timestamp: head_meta.timestamp,
+        head_timestamp,
         contains_current,
-    }))
+    )))
 }
 
 fn build_lane<G: AncestryBackend + CommitMetadataBackend + ?Sized>(
@@ -268,10 +259,7 @@ pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
                 main_oid,
                 repository,
             } => {
-                return Ok(BuiltLanes::Empty {
-                    main_oid,
-                    repository,
-                });
+                return Ok(BuiltLanes::empty(main_oid, repository));
             }
             LaneSelection::Populated {
                 main_oid,
@@ -299,11 +287,7 @@ pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
         }
     }
 
-    Ok(BuiltLanes::Populated {
-        lanes,
-        main_oid,
-        repository,
-    })
+    Ok(BuiltLanes::populated(lanes, main_oid, repository))
 }
 
 pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
@@ -363,12 +347,7 @@ pub(crate) fn build_lane_groups<G: GitBackend + ?Sized>(
             None => None,
         };
 
-        groups.push(LaneGroup {
-            base_oid,
-            base_meta,
-            main_distance,
-            lanes,
-        });
+        groups.push(LaneGroup::new(base_oid, base_meta, main_distance, lanes));
     }
 
     groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, order));

@@ -38,12 +38,7 @@ fn shell_metadata_hydration_indexes_alias_and_full_oid() {
 
 #[test]
 fn metadata_cache_deduplicates_missing_aliases() {
-    let cached_meta = CommitMeta {
-        oid: "cached".to_string(),
-        short_oid: "cached".to_string(),
-        subject: "cached".to_string(),
-        timestamp: 1,
-    };
+    let cached_meta = CommitMeta::new("cached", 1, "cached");
     let mut cache = HashMap::new();
     insert_commit_meta(&mut cache, "cached-alias", cached_meta);
 
