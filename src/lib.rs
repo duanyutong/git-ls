@@ -1,5 +1,5 @@
 use anstyle::{Ansi256Color, Style};
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use gix::bstr::ByteSlice as _;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -9,6 +9,7 @@ use std::fmt;
 use std::io::{self, IsTerminal, Write};
 use std::num::ParseIntError;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 const OKABE_PALETTE: [u8; 7] = [214, 45, 35, 220, 32, 202, 176];
@@ -28,6 +29,12 @@ const MAIN_COMMIT_GLYPH: &str = "◇";
 const CURRENT_MAIN_COMMIT_GLYPH: &str = "◆";
 const ORPHANED_BRANCH_GLYPH: &str = "⦸";
 const TREE_LEFT_PADDING: &str = "";
+const BRANCH_LABEL_GAP: &str = " ";
+const DISPLAY_OID_LEN: usize = 7;
+const ANSI_METADATA_COUNT: u8 = 255;
+const ANSI_MUTED_TEXT: u8 = 251;
+const ANSI_ORPHANED_LABEL: u8 = 255;
+const DEFAULT_VERBOSITY: Verbosity = Verbosity::Medium;
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (git ",
@@ -143,6 +150,23 @@ struct CommitMeta {
 struct BranchPoint {
     oid: String,
     names: Vec<String>,
+    annotation: Option<BranchAnnotation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BranchAnnotation {
+    meta: CommitMeta,
+    commit_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BranchPointRef {
+    oid: String,
+    names: Vec<String>,
+}
+
+fn display_short_oid(oid: &str) -> String {
+    oid.chars().take(DISPLAY_OID_LEN).collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,14 +196,39 @@ struct RepositorySnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum BuiltLanes {
     Empty {
-        main_name: String,
-        current_branch: Option<String>,
+        main_oid: String,
+        repository: RepositorySnapshot,
     },
     Populated {
         lanes: Vec<Lane>,
         main_oid: String,
         repository: RepositorySnapshot,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Verbosity {
+    Low,
+    Medium,
+    High,
+}
+
+impl Verbosity {
+    fn from_count(count: u8) -> Self {
+        match count {
+            0 => Self::Low,
+            1 => Self::Medium,
+            _ => Self::High,
+        }
+    }
+
+    fn includes_metadata(self) -> bool {
+        !matches!(self, Self::Low)
+    }
+
+    fn includes_title(self) -> bool {
+        matches!(self, Self::High)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -273,29 +322,49 @@ struct Args {
     #[arg(long)]
     hidden: bool,
 
-    #[arg(long, value_enum, default_value = "gix", value_name = "VALUE")]
+    #[arg(short, long, action = ArgAction::Count)]
+    verbose: u8,
+
+    #[arg(long, value_enum, value_name = "VALUE")]
+    backend: Option<Backend>,
+
+    #[arg(long, value_enum, value_name = "VALUE")]
+    order: Option<Order>,
+
+    #[arg(long = "color", alias = "colour", value_enum, value_name = "VALUE")]
+    colour_mode: Option<ColourMode>,
+
+    #[arg(short = 'p', long, value_enum, value_name = "VALUE")]
+    palette: Option<Palette>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EffectiveArgs {
+    revset: String,
+    hidden: bool,
+    verbosity: Verbosity,
     backend: Backend,
-
-    #[arg(long, value_enum, default_value = "newest", value_name = "VALUE")]
     order: Order,
-
-    #[arg(
-        long = "color",
-        alias = "colour",
-        value_enum,
-        default_value = "auto",
-        value_name = "VALUE"
-    )]
     colour_mode: ColourMode,
-
-    #[arg(
-        short = 'p',
-        long,
-        value_enum,
-        default_value_t = DEFAULT_PALETTE,
-        value_name = "VALUE"
-    )]
     palette: Palette,
+}
+
+impl Args {
+    fn resolve(&self) -> EffectiveArgs {
+        EffectiveArgs {
+            revset: self.revset.clone(),
+            hidden: self.hidden,
+            verbosity: if self.verbose == 0 {
+                DEFAULT_VERBOSITY
+            } else {
+                Verbosity::from_count(self.verbose)
+            },
+            backend: self.backend.unwrap_or(Backend::Gix),
+            order: self.order.unwrap_or(Order::Newest),
+            colour_mode: self.colour_mode.unwrap_or(ColourMode::Auto),
+            palette: self.palette.unwrap_or(DEFAULT_PALETTE),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -355,8 +424,40 @@ impl Colours {
         self.paint(text, Style::new().dimmed())
     }
 
-    fn orphaned(&self, text: &str) -> String {
-        self.paint(text, Ansi256Color(250).on_default())
+    fn muted_text(&self, text: &str) -> String {
+        self.paint(text, Ansi256Color(ANSI_MUTED_TEXT).on_default())
+    }
+
+    fn metadata_age(&self, text: &str) -> String {
+        self.muted_text(text)
+    }
+
+    fn metadata_count(&self, text: &str) -> String {
+        self.paint(text, Ansi256Color(ANSI_METADATA_COUNT).on_default())
+    }
+
+    fn metadata_oid(&self, text: &str) -> String {
+        self.muted_text(text)
+    }
+
+    fn metadata_punctuation(&self, text: &str) -> String {
+        self.muted_text(text)
+    }
+
+    fn commit_title(&self, text: &str) -> String {
+        self.muted_text(text)
+    }
+
+    fn orphaned_name(&self, text: &str) -> String {
+        self.metadata_count(text)
+    }
+
+    fn orphaned_glyph(&self, text: &str) -> String {
+        self.paint(text, Ansi256Color(ANSI_METADATA_COUNT).on_default().bold())
+    }
+
+    fn orphaned_status(&self, text: &str) -> String {
+        self.paint(text, Ansi256Color(ANSI_ORPHANED_LABEL).on_default().bold())
     }
 }
 
@@ -469,7 +570,7 @@ fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
     let mut args = vec![
         "show",
         "-s",
-        "--format=%H%x00%h%x00%ct%x00%s%x1e",
+        "--format=%H%x00%ct%x00%s%x1e",
         "--no-walk=unsorted",
     ];
     args.extend(missing.iter().copied());
@@ -500,8 +601,8 @@ fn shell_cache_commit_meta(
     record: &str,
     cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<()> {
-    let parts: Vec<&str> = record.splitn(4, '\0').collect();
-    if parts.len() != 4 {
+    let parts: Vec<&str> = record.splitn(3, '\0').collect();
+    if parts.len() != 3 {
         return Err(GitLsError::UnexpectedGitShow {
             oid: alias.to_string(),
         });
@@ -509,14 +610,14 @@ fn shell_cache_commit_meta(
 
     let meta = CommitMeta {
         oid: parts[0].to_string(),
-        short_oid: parts[1].to_string(),
-        timestamp: parts[2]
+        short_oid: display_short_oid(parts[0]),
+        timestamp: parts[1]
             .parse()
             .map_err(|source| GitLsError::InvalidCommitTimestamp {
                 oid: alias.to_string(),
                 source,
             })?,
-        subject: parts[3].to_string(),
+        subject: parts[2].to_string(),
     };
 
     if alias != meta.oid {
@@ -581,7 +682,7 @@ fn branch_revset(user_revset: &str) -> String {
 fn branch_points_by_oid(
     branch_names: &[String],
     branch_oid_map: &HashMap<String, Vec<String>>,
-) -> HashMap<String, BranchPoint> {
+) -> HashMap<String, BranchPointRef> {
     let selected: HashSet<&str> = branch_names.iter().map(String::as_str).collect();
     let mut result = HashMap::new();
 
@@ -598,7 +699,7 @@ fn branch_points_by_oid(
 
         result.insert(
             oid.clone(),
-            BranchPoint {
+            BranchPointRef {
                 oid: oid.clone(),
                 names: point_names,
             },
@@ -637,6 +738,29 @@ fn shell_ancestry_path<G: GitCommand + ?Sized>(
     Ok(lines(&output))
 }
 
+fn build_branch_point<G: GitBackend + ?Sized>(
+    git: &G,
+    point: &BranchPointRef,
+    commit_count: usize,
+    verbosity: Verbosity,
+    meta_cache: &mut HashMap<String, CommitMeta>,
+) -> Result<BranchPoint> {
+    let annotation = if verbosity.includes_metadata() {
+        Some(BranchAnnotation {
+            meta: get_commit_meta(git, &point.oid, meta_cache)?,
+            commit_count,
+        })
+    } else {
+        None
+    };
+
+    Ok(BranchPoint {
+        oid: point.oid.clone(),
+        names: point.names.clone(),
+        annotation,
+    })
+}
+
 #[derive(Debug)]
 struct GixBackend {
     repo: gix::Repository,
@@ -672,7 +796,7 @@ impl GixBackend {
             .repo
             .find_commit(oid)
             .map_err(|source| gix_error("find commit", source))?;
-        let full_oid = commit.id().detach();
+        let full_oid = commit.id().detach().to_string();
         let subject = commit
             .message()
             .map_err(|source| gix_error("read commit message", source))?
@@ -683,13 +807,10 @@ impl GixBackend {
             .time()
             .map_err(|source| gix_error("read commit timestamp", source))?
             .seconds;
-        let short_oid = commit
-            .short_id()
-            .map_err(|source| gix_error("shorten commit id", source))?
-            .to_string();
+        let short_oid = display_short_oid(&full_oid);
 
         Ok(CommitMeta {
-            oid: full_oid.to_string(),
+            oid: full_oid,
             short_oid,
             subject,
             timestamp,
@@ -856,22 +977,46 @@ fn build_lane<G: GitBackend + ?Sized>(
     git: &G,
     head_oid: &str,
     main_oid: &str,
-    points_by_oid: &HashMap<String, BranchPoint>,
+    points_by_oid: &HashMap<String, BranchPointRef>,
     current_branch: Option<&str>,
     head: Option<&str>,
+    verbosity: Verbosity,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
     let base_oid = git.merge_base(main_oid, head_oid)?;
     let path = git.ancestry_path(base_oid.as_deref(), head_oid)?;
-    let mut branch_points: Vec<BranchPoint> = path
-        .iter()
-        .filter_map(|oid| points_by_oid.get(oid).cloned())
-        .collect();
+    let mut branch_points = Vec::new();
+    let mut previous_branch_point_index = None;
+
+    for (index, oid) in path.iter().enumerate() {
+        if let Some(point) = points_by_oid.get(oid) {
+            let commit_count = previous_branch_point_index
+                .map_or(index + 1, |previous| index.saturating_sub(previous));
+            branch_points.push(build_branch_point(
+                git,
+                point,
+                commit_count,
+                verbosity,
+                meta_cache,
+            )?);
+            previous_branch_point_index = Some(index);
+        }
+    }
 
     if branch_points.is_empty()
         && let Some(point) = points_by_oid.get(head_oid)
     {
-        branch_points.push(point.clone());
+        let commit_count = path
+            .iter()
+            .position(|oid| oid == head_oid)
+            .map_or_else(|| path.len().max(1), |index| index + 1);
+        branch_points.push(build_branch_point(
+            git,
+            point,
+            commit_count,
+            verbosity,
+            meta_cache,
+        )?);
     }
     if branch_points.is_empty() {
         return Ok(None);
@@ -895,19 +1040,10 @@ fn build_lane<G: GitBackend + ?Sized>(
 
 fn build_lanes<G: GitBackend + ?Sized>(
     git: &G,
-    args: &Args,
+    args: &EffectiveArgs,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
     let revset = branch_revset(&args.revset);
-    let branch_names = git.query_branch_names(&revset, args.hidden)?;
-    if branch_names.is_empty() {
-        let (_head, current_branch) = git.current_head_and_branch()?;
-        return Ok(BuiltLanes::Empty {
-            main_name: git.main_branch_name()?,
-            current_branch,
-        });
-    }
-
     let main_oids = git.query_revset("main()", args.hidden)?;
     if main_oids.len() != 1 {
         return Err(GitLsError::AmbiguousMainRevset {
@@ -916,6 +1052,19 @@ fn build_lanes<G: GitBackend + ?Sized>(
     }
     let main_oid = main_oids[0].clone();
 
+    let branch_names = git.query_branch_names(&revset, args.hidden)?;
+    if branch_names.is_empty() {
+        let (head, current_branch) = git.current_head_and_branch()?;
+        return Ok(BuiltLanes::Empty {
+            main_oid,
+            repository: RepositorySnapshot {
+                current_branch,
+                head,
+                main_name: git.main_branch_name()?,
+            },
+        });
+    }
+
     let branch_oid_map = git.local_branches_by_oid()?;
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let heads_revset = format!("heads({revset})");
@@ -923,8 +1072,13 @@ fn build_lanes<G: GitBackend + ?Sized>(
     let (head, current_branch) = git.current_head_and_branch()?;
     let main_name = git.main_branch_name()?;
 
-    let head_refs: Vec<&str> = head_oids.iter().map(String::as_str).collect();
-    git.cache_commit_metas(&head_refs, meta_cache)?;
+    let mut meta_refs: Vec<&str> = head_oids.iter().map(String::as_str).collect();
+    if args.verbosity.includes_metadata() {
+        meta_refs.extend(points_by_oid.keys().map(String::as_str));
+    }
+    meta_refs.sort_unstable();
+    meta_refs.dedup();
+    git.cache_commit_metas(&meta_refs, meta_cache)?;
 
     let mut lanes = Vec::new();
     for head_oid in head_oids {
@@ -935,6 +1089,7 @@ fn build_lanes<G: GitBackend + ?Sized>(
             &points_by_oid,
             current_branch.as_deref(),
             head.as_deref(),
+            args.verbosity,
             meta_cache,
         )? {
             lanes.push(lane);
@@ -1070,33 +1225,159 @@ fn is_current_branch_point(point: &BranchPoint, current_branch: Option<&str>) ->
     current_branch.is_some_and(|branch| point.names.iter().any(|name| name == branch))
 }
 
+fn current_unix_timestamp() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    }
+}
+
+fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
+    const MINUTE: i64 = 60;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    const WEEK: i64 = 7 * DAY;
+    const MONTH: i64 = 30 * DAY;
+    const YEAR: i64 = 365 * DAY;
+
+    let seconds = now_timestamp.saturating_sub(commit_timestamp).max(0);
+
+    match seconds {
+        0..MINUTE => format!("{seconds}s"),
+        MINUTE..HOUR => format!("{}m", seconds / MINUTE),
+        HOUR..DAY => format!("{}h", seconds / HOUR),
+        DAY..WEEK => format!("{}d", seconds / DAY),
+        WEEK..MONTH => format!("{}w", seconds / WEEK),
+        MONTH..YEAR => format!("{}mo", seconds / MONTH),
+        _ => format!("{}y", seconds / YEAR),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct MetadataWidths {
+    age: usize,
+    count: usize,
+}
+
+fn branch_metadata_columns(annotation: &BranchAnnotation, now_timestamp: i64) -> (String, String) {
+    (
+        format_age(now_timestamp, annotation.meta.timestamp),
+        annotation.commit_count.to_string(),
+    )
+}
+
+fn trunk_metadata_age(meta: &CommitMeta, now_timestamp: i64) -> String {
+    format_age(now_timestamp, meta.timestamp)
+}
+
+fn trunk_count_placeholder(widths: MetadataWidths) -> String {
+    "-".repeat(widths.count.max(1))
+}
+
+fn format_metadata_prefix(
+    age: &str,
+    count: &str,
+    short_oid: &str,
+    widths: MetadataWidths,
+    colours: &Colours,
+) -> String {
+    let count_width = widths.count.max(1);
+    let age = colours.metadata_age(&format!("{age:>age_width$}", age_width = widths.age));
+    let count = colours.metadata_count(&format!("{count:>count_width$}"));
+    let short_oid = colours.metadata_oid(short_oid);
+    let open = colours.metadata_punctuation("(");
+    let comma = colours.metadata_punctuation(", ");
+    let close = colours.metadata_punctuation(")");
+    format!("{age} {open}{count}{comma}{short_oid}{close}")
+}
+
 fn display_names(
     point: &BranchPoint,
     current_branch: Option<&str>,
     colour_index: usize,
+    now_timestamp: i64,
+    verbosity: Verbosity,
+    metadata_widths: MetadataWidths,
     colours: &Colours,
 ) -> String {
-    point
+    let names = point
         .names
         .iter()
         .map(|name| {
             if current_branch.is_some_and(|branch| branch == name) {
-                format!("  {}", colours.current_stack(colour_index, name))
+                colours.current_stack(colour_index, name)
             } else {
-                format!("  {}", colours.stack(colour_index, name))
+                colours.stack(colour_index, name)
             }
         })
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+
+    let Some(annotation) = point
+        .annotation
+        .as_ref()
+        .filter(|_| verbosity.includes_metadata())
+    else {
+        return names;
+    };
+
+    let (age, count) = branch_metadata_columns(annotation, now_timestamp);
+    let prefix = format_metadata_prefix(
+        &age,
+        &count,
+        &annotation.meta.short_oid,
+        metadata_widths,
+        colours,
+    );
+    if verbosity.includes_title() {
+        format!(
+            "{prefix} {names} {}",
+            colours.commit_title(&annotation.meta.subject)
+        )
+    } else {
+        format!("{prefix} {names}")
+    }
 }
 
-fn display_orphaned_names(point: &BranchPoint, colours: &Colours) -> String {
-    point
+fn display_orphaned_names(
+    point: &BranchPoint,
+    now_timestamp: i64,
+    verbosity: Verbosity,
+    metadata_widths: MetadataWidths,
+    colours: &Colours,
+) -> String {
+    let names = point
         .names
         .iter()
-        .map(|name| format!("  {}", colours.orphaned(name)))
+        .map(|name| colours.orphaned_name(name))
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    let status = colours.orphaned_status("(orphaned)");
+
+    let Some(annotation) = point
+        .annotation
+        .as_ref()
+        .filter(|_| verbosity.includes_metadata())
+    else {
+        return format!("{names} {status}");
+    };
+
+    let (age, count) = branch_metadata_columns(annotation, now_timestamp);
+    let prefix = format_metadata_prefix(
+        &age,
+        &count,
+        &annotation.meta.short_oid,
+        metadata_widths,
+        colours,
+    );
+    if verbosity.includes_title() {
+        format!(
+            "{prefix} {names} {status} {}",
+            colours.commit_title(&annotation.meta.subject)
+        )
+    } else {
+        format!("{prefix} {names} {status}")
+    }
 }
 
 fn current_row_indicator(is_current: bool, colour_index: usize, colours: &Colours) -> String {
@@ -1109,7 +1390,7 @@ fn current_row_indicator(is_current: bool, colour_index: usize, colours: &Colour
 
 fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> String {
     if is_current {
-        colours.orphaned("▶")
+        colours.orphaned_glyph("▶")
     } else {
         " ".to_string()
     }
@@ -1159,12 +1440,27 @@ fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
     current_branch.is_some_and(|branch| branch == main_name)
 }
 
-fn main_label(main_name: &str, current_branch: Option<&str>, colours: &Colours) -> String {
-    if main_is_current(main_name, current_branch) {
-        format!("  {}", colours.current_stack(0, main_name))
+fn main_label(ctx: &RenderContext<'_>) -> String {
+    let name = if main_is_current(ctx.main_name, ctx.current_branch) {
+        ctx.colours.current_stack(0, ctx.main_name)
     } else {
-        format!("  {}", colours.dim(main_name))
-    }
+        ctx.colours.dim(ctx.main_name)
+    };
+
+    let Some(meta) = ctx.main_meta.filter(|_| ctx.verbosity.includes_metadata()) else {
+        return name;
+    };
+
+    let age = trunk_metadata_age(meta, ctx.now_timestamp);
+    let count = trunk_count_placeholder(ctx.metadata_widths);
+    let prefix = format_metadata_prefix(
+        &age,
+        &count,
+        &meta.short_oid,
+        ctx.metadata_widths,
+        ctx.colours,
+    );
+    format!("{prefix} {name}")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1222,17 +1518,33 @@ enum TrunkLabel<'a> {
 
 fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> String {
     match label {
-        TrunkLabel::Main => main_label(ctx.main_name, ctx.current_branch, ctx.colours),
-        TrunkLabel::Commit(meta) => format!("  {}", ctx.colours.dim(&meta.subject)),
+        TrunkLabel::Main => main_label(ctx),
+        TrunkLabel::Commit(meta) => {
+            let subject = ctx.colours.commit_title(&meta.subject);
+            if !ctx.verbosity.includes_metadata() {
+                return subject;
+            }
+
+            let age = trunk_metadata_age(meta, ctx.now_timestamp);
+            let count = trunk_count_placeholder(ctx.metadata_widths);
+            let prefix = format_metadata_prefix(
+                &age,
+                &count,
+                &meta.short_oid,
+                ctx.metadata_widths,
+                ctx.colours,
+            );
+            format!("{prefix} {subject}")
+        }
     }
 }
 
 fn render_main_tip(ctx: &RenderContext<'_>) -> String {
     let current_main = main_is_current(ctx.main_name, ctx.current_branch);
     let line = format!(
-        "{}  {}",
+        "{}{BRANCH_LABEL_GAP}{}",
         trunk_prefix(0, 0, current_main, MainSpine::Hidden, ctx.colours),
-        main_label(ctx.main_name, ctx.current_branch, ctx.colours)
+        main_label(ctx)
     );
     render_row(&current_row_indicator(current_main, 0, ctx.colours), &line)
 }
@@ -1247,8 +1559,12 @@ fn render_top_spacer(colours: &Colours, has_visible_rows_above_main: bool) -> St
 
 struct RenderContext<'a> {
     main_name: &'a str,
+    main_meta: Option<&'a CommitMeta>,
     current_branch: Option<&'a str>,
     head: Option<&'a str>,
+    now_timestamp: i64,
+    verbosity: Verbosity,
+    metadata_widths: MetadataWidths,
     colours: &'a Colours,
 }
 
@@ -1284,8 +1600,16 @@ fn render_group(
                 row_main_spine,
                 ctx.colours,
             );
-            let label = display_names(point, ctx.current_branch, colour_index, ctx.colours);
-            let line = format!("{prefix}  {label}");
+            let label = display_names(
+                point,
+                ctx.current_branch,
+                colour_index,
+                ctx.now_timestamp,
+                ctx.verbosity,
+                ctx.metadata_widths,
+                ctx.colours,
+            );
+            let line = format!("{prefix}{BRANCH_LABEL_GAP}{label}");
             output.push(render_row(
                 &current_row_indicator(
                     is_current_branch_point(point, ctx.current_branch),
@@ -1301,7 +1625,7 @@ fn render_group(
         matches!(label, TrunkLabel::Main) && main_is_current(ctx.main_name, ctx.current_branch);
     let label = trunk_label(label, ctx);
     let line = format!(
-        "{}  {}",
+        "{}{BRANCH_LABEL_GAP}{}",
         trunk_prefix(
             lane_count,
             colour_offset,
@@ -1323,19 +1647,24 @@ fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<String>
 
     for lane in lanes {
         for point in &lane.branch_points {
-            let label = display_orphaned_names(point, ctx.colours);
-            let status = ctx.colours.orphaned("(orphaned)");
+            let label = display_orphaned_names(
+                point,
+                ctx.now_timestamp,
+                ctx.verbosity,
+                ctx.metadata_widths,
+                ctx.colours,
+            );
             let line = format!(
-                "{TREE_LEFT_PADDING}{} {}  {label}",
+                "{TREE_LEFT_PADDING}{} {}{BRANCH_LABEL_GAP}{label}",
                 ctx.colours.dim(COLLAPSED_MAIN_GLYPH),
-                ctx.colours.orphaned(ORPHANED_BRANCH_GLYPH)
+                ctx.colours.orphaned_glyph(ORPHANED_BRANCH_GLYPH)
             );
             output.push(render_row(
                 &orphaned_row_indicator(
                     is_current_branch_point(point, ctx.current_branch),
                     ctx.colours,
                 ),
-                &format!("{line} {status}"),
+                &line,
             ));
         }
     }
@@ -1376,6 +1705,43 @@ fn render_collapsed_main_segment(
 fn render_omitted_main_past(colours: &Colours) -> String {
     let line = format!("{TREE_LEFT_PADDING}{}", colours.dim(COLLAPSED_MAIN_GLYPH));
     render_row(" ", &line)
+}
+
+fn record_metadata_widths(widths: &mut MetadataWidths, age: &str, count: &str) {
+    widths.age = widths.age.max(age.len());
+    widths.count = widths.count.max(count.len());
+}
+
+fn calculate_metadata_widths(
+    groups: &[LaneGroup],
+    main_meta: Option<&CommitMeta>,
+    now_timestamp: i64,
+    verbosity: Verbosity,
+) -> MetadataWidths {
+    if !verbosity.includes_metadata() {
+        return MetadataWidths::default();
+    }
+
+    let mut widths = MetadataWidths::default();
+    if let Some(meta) = main_meta {
+        let age = trunk_metadata_age(meta, now_timestamp);
+        record_metadata_widths(&mut widths, &age, "");
+    }
+    for group in groups {
+        if let Some(meta) = group.base_meta.as_ref() {
+            let age = trunk_metadata_age(meta, now_timestamp);
+            record_metadata_widths(&mut widths, &age, "");
+        }
+        for lane in &group.lanes {
+            for point in &lane.branch_points {
+                if let Some(annotation) = point.annotation.as_ref() {
+                    let (age, count) = branch_metadata_columns(annotation, now_timestamp);
+                    record_metadata_widths(&mut widths, &age, &count);
+                }
+            }
+        }
+    }
+    widths
 }
 
 fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<String> {
@@ -1453,7 +1819,7 @@ where
     Args::try_parse_from(cli_args).map_err(Into::into)
 }
 
-fn execute<W, G>(args: &Args, git: &G, stdout: &mut W) -> Result<()>
+fn execute<W, G>(args: &EffectiveArgs, git: &G, stdout: &mut W) -> Result<()>
 where
     W: Write,
     G: GitBackend + ?Sized,
@@ -1463,24 +1829,29 @@ where
     let mut meta_cache = HashMap::new();
     let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
         BuiltLanes::Empty {
-            main_name,
-            current_branch,
+            main_oid,
+            repository,
         } => {
-            let current_main = main_is_current(&main_name, current_branch.as_deref());
+            let now_timestamp = current_unix_timestamp();
+            let main_meta = if args.verbosity.includes_metadata() {
+                Some(get_commit_meta(git, &main_oid, &mut meta_cache)?)
+            } else {
+                None
+            };
+            let metadata_widths =
+                calculate_metadata_widths(&[], main_meta.as_ref(), now_timestamp, args.verbosity);
+            let ctx = RenderContext {
+                main_name: &repository.main_name,
+                main_meta: main_meta.as_ref(),
+                current_branch: repository.current_branch.as_deref(),
+                head: repository.head.as_deref(),
+                now_timestamp,
+                verbosity: args.verbosity,
+                metadata_widths,
+                colours: &colours,
+            };
             writeln!(stdout, "{}", render_top_spacer(&colours, false))?;
-            let main_line = format!(
-                "{}  {}",
-                trunk_prefix(0, 0, current_main, MainSpine::Hidden, &colours),
-                main_label(&main_name, current_branch.as_deref(), &colours)
-            );
-            writeln!(
-                stdout,
-                "{}",
-                render_row(
-                    &current_row_indicator(current_main, 0, &colours),
-                    &main_line
-                )
-            )?;
+            writeln!(stdout, "{}", render_main_tip(&ctx))?;
             writeln!(stdout, "{}", render_omitted_main_past(&colours))?;
             return Ok(());
         }
@@ -1493,11 +1864,23 @@ where
 
     let lanes = ordered_lanes(lanes, args.order);
     let groups = build_lane_groups(git, lanes, &main_oid, &mut meta_cache)?;
+    let now_timestamp = current_unix_timestamp();
+    let main_meta = if args.verbosity.includes_metadata() {
+        Some(get_commit_meta(git, &main_oid, &mut meta_cache)?)
+    } else {
+        None
+    };
+    let metadata_widths =
+        calculate_metadata_widths(&groups, main_meta.as_ref(), now_timestamp, args.verbosity);
 
     let ctx = RenderContext {
         main_name: &repository.main_name,
+        main_meta: main_meta.as_ref(),
         current_branch: repository.current_branch.as_deref(),
         head: repository.head.as_deref(),
+        now_timestamp,
+        verbosity: args.verbosity,
+        metadata_widths,
         colours: &colours,
     };
 
@@ -1514,15 +1897,17 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
     W: Write,
-    G: GitBackend + ?Sized,
+    G: GitBackend + GitCommand + ?Sized,
 {
     let args = parse_args_from(args)?;
+    let args = args.resolve();
     execute(&args, git, stdout)
 }
 
 pub fn run_from_env() -> Result<()> {
     let mut stdout = io::stdout().lock();
     let args = parse_args_from(env::args().skip(1))?;
+    let args = args.resolve();
     match args.backend {
         Backend::Gix => {
             let git = GixBackend::discover()?;
@@ -1543,6 +1928,9 @@ mod tests {
     use std::path::Path;
     use std::process::Command as TestCommand;
     use tempfile::TempDir;
+
+    const TEST_NOW: i64 = 1_700_000_120;
+    const TEST_COMMIT_TIME: i64 = 1_700_000_000;
 
     #[derive(Default)]
     struct MockGit {
@@ -1592,6 +1980,38 @@ mod tests {
         BranchPoint {
             oid: oid.to_string(),
             names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: None,
+        }
+    }
+
+    fn point_with_count(
+        oid: &str,
+        names: &[&str],
+        commit_count: usize,
+        subject: &str,
+    ) -> BranchPoint {
+        point_with_count_at(oid, names, commit_count, subject, TEST_COMMIT_TIME)
+    }
+
+    fn point_with_count_at(
+        oid: &str,
+        names: &[&str],
+        commit_count: usize,
+        subject: &str,
+        timestamp: i64,
+    ) -> BranchPoint {
+        BranchPoint {
+            oid: oid.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: Some(BranchAnnotation {
+                meta: CommitMeta {
+                    oid: oid.to_string(),
+                    short_oid: oid.to_string(),
+                    subject: subject.to_string(),
+                    timestamp,
+                },
+                commit_count,
+            }),
         }
     }
 
@@ -1619,6 +2039,31 @@ mod tests {
             head_timestamp: timestamp,
             contains_current,
         }
+    }
+
+    #[test]
+    fn display_short_oid_uses_fixed_seven_character_width() {
+        assert_eq!(
+            display_short_oid("309567f69abcdef0123456789abcdef01234567"),
+            "309567f"
+        );
+        assert_eq!(display_short_oid("abc123"), "abc123");
+    }
+
+    #[test]
+    fn shell_commit_metadata_uses_fixed_display_oid() {
+        let mut cache = HashMap::new();
+
+        shell_cache_commit_meta(
+            "branch-head",
+            "309567f69abcdef0123456789abcdef01234567\x001700000001\x00subject",
+            &mut cache,
+        )
+        .unwrap();
+
+        let meta = cache.get("branch-head").unwrap();
+        assert_eq!(meta.oid, "309567f69abcdef0123456789abcdef01234567");
+        assert_eq!(meta.short_oid, "309567f");
     }
 
     fn git(repo: &Path, args: &[&str]) -> String {
@@ -1676,10 +2121,11 @@ mod tests {
             Args {
                 revset: "draft()".to_string(),
                 hidden: false,
-                backend: Backend::Gix,
-                order: Order::Newest,
-                colour_mode: ColourMode::Auto,
-                palette: DEFAULT_PALETTE,
+                verbose: 0,
+                backend: None,
+                order: None,
+                colour_mode: None,
+                palette: None,
             }
         );
     }
@@ -1701,10 +2147,11 @@ mod tests {
             Args {
                 revset: "draft() & branches(feature/)".to_string(),
                 hidden: true,
-                backend: Backend::Shell,
-                order: Order::Oldest,
-                colour_mode: ColourMode::Never,
-                palette: Palette::Tableau,
+                verbose: 0,
+                backend: Some(Backend::Shell),
+                order: Some(Order::Oldest),
+                colour_mode: Some(ColourMode::Never),
+                palette: Some(Palette::Tableau),
             }
         );
     }
@@ -1713,11 +2160,11 @@ mod tests {
     fn parses_palette_names() {
         assert_eq!(
             parse_args_from(["-p", "classic"]).unwrap().palette,
-            Palette::Classic
+            Some(Palette::Classic)
         );
         assert_eq!(
             parse_args_from(["--palette", "okabe"]).unwrap().palette,
-            Palette::Okabe
+            Some(Palette::Okabe)
         );
     }
 
@@ -1725,23 +2172,23 @@ mod tests {
     fn parses_additional_palette_names() {
         assert_eq!(
             parse_args_from(["-p", "set1"]).unwrap().palette,
-            Palette::Set1
+            Some(Palette::Set1)
         );
         assert_eq!(
             parse_args_from(["-p", "paired"]).unwrap().palette,
-            Palette::Paired
+            Some(Palette::Paired)
         );
         assert_eq!(
             parse_args_from(["-p", "bold"]).unwrap().palette,
-            Palette::Bold
+            Some(Palette::Bold)
         );
         assert_eq!(
             parse_args_from(["-p", "vivid"]).unwrap().palette,
-            Palette::Vivid
+            Some(Palette::Vivid)
         );
         assert_eq!(
             parse_args_from(["-p", "tol"]).unwrap().palette,
-            Palette::Tol
+            Some(Palette::Tol)
         );
     }
 
@@ -1752,12 +2199,38 @@ mod tests {
             Args {
                 revset: "-synthetic-revset".to_string(),
                 hidden: false,
-                backend: Backend::Gix,
-                order: Order::Newest,
-                colour_mode: ColourMode::Auto,
-                palette: DEFAULT_PALETTE,
+                verbose: 0,
+                backend: None,
+                order: None,
+                colour_mode: None,
+                palette: None,
             }
         );
+    }
+
+    #[test]
+    fn parses_verbose_flag() {
+        assert_eq!(parse_args_from(["-v"]).unwrap().verbose, 1);
+        assert_eq!(parse_args_from(["--verbose"]).unwrap().verbose, 1);
+        assert_eq!(parse_args_from(["-vv"]).unwrap().verbose, 2);
+    }
+
+    #[test]
+    fn uses_medium_verbosity_by_default() {
+        let args = parse_args_from(Vec::<String>::new()).unwrap().resolve();
+
+        assert_eq!(args.verbosity, Verbosity::Medium);
+    }
+
+    #[test]
+    fn explicit_cli_options_override_defaults() {
+        let args = parse_args_from(["-v", "--backend", "gix", "-p", "classic"])
+            .unwrap()
+            .resolve();
+
+        assert_eq!(args.verbosity, Verbosity::Medium);
+        assert_eq!(args.backend, Backend::Gix);
+        assert_eq!(args.palette, Palette::Classic);
     }
 
     #[test]
@@ -1837,7 +2310,7 @@ mod tests {
         assert_eq!(points.len(), 1);
         assert_eq!(
             points.get("a").unwrap(),
-            &BranchPoint {
+            &BranchPointRef {
                 oid: "a".to_string(),
                 names: vec!["alpha".to_string(), "zeta".to_string()],
             }
@@ -1892,7 +2365,9 @@ mod tests {
                 .is_some_and(|names| names.contains(&"topic".to_string()))
         );
         assert_eq!(backend.main_branch_name().unwrap(), "trunk");
-        assert_eq!(cache.get(&head_oid).unwrap().subject, "merge side");
+        let meta = cache.get(&head_oid).unwrap();
+        assert_eq!(meta.short_oid, display_short_oid(&head_oid));
+        assert_eq!(meta.subject, "merge side");
     }
 
     #[test]
@@ -1940,11 +2415,11 @@ mod tests {
                 &[
                     "show",
                     "-s",
-                    "--format=%H%x00%h%x00%ct%x00%s%x1e",
+                    "--format=%H%x00%ct%x00%s%x1e",
                     "--no-walk=unsorted",
                     "old-main",
                 ],
-                "old-main\x00old\x001700000001\x00old base\x1e",
+                "old-main\x001700000001\x00old base\x1e",
             )
             .with(
                 &[
@@ -1979,6 +2454,56 @@ mod tests {
     }
 
     #[test]
+    fn counts_each_branch_point_from_previous_visible_stack_point() {
+        let git = MockGit::default()
+            .with(&["merge-base", "main-oid", "b"], "main-oid")
+            .with(
+                &["rev-list", "--reverse", "--ancestry-path", "main-oid..b"],
+                "a\nb",
+            );
+        let mut points_by_oid = HashMap::new();
+        points_by_oid.insert(
+            "a".to_string(),
+            BranchPointRef {
+                oid: "a".to_string(),
+                names: vec!["feature/one".to_string()],
+            },
+        );
+        points_by_oid.insert(
+            "b".to_string(),
+            BranchPointRef {
+                oid: "b".to_string(),
+                names: vec!["feature/two".to_string()],
+            },
+        );
+        let mut cache = HashMap::from([
+            ("a".to_string(), meta("a", "first")),
+            ("b".to_string(), meta("b", "second")),
+        ]);
+
+        let lane = build_lane(
+            &git,
+            "b",
+            "main-oid",
+            &points_by_oid,
+            None,
+            None,
+            Verbosity::Medium,
+            &mut cache,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            lane.branch_points,
+            vec![
+                point_with_count_at("b", &["feature/two"], 1, "second", 0),
+                point_with_count_at("a", &["feature/one"], 1, "first", 0),
+            ]
+        );
+    }
+
+    #[test]
     fn renders_markers_names_and_trunk() {
         let colours = test_colours(false);
         let lanes = vec![
@@ -1999,8 +2524,12 @@ mod tests {
         ];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("feature/two"),
             head: Some("b"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2009,9 +2538,9 @@ mod tests {
         assert_eq!(
             output,
             vec![
-                "    ◯      feature/one".to_string(),
-                "▶ ⁝ │ ●    feature/two".to_string(),
-                "  ◇─┴─┘    main".to_string()
+                "    ◯   feature/one".to_string(),
+                "▶ ⁝ │ ● feature/two".to_string(),
+                "  ◇─┴─┘ main".to_string()
             ]
         );
     }
@@ -2037,8 +2566,12 @@ mod tests {
         ];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("feature/two"),
             head: Some("b"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2051,8 +2584,44 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(output[output.len() - 2], "▶ ⁝ │ ●    feature/two");
-        assert_eq!(output[output.len() - 1], "  ◇─┴─┘    main");
+        assert_eq!(output[output.len() - 2], "▶ ⁝ │ ● feature/two");
+        assert_eq!(output[output.len() - 1], "  ◇─┴─┘ main");
+    }
+
+    #[test]
+    fn renders_branch_metadata_with_commit_count_for_multi_commit_branch() {
+        let colours = test_colours(false);
+        let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
+
+        let label = display_names(
+            &point,
+            Some("other"),
+            0,
+            TEST_NOW,
+            Verbosity::High,
+            MetadataWidths::default(),
+            &colours,
+        );
+
+        assert_eq!(label, "2m (3, branch-head) feature/topic finish topic");
+    }
+
+    #[test]
+    fn renders_summary_branch_metadata_without_commit_title() {
+        let colours = test_colours(false);
+        let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
+
+        let label = display_names(
+            &point,
+            Some("other"),
+            0,
+            TEST_NOW,
+            Verbosity::Medium,
+            MetadataWidths::default(),
+            &colours,
+        );
+
+        assert_eq!(label, "2m (3, branch-head) feature/topic");
     }
 
     #[test]
@@ -2067,8 +2636,12 @@ mod tests {
         }];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("feature/one"),
             head: Some("a"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2076,10 +2649,7 @@ mod tests {
 
         assert_eq!(
             output,
-            vec![
-                "▶ ⁝ ●    feature/one".to_string(),
-                "  ◇─┘    main".to_string()
-            ]
+            vec!["▶ ⁝ ● feature/one".to_string(), "  ◇─┘ main".to_string()]
         );
     }
 
@@ -2095,8 +2665,12 @@ mod tests {
         }];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("main"),
             head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2104,10 +2678,7 @@ mod tests {
 
         assert_eq!(
             output,
-            vec![
-                "  ⁝ ◯    feature/one".to_string(),
-                "▶ ◆─┘    main".to_string()
-            ]
+            vec!["  ⁝ ◯ feature/one".to_string(), "▶ ◆─┘ main".to_string()]
         );
     }
 
@@ -2123,8 +2694,12 @@ mod tests {
         }];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("main"),
             head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2132,7 +2707,7 @@ mod tests {
 
         assert_eq!(
             output,
-            vec!["  ⁝ ⦸    test-branch-name (orphaned)".to_string()]
+            vec!["  ⁝ ⦸ test-branch-name (orphaned)".to_string()]
         );
     }
 
@@ -2153,8 +2728,12 @@ mod tests {
         }];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("main"),
             head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2164,8 +2743,61 @@ mod tests {
             output,
             vec![
                 "  ⁝".to_string(),
-                "▶ ◆──    main".to_string(),
-                "  ⁝ ⦸    test-branch-name (orphaned)".to_string(),
+                "▶ ◆── main".to_string(),
+                "  ⁝ ⦸ test-branch-name (orphaned)".to_string(),
+                "  ⁝".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_main_metadata_in_aligned_annotation_column() {
+        let colours = test_colours(false);
+        let main_meta = CommitMeta {
+            oid: "main-oid".to_string(),
+            short_oid: "main-oi".to_string(),
+            subject: "main tip".to_string(),
+            timestamp: TEST_COMMIT_TIME,
+        };
+        let groups = vec![LaneGroup {
+            base_oid: None,
+            base_meta: None,
+            main_distance: None,
+            lanes: vec![Lane {
+                head_oid: "backup-oid".to_string(),
+                base_oid: None,
+                branch_points: vec![point_with_count_at(
+                    "backup-oid",
+                    &["backup"],
+                    10,
+                    "backup tip",
+                    TEST_COMMIT_TIME,
+                )],
+                head_timestamp: TEST_COMMIT_TIME,
+                contains_current: false,
+            }],
+        }];
+        let metadata_widths =
+            calculate_metadata_widths(&groups, Some(&main_meta), TEST_NOW, Verbosity::Medium);
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: Some(&main_meta),
+            current_branch: Some("main"),
+            head: Some("main-oid"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Medium,
+            metadata_widths,
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                "  ⁝".to_string(),
+                "▶ ◆── 2m (--, main-oi) main".to_string(),
+                "  ⁝ ⦸ 2m (10, backup-oid) backup (orphaned)".to_string(),
                 "  ⁝".to_string(),
             ]
         );
@@ -2211,8 +2843,12 @@ mod tests {
         ];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("feature/current"),
             head: Some("feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2222,10 +2858,10 @@ mod tests {
             output,
             vec![
                 String::new(),
-                "▶ ⁝ ●    feature/current".to_string(),
-                "  ◇─┘    main".to_string(),
-                "  ⁝ ⦸    orphan-A (orphaned)".to_string(),
-                "  ⁝ ⦸    orphan-B (orphaned)".to_string(),
+                "▶ ⁝ ● feature/current".to_string(),
+                "  ◇─┘ main".to_string(),
+                "  ⁝ ⦸ orphan-A (orphaned)".to_string(),
+                "  ⁝ ⦸ orphan-B (orphaned)".to_string(),
                 "  ⁝".to_string(),
             ]
         );
@@ -2265,8 +2901,12 @@ mod tests {
         ];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("dyt/tgs_api"),
             head: Some("old-feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2276,13 +2916,13 @@ mod tests {
             output,
             vec![
                 String::new(),
-                "  ⁝ ◯    feature/current".to_string(),
-                "  ◇─┘    main".to_string(),
+                "  ⁝ ◯ feature/current".to_string(),
+                "  ◇─┘ main".to_string(),
                 "  │".to_string(),
                 "  ⁝ (842 commits on main)".to_string(),
                 "  │".to_string(),
-                "▶ │ ●    dyt/tgs_api".to_string(),
-                "  ◇─┘    chore: this is an old commit in main history".to_string(),
+                "▶ │ ● dyt/tgs_api".to_string(),
+                "  ◇─┘ chore: this is an old commit in main history".to_string(),
                 "  ⁝".to_string(),
             ]
         );
@@ -2302,11 +2942,29 @@ mod tests {
             "\x1b[1m\x1b[38;5;41mx\x1b[0m"
         );
         assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
-        assert_eq!(colours.orphaned("x"), "\x1b[38;5;250mx\x1b[0m");
+        assert_eq!(colours.muted_text("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_age("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_count("x"), "\x1b[38;5;255mx\x1b[0m");
+        assert_eq!(colours.metadata_oid("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.metadata_punctuation("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.commit_title("x"), "\x1b[38;5;251mx\x1b[0m");
+        assert_eq!(colours.orphaned_name("x"), "\x1b[38;5;255mx\x1b[0m");
+        assert_eq!(colours.orphaned_glyph("x"), "\x1b[1m\x1b[38;5;255mx\x1b[0m");
         assert_eq!(
-            main_label("main", Some("main"), &colours),
-            "  \x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m"
+            colours.orphaned_status("x"),
+            "\x1b[1m\x1b[38;5;255mx\x1b[0m"
         );
+        let ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("main"),
+            head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+        assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m");
         assert_eq!(
             trunk_prefix(0, 0, true, MainSpine::Hidden, &colours),
             "\x1b[38;5;41m◆\x1b[0m\x1b[2m──\x1b[0m"
@@ -2330,8 +2988,12 @@ mod tests {
         }];
         let ctx = RenderContext {
             main_name: "main",
+            main_meta: None,
             current_branch: Some("main"),
             head: Some("main"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
             colours: &colours,
         };
 
@@ -2371,12 +3033,12 @@ mod tests {
                 &[
                     "show",
                     "-s",
-                    "--format=%H%x00%h%x00%ct%x00%s%x1e",
+                    "--format=%H%x00%ct%x00%s%x1e",
                     "--no-walk=unsorted",
                     "b",
                     "c",
                 ],
-                "b\x00b\x001700000002\x00second\x1e\nc\x00c\x001700000001\x00third\x1e",
+                "b\x001700000002\x00second\x1e\nc\x001700000001\x00third\x1e",
             )
             .with(&["merge-base", "main-oid", "b"], "main-oid")
             .with(
@@ -2388,9 +3050,10 @@ mod tests {
                 &["rev-list", "--reverse", "--ancestry-path", "main-oid..c"],
                 "c",
             );
-        let args = Args {
+        let args = EffectiveArgs {
             revset: "draft()".to_string(),
             hidden: false,
+            verbosity: Verbosity::Low,
             backend: Backend::Gix,
             order: Order::Newest,
             colour_mode: ColourMode::Never,
@@ -2432,7 +3095,7 @@ mod tests {
                 .iter()
                 .filter(|call| call
                     .get(2)
-                    .is_some_and(|arg| arg == "--format=%H%x00%h%x00%ct%x00%s%x1e"))
+                    .is_some_and(|arg| arg == "--format=%H%x00%ct%x00%s%x1e"))
                 .count(),
             1
         );
@@ -2441,34 +3104,47 @@ mod tests {
     #[test]
     fn run_renders_empty_selection_as_trunk() {
         let revset = "((draft()) & branches()) - public()";
+        let timestamp = current_unix_timestamp() - 120;
         let git = MockGit::default()
+            .with(&["branchless", "query", "-r", "main()"], "main-oid")
             .with(&["branchless", "query", "-b", revset], "")
             .with(
                 &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
                 "main-oid\nmain",
             )
-            .with(&["config", "--get", "branchless.core.mainBranch"], "");
+            .with(&["config", "--get", "branchless.core.mainBranch"], "")
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "main-oid",
+                ],
+                &format!("main-oid\x00{timestamp}\x00main tip\x1e"),
+            );
         let mut output = Vec::new();
 
         run(["--color", "never"], &git, &mut output).unwrap();
 
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "  ⁝\n▶ ◆──    main\n  ⁝\n"
+            "  ⁝\n▶ ◆── 2m (-, main-oi) main\n  ⁝\n"
         );
         assert!(
             git.calls()
                 .iter()
                 .all(|call| call.first().is_none_or(|arg| arg != "for-each-ref"))
         );
-        assert!(
-            git.calls()
-                .iter()
-                .all(|call| call.get(3).is_none_or(|arg| arg != "main()"))
-        );
         assert_eq!(
             git.calls(),
             vec![
+                vec![
+                    "branchless".to_string(),
+                    "query".to_string(),
+                    "-r".to_string(),
+                    "main()".to_string()
+                ],
                 vec![
                     "branchless".to_string(),
                     "query".to_string(),
@@ -2485,6 +3161,13 @@ mod tests {
                     "config".to_string(),
                     "--get".to_string(),
                     "branchless.core.mainBranch".to_string()
+                ],
+                vec![
+                    "show".to_string(),
+                    "-s".to_string(),
+                    "--format=%H%x00%ct%x00%s%x1e".to_string(),
+                    "--no-walk=unsorted".to_string(),
+                    "main-oid".to_string()
                 ]
             ]
         );
