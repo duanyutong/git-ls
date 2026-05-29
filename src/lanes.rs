@@ -202,18 +202,16 @@ pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
 
 pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
     lanes.sort_by(|lhs, rhs| {
-        (!lhs.contains_current)
-            .cmp(&!rhs.contains_current)
-            .then_with(|| match order {
-                Order::Newest => rhs.head_timestamp.cmp(&lhs.head_timestamp),
-                Order::Oldest => lhs.head_timestamp.cmp(&rhs.head_timestamp),
-            })
-            .then_with(|| lhs.head_oid.cmp(&rhs.head_oid))
+        match order {
+            Order::Newest => rhs.head_timestamp.cmp(&lhs.head_timestamp),
+            Order::Oldest => lhs.head_timestamp.cmp(&rhs.head_timestamp),
+        }
+        .then_with(|| lhs.head_oid.cmp(&rhs.head_oid))
     });
     lanes
 }
 
-pub(crate) fn grouped_by_base(lanes: Vec<Lane>) -> Vec<(Option<String>, Vec<Lane>)> {
+pub(crate) fn grouped_by_base(lanes: Vec<Lane>, order: Order) -> Vec<(Option<String>, Vec<Lane>)> {
     let mut groups: HashMap<Option<String>, Vec<Lane>> = HashMap::new();
     for lane in lanes {
         groups.entry(lane.base_oid.clone()).or_default().push(lane);
@@ -221,17 +219,12 @@ pub(crate) fn grouped_by_base(lanes: Vec<Lane>) -> Vec<(Option<String>, Vec<Lane
 
     let mut groups: Vec<_> = groups.into_iter().collect();
     groups.sort_by(|lhs, rhs| {
-        let lhs_contains_current = lhs.1.iter().any(|lane| lane.contains_current);
-        let rhs_contains_current = rhs.1.iter().any(|lane| lane.contains_current);
-        (!lhs_contains_current)
-            .cmp(&!rhs_contains_current)
-            .then_with(|| rhs.1.len().cmp(&lhs.1.len()))
-            .then_with(|| {
-                lhs.0
-                    .as_deref()
-                    .unwrap_or("")
-                    .cmp(rhs.0.as_deref().unwrap_or(""))
-            })
+        lane_group_timestamp_order(&lhs.1, &rhs.1, order).then_with(|| {
+            lhs.0
+                .as_deref()
+                .unwrap_or("")
+                .cmp(rhs.0.as_deref().unwrap_or(""))
+        })
     });
     groups
 }
@@ -240,10 +233,11 @@ pub(crate) fn build_lane_groups<G: GitBackend + ?Sized>(
     git: &G,
     lanes: Vec<Lane>,
     main_oid: &str,
+    order: Order,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Vec<LaneGroup>> {
     let mut groups = Vec::new();
-    for (base_oid, lanes) in grouped_by_base(lanes) {
+    for (base_oid, lanes) in grouped_by_base(lanes, order) {
         let base_meta = match base_oid.as_deref() {
             Some(base_oid) if base_oid != main_oid => {
                 Some(get_commit_meta(git, base_oid, meta_cache)?)
@@ -271,31 +265,50 @@ pub(crate) fn build_lane_groups<G: GitBackend + ?Sized>(
         });
     }
 
-    groups.sort_by(lane_group_order);
+    groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, order));
     Ok(groups)
 }
 
-fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup) -> Ordering {
+fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
     match (lhs.main_distance, rhs.main_distance) {
         (Some(lhs_distance), Some(rhs_distance)) => lhs_distance
             .cmp(&rhs_distance)
-            .then_with(|| lane_group_fallback_order(lhs, rhs)),
+            .then_with(|| lane_group_fallback_order(lhs, rhs, order)),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
-        (None, None) => lane_group_fallback_order(lhs, rhs),
+        (None, None) => lane_group_fallback_order(lhs, rhs, order),
     }
 }
 
-fn lane_group_fallback_order(lhs: &LaneGroup, rhs: &LaneGroup) -> Ordering {
-    let lhs_contains_current = lhs.lanes.iter().any(|lane| lane.contains_current);
-    let rhs_contains_current = rhs.lanes.iter().any(|lane| lane.contains_current);
-    (!lhs_contains_current)
-        .cmp(&!rhs_contains_current)
-        .then_with(|| rhs.lanes.len().cmp(&lhs.lanes.len()))
-        .then_with(|| {
-            lhs.base_oid
-                .as_deref()
-                .unwrap_or("")
-                .cmp(rhs.base_oid.as_deref().unwrap_or(""))
-        })
+fn lane_group_timestamp(lanes: &[Lane], order: Order) -> i64 {
+    match order {
+        Order::Newest => lanes
+            .iter()
+            .map(|lane| lane.head_timestamp)
+            .max()
+            .unwrap_or(i64::MIN),
+        Order::Oldest => lanes
+            .iter()
+            .map(|lane| lane.head_timestamp)
+            .min()
+            .unwrap_or(i64::MAX),
+    }
+}
+
+fn lane_group_timestamp_order(lhs: &[Lane], rhs: &[Lane], order: Order) -> Ordering {
+    let lhs_timestamp = lane_group_timestamp(lhs, order);
+    let rhs_timestamp = lane_group_timestamp(rhs, order);
+    match order {
+        Order::Newest => rhs_timestamp.cmp(&lhs_timestamp),
+        Order::Oldest => lhs_timestamp.cmp(&rhs_timestamp),
+    }
+}
+
+fn lane_group_fallback_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
+    lane_group_timestamp_order(&lhs.lanes, &rhs.lanes, order).then_with(|| {
+        lhs.base_oid
+            .as_deref()
+            .unwrap_or("")
+            .cmp(rhs.base_oid.as_deref().unwrap_or(""))
+    })
 }

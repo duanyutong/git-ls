@@ -515,10 +515,10 @@ fn gix_backend_reads_repository_snapshot_and_commit_metadata() {
 }
 
 #[test]
-fn orders_lanes_by_current_status_time_and_oid() {
+fn orders_lanes_by_time_and_oid_without_current_promotion() {
     let lanes = vec![
         lane("older", Some("main"), 10, false),
-        lane("current", Some("main"), 1, true),
+        lane("current", Some("main"), 15, true),
         lane("newer-b", Some("main"), 20, false),
         lane("newer-a", Some("main"), 20, false),
     ];
@@ -527,24 +527,31 @@ fn orders_lanes_by_current_status_time_and_oid() {
         .into_iter()
         .map(|lane| lane.head_oid)
         .collect();
-    assert_eq!(newest, vec!["current", "newer-a", "newer-b", "older"]);
+    assert_eq!(newest, vec!["newer-a", "newer-b", "current", "older"]);
 
     let oldest: Vec<String> = ordered_lanes(lanes, Order::Oldest)
         .into_iter()
         .map(|lane| lane.head_oid)
         .collect();
-    assert_eq!(oldest, vec!["current", "older", "newer-a", "newer-b"]);
+    assert_eq!(oldest, vec!["older", "current", "newer-a", "newer-b"]);
 }
 
 #[test]
-fn groups_lanes_by_base_with_current_group_first() {
+fn groups_lanes_by_base_time_without_current_promotion() {
     let lanes = vec![
-        lane("a", Some("base-a"), 1, false),
+        lane("a", Some("base-a"), 30, false),
         lane("b", Some("base-b"), 2, true),
-        lane("c", Some("base-a"), 3, false),
+        lane("c", Some("base-a"), 10, false),
     ];
 
-    let groups = grouped_by_base(lanes);
+    let groups = grouped_by_base(lanes.clone(), Order::Newest);
+
+    assert_eq!(groups[0].0, Some("base-a".to_string()));
+    assert_eq!(groups[0].1.len(), 2);
+    assert_eq!(groups[1].0, Some("base-b".to_string()));
+    assert_eq!(groups[1].1.len(), 1);
+
+    let groups = grouped_by_base(lanes, Order::Oldest);
 
     assert_eq!(groups[0].0, Some("base-b".to_string()));
     assert_eq!(groups[0].1.len(), 1);
@@ -580,7 +587,7 @@ fn builds_lane_groups_with_main_history_distances() {
     ];
     let mut cache = HashMap::new();
 
-    let groups = build_lane_groups(&git, lanes, "main-oid", &mut cache).unwrap();
+    let groups = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap();
 
     assert_eq!(groups.len(), 2);
     assert_eq!(groups[0].base_oid, Some("main-oid".to_string()));
