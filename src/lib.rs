@@ -139,6 +139,14 @@ struct Lane {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct LaneGroup {
+    base_oid: Option<String>,
+    base_meta: Option<CommitMeta>,
+    main_distance: Option<usize>,
+    lanes: Vec<Lane>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct RepositorySnapshot {
     current_branch: Option<String>,
     head: Option<String>,
@@ -888,6 +896,70 @@ fn grouped_by_base(lanes: Vec<Lane>) -> Vec<(Option<String>, Vec<Lane>)> {
     groups
 }
 
+fn build_lane_groups<G: GitBackend + ?Sized>(
+    git: &G,
+    lanes: Vec<Lane>,
+    main_oid: &str,
+    meta_cache: &mut HashMap<String, CommitMeta>,
+) -> Result<Vec<LaneGroup>> {
+    let mut groups = Vec::new();
+    for (base_oid, lanes) in grouped_by_base(lanes) {
+        let base_meta = match base_oid.as_deref() {
+            Some(base_oid) if base_oid != main_oid => {
+                Some(get_commit_meta(git, base_oid, meta_cache)?)
+            }
+            _ => None,
+        };
+        let main_distance = match base_oid.as_deref() {
+            Some(base_oid) if base_oid == main_oid => Some(0),
+            Some(base_oid) => {
+                let path = git.ancestry_path(Some(base_oid), main_oid)?;
+                if path.is_empty() {
+                    None
+                } else {
+                    Some(path.len())
+                }
+            }
+            None => None,
+        };
+
+        groups.push(LaneGroup {
+            base_oid,
+            base_meta,
+            main_distance,
+            lanes,
+        });
+    }
+
+    groups.sort_by(lane_group_order);
+    Ok(groups)
+}
+
+fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup) -> Ordering {
+    match (lhs.main_distance, rhs.main_distance) {
+        (Some(lhs_distance), Some(rhs_distance)) => lhs_distance
+            .cmp(&rhs_distance)
+            .then_with(|| lane_group_fallback_order(lhs, rhs)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => lane_group_fallback_order(lhs, rhs),
+    }
+}
+
+fn lane_group_fallback_order(lhs: &LaneGroup, rhs: &LaneGroup) -> Ordering {
+    let lhs_contains_current = lhs.lanes.iter().any(|lane| lane.contains_current);
+    let rhs_contains_current = rhs.lanes.iter().any(|lane| lane.contains_current);
+    (!lhs_contains_current)
+        .cmp(&!rhs_contains_current)
+        .then_with(|| rhs.lanes.len().cmp(&lhs.lanes.len()))
+        .then_with(|| {
+            lhs.base_oid
+                .as_deref()
+                .unwrap_or("")
+                .cmp(rhs.base_oid.as_deref().unwrap_or(""))
+        })
+}
+
 fn marker_for(
     point: &BranchPoint,
     current_branch: Option<&str>,
@@ -937,9 +1009,13 @@ fn row_prefix(
     point: &BranchPoint,
     current_branch: Option<&str>,
     head: Option<&str>,
+    show_main_spine: bool,
     colours: &Colours,
 ) -> String {
     let mut slots = Vec::new();
+    if show_main_spine {
+        slots.push(colours.dim("│"));
+    }
     for index in 0..lane_count {
         let colour_index = colour_offset + index;
         match index.cmp(&lane_index) {
@@ -950,13 +1026,7 @@ fn row_prefix(
             Ordering::Greater => slots.push(" ".to_string()),
         }
     }
-    let visible_width = lane_count * 2 - 1;
-    let padding = " ".repeat(graph_width(lane_count) - visible_width);
-    format!("{TREE_LEFT_PADDING}{}{padding}", slots.join(" "))
-}
-
-fn graph_width(lane_count: usize) -> usize {
-    lane_count.max(1) * 2 + 1
+    format!("{TREE_LEFT_PADDING}{}", slots.join(" "))
 }
 
 fn main_is_current(main_name: &str, current_branch: Option<&str>) -> bool {
@@ -979,6 +1049,7 @@ fn trunk_prefix(
     lane_count: usize,
     colour_offset: usize,
     main_is_current: bool,
+    show_main_spine: bool,
     colours: &Colours,
 ) -> String {
     let marker = if main_is_current {
@@ -988,16 +1059,37 @@ fn trunk_prefix(
     };
 
     if lane_count == 0 {
-        return format!("{TREE_LEFT_PADDING}└─{marker}");
+        return format!("{TREE_LEFT_PADDING}{marker}");
     }
 
-    let mut parts = Vec::new();
-    for index in 0..lane_count {
-        let connector = if index == 0 { "└─" } else { "┴─" };
-        parts.push(colours.stack(colour_offset + index, connector));
+    let mut parts = vec![marker];
+    let first_connected_lane = usize::from(!show_main_spine);
+    for index in first_connected_lane..lane_count {
+        parts.push(colours.stack(colour_offset + index, "─┴"));
     }
-    parts.push(marker);
     format!("{TREE_LEFT_PADDING}{}", parts.join(""))
+}
+
+#[derive(Clone, Copy)]
+enum TrunkLabel<'a> {
+    Main,
+    Commit(&'a CommitMeta),
+}
+
+fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> String {
+    match label {
+        TrunkLabel::Main => main_label(ctx.main_name, ctx.current_branch, ctx.colours),
+        TrunkLabel::Commit(meta) => format!("  {}", ctx.colours.dim(&meta.subject)),
+    }
+}
+
+fn render_main_tip(ctx: &RenderContext<'_>) -> String {
+    let current_main = main_is_current(ctx.main_name, ctx.current_branch);
+    format!(
+        "{}  {}",
+        trunk_prefix(0, 0, current_main, false, ctx.colours),
+        main_label(ctx.main_name, ctx.current_branch, ctx.colours)
+    )
 }
 
 struct RenderContext<'a> {
@@ -1007,7 +1099,13 @@ struct RenderContext<'a> {
     colours: &'a Colours,
 }
 
-fn render_group(lanes: &[Lane], colour_offset: usize, ctx: &RenderContext<'_>) -> Vec<String> {
+fn render_group(
+    lanes: &[Lane],
+    colour_offset: usize,
+    ctx: &RenderContext<'_>,
+    label: TrunkLabel<'_>,
+    show_main_spine: bool,
+) -> Vec<String> {
     let lane_count = lanes.len();
     let mut output = Vec::new();
 
@@ -1021,6 +1119,7 @@ fn render_group(lanes: &[Lane], colour_offset: usize, ctx: &RenderContext<'_>) -
                 point,
                 ctx.current_branch,
                 ctx.head,
+                show_main_spine,
                 ctx.colours,
             );
             let label = display_names(point, ctx.current_branch, colour_index, ctx.colours);
@@ -1028,13 +1127,92 @@ fn render_group(lanes: &[Lane], colour_offset: usize, ctx: &RenderContext<'_>) -
         }
     }
 
-    let current_main = main_is_current(ctx.main_name, ctx.current_branch);
-    let label = main_label(ctx.main_name, ctx.current_branch, ctx.colours);
+    let current_main =
+        matches!(label, TrunkLabel::Main) && main_is_current(ctx.main_name, ctx.current_branch);
+    let label = trunk_label(label, ctx);
     output.push(format!(
         "{}  {}",
-        trunk_prefix(lane_count, colour_offset, current_main, ctx.colours),
+        trunk_prefix(
+            lane_count,
+            colour_offset,
+            current_main,
+            show_main_spine,
+            ctx.colours
+        ),
         label
     ));
+    output
+}
+
+fn render_collapsed_main_segment(
+    commit_count: usize,
+    ctx: &RenderContext<'_>,
+) -> impl IntoIterator<Item = String> {
+    let noun = if commit_count == 1 {
+        "commit"
+    } else {
+        "commits"
+    };
+    let label = format!("({commit_count} {noun} on {})", ctx.main_name);
+    [
+        format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim("│")),
+        format!(
+            "{TREE_LEFT_PADDING}{} {}",
+            ctx.colours.dim("⋮"),
+            ctx.colours.dim(&label)
+        ),
+        format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim("│")),
+    ]
+}
+
+fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut colour_offset = 0;
+    let mut connected_started = false;
+    let mut previous_main_distance = 0;
+
+    for group in groups {
+        if let Some(main_distance) = group.main_distance {
+            if !connected_started && main_distance > 0 {
+                output.push(render_main_tip(ctx));
+                connected_started = true;
+            }
+            if connected_started && main_distance > previous_main_distance {
+                output.extend(render_collapsed_main_segment(
+                    main_distance - previous_main_distance,
+                    ctx,
+                ));
+            }
+
+            let label = match (main_distance, group.base_meta.as_ref()) {
+                (0, _) | (_, None) => TrunkLabel::Main,
+                (_, Some(base_meta)) => TrunkLabel::Commit(base_meta),
+            };
+            output.extend(render_group(
+                &group.lanes,
+                colour_offset,
+                ctx,
+                label,
+                main_distance > 0,
+            ));
+            previous_main_distance = main_distance;
+            connected_started = true;
+        } else {
+            if !output.is_empty() {
+                output.push(String::new());
+            }
+            output.extend(render_group(
+                &group.lanes,
+                colour_offset,
+                ctx,
+                TrunkLabel::Main,
+                false,
+            ));
+        }
+
+        colour_offset += group.lanes.len();
+    }
+
     output
 }
 
@@ -1056,7 +1234,7 @@ where
     let colours = Colours::new(args.colour_mode);
 
     let mut meta_cache = HashMap::new();
-    let (lanes, repository) = match build_lanes(git, args, &mut meta_cache)? {
+    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
         BuiltLanes::Empty {
             main_name,
             current_branch,
@@ -1065,19 +1243,20 @@ where
             writeln!(
                 stdout,
                 "{}  {}",
-                trunk_prefix(0, 0, current_main, &colours),
+                trunk_prefix(0, 0, current_main, false, &colours),
                 main_label(&main_name, current_branch.as_deref(), &colours)
             )?;
             return Ok(());
         }
         BuiltLanes::Populated {
             lanes,
-            main_oid: _,
+            main_oid,
             repository,
-        } => (lanes, repository),
+        } => (lanes, main_oid, repository),
     };
 
     let lanes = ordered_lanes(lanes, args.order);
+    let groups = build_lane_groups(git, lanes, &main_oid, &mut meta_cache)?;
 
     let ctx = RenderContext {
         main_name: &repository.main_name,
@@ -1086,17 +1265,8 @@ where
         colours: &colours,
     };
 
-    let mut first_group = true;
-    let mut colour_offset = 0;
-    for (_base_oid, base_lanes) in grouped_by_base(lanes) {
-        if !first_group {
-            writeln!(stdout)?;
-        }
-        first_group = false;
-        for line in render_group(&base_lanes, colour_offset, &ctx) {
-            writeln!(stdout, "{line}")?;
-        }
-        colour_offset += base_lanes.len();
+    for line in render_lane_groups(&groups, &ctx) {
+        writeln!(stdout, "{line}")?;
     }
 
     Ok(())
@@ -1186,6 +1356,15 @@ mod tests {
         BranchPoint {
             oid: oid.to_string(),
             names: names.iter().map(|name| (*name).to_string()).collect(),
+        }
+    }
+
+    fn meta(oid: &str, subject: &str) -> CommitMeta {
+        CommitMeta {
+            oid: oid.to_string(),
+            short_oid: oid.to_string(),
+            subject: subject.to_string(),
+            timestamp: 0,
         }
     }
 
@@ -1459,6 +1638,51 @@ mod tests {
     }
 
     #[test]
+    fn builds_lane_groups_with_main_history_distances() {
+        let git = MockGit::default()
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%h%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "old-main",
+                ],
+                "old-main\x00old\x001700000001\x00old base\x1e",
+            )
+            .with(
+                &[
+                    "rev-list",
+                    "--reverse",
+                    "--ancestry-path",
+                    "old-main..main-oid",
+                ],
+                "main-1\nmain-2\nmain-oid",
+            );
+        let lanes = vec![
+            lane("current", Some("main-oid"), 2, false),
+            lane("old", Some("old-main"), 1, true),
+        ];
+        let mut cache = HashMap::new();
+
+        let groups = build_lane_groups(&git, lanes, "main-oid", &mut cache).unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].base_oid, Some("main-oid".to_string()));
+        assert_eq!(groups[0].main_distance, Some(0));
+        assert_eq!(groups[0].base_meta, None);
+        assert_eq!(groups[1].base_oid, Some("old-main".to_string()));
+        assert_eq!(groups[1].main_distance, Some(3));
+        assert_eq!(
+            groups[1]
+                .base_meta
+                .as_ref()
+                .map(|meta| meta.subject.as_str()),
+            Some("old base")
+        );
+    }
+
+    #[test]
     fn renders_markers_names_and_trunk() {
         let colours = Colours { enabled: false };
         let lanes = vec![
@@ -1484,20 +1708,20 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
 
         assert_eq!(
             output,
             vec![
-                "◯        feature/one".to_string(),
-                "│ ●    ▶ feature/two".to_string(),
-                "└─┴─◯    main".to_string()
+                "◯      feature/one".to_string(),
+                "│ ●  ▶ feature/two".to_string(),
+                "◯─┴    main".to_string()
             ]
         );
     }
 
     #[test]
-    fn renders_single_lane_with_visible_connector() {
+    fn renders_single_main_based_lane_without_empty_spine() {
         let colours = Colours { enabled: false };
         let lanes = vec![Lane {
             head_oid: "a".to_string(),
@@ -1513,11 +1737,11 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
 
         assert_eq!(
             output,
-            vec!["●    ▶ feature/one".to_string(), "└─◯    main".to_string()]
+            vec!["●  ▶ feature/one".to_string(), "◯    main".to_string()]
         );
     }
 
@@ -1538,11 +1762,66 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx);
+        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, false);
 
         assert_eq!(
             output,
-            vec!["◯      feature/one".to_string(), "└─●  ▶ main".to_string()]
+            vec!["◯    feature/one".to_string(), "●  ▶ main".to_string()]
+        );
+    }
+
+    #[test]
+    fn renders_old_main_groups_with_collapsed_main_history() {
+        let colours = Colours { enabled: false };
+        let groups = vec![
+            LaneGroup {
+                base_oid: Some("main".to_string()),
+                base_meta: Some(meta("main", "main tip")),
+                main_distance: Some(0),
+                lanes: vec![Lane {
+                    head_oid: "feature".to_string(),
+                    base_oid: Some("main".to_string()),
+                    branch_points: vec![point("feature", &["feature/current"])],
+                    head_timestamp: 2,
+                    contains_current: false,
+                }],
+            },
+            LaneGroup {
+                base_oid: Some("old-main".to_string()),
+                base_meta: Some(meta(
+                    "old-main",
+                    "chore: this is an old commit in main history",
+                )),
+                main_distance: Some(842),
+                lanes: vec![Lane {
+                    head_oid: "old-feature".to_string(),
+                    base_oid: Some("old-main".to_string()),
+                    branch_points: vec![point("old-feature", &["dyt/tgs_api"])],
+                    head_timestamp: 1,
+                    contains_current: true,
+                }],
+            },
+        ];
+        let ctx = RenderContext {
+            main_name: "main",
+            current_branch: Some("dyt/tgs_api"),
+            head: Some("old-feature"),
+            colours: &colours,
+        };
+
+        let output = render_lane_groups(&groups, &ctx);
+
+        assert_eq!(
+            output,
+            vec![
+                "◯    feature/current".to_string(),
+                "◯    main".to_string(),
+                "│".to_string(),
+                "⋮ (842 commits on main)".to_string(),
+                "│".to_string(),
+                "│ ●  ▶ dyt/tgs_api".to_string(),
+                "◯─┴    chore: this is an old commit in main history".to_string(),
+            ]
         );
     }
 
@@ -1672,7 +1951,7 @@ mod tests {
 
         run(["--color", "never"], &git, &mut output).unwrap();
 
-        assert_eq!(String::from_utf8(output).unwrap(), "└─●  ▶ main\n");
+        assert_eq!(String::from_utf8(output).unwrap(), "●  ▶ main\n");
         assert!(
             git.calls()
                 .iter()
