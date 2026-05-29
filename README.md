@@ -1,6 +1,6 @@
 # git-ls
 
-`git-ls` renders local `git-branchless` draft branches as compact coloured stack lanes for use as `git ls`.
+`git-ls` renders local `git-branchless` branches as compact coloured stack lanes for use as `git ls`.
 
 ## Prerequisites
 
@@ -20,16 +20,20 @@ rustup run stable cargo install --path . --locked
 rustup run stable cargo install --path . --locked --debug
 ```
 
-Cargo installs the local crate with the release profile by default, placing the binary in its configured binary directory, commonly `~/.cargo/bin`. Use the debug command for rapid local iteration. When that directory is on `PATH`, Git exposes the executable as `git ls`.
+Cargo installs the local crate with the release profile by default, placing the binary in its configured binary directory, commonly `~/.cargo/bin`.
+When that directory is on `PATH`, Git exposes the executable as `git ls`.
 
-## Run
+If Cargo shows curl time our errors, use `--frozen` instead of `--locked` to avoid attempting to update the lockfile.
+
+## Usage
 
 ```sh
 git ls
+git ls --version
 git ls --backend shell
 git ls --color never
+git ls --palette okabe
 git ls --order oldest
-git ls --version
 git ls 'draft() & branches(feature/)'
 ```
 
@@ -38,17 +42,37 @@ git ls 'draft() & branches(feature/)'
 --backend VALUE   Git plumbing backend: gix or shell
 --order VALUE     order stack lanes by head commit time: newest or oldest
 --color VALUE     colour mode: auto, always, or never
+--palette, -p VALUE
+                  lane colour palette: okabe, tableau, dark2, set1, set2,
+                  paired, bold, vivid, tol, or classic
 ```
+
+## Glyph System
+
+The graph uses `git-branchless` glyphs for equivalent concepts, preserving a branch-oriented layout while aligning commit vocabulary with `git branchless smartlog`.
+
+| Symbol | Meaning |
+|---|---|
+| `●` | Current branch head. |
+| `◯` | Non-current branch head or branch point. |
+| `◇` | Main-history node. |
+| `◆` | Current main-history node. |
+| `⦸` | Branch group orphaned from main history; rendered in a separate grey warning lane, labelled `(orphaned)`, and excluded from lane palette rotation. |
+| `▶` | Current branch row indicator. `git-branchless` uses `ᐅ`; `git-ls` uses `▶` in a leading gutter so the graph glyph remains adjacent to the branch name. |
+| `│` | Visible main or stack ancestry. |
+| `⁝` | Omitted or elided main-history continuation. A counted form, such as `⁝ (531 commits on main)`, represents a collapsed main-history segment. |
+| `──` | Empty main-history connection stub, used when no stack lane is attached to the shown main node. |
+| `─┴` | Intermediate connection from main into a stack lane. |
+| `─┘` | Final connection from main into a stack lane. |
+
+When no visible stack row occupies the space above a shown main-history node, the graph renders an unlabelled `⁝` above that node; where a connected stack already occupies that space, the graph renders exactly one unlabelled `⁝` in the main-history column on the row immediately preceding that node, with a blank leading spacer above the stack.
+Each connected main-history component renders one omitted-history marker below its oldest shown main-history node.
+Orphaned branch groups render below the shown main-history anchor, beside the omitted-history column, so no future or ancestry marker visually connects them to `main`.
+When `main` is the current branch, the main marker and label use the first palette colour; ordinary stack lanes then begin with the second palette colour.
 
 ## Development
 
 ```sh
-just install-tools
-just install-hooks
+just setup
 just check
 ```
-
-## Licence
-
-This project is licensed under the GNU General Public Licence version 3 only.
-See [LICENSE](LICENSE).

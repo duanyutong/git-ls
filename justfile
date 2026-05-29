@@ -40,6 +40,9 @@ check:
     just test
     just build-release
 
+# Install development tools and Git hooks.
+setup: install-tools install-hooks
+
 # Install project Git hooks.
 install-hooks:
     prek install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
