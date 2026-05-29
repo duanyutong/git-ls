@@ -8,7 +8,7 @@ use clap::Parser;
 #[cfg(test)]
 use crate::backend::GitCommand;
 use crate::backend::{GitBackend, GixBackend, ProcessGit, get_commit_meta};
-use crate::cli::{Args, Backend, EffectiveArgs, read_git_ls_config};
+use crate::cli::{Args, Backend, RuntimeOptions, read_git_ls_config};
 use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
 use crate::model::BuiltLanes;
@@ -29,7 +29,7 @@ where
 }
 
 fn execute<W, G>(
-    args: &EffectiveArgs,
+    args: &RuntimeOptions,
     git: &G,
     stdout: &mut W,
     terminal_width: Option<usize>,
