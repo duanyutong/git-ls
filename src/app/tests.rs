@@ -7,6 +7,24 @@ use crate::error::GitLsError;
 use crate::model::{BranchAnnotation, BranchPoint, Lane};
 use crate::test_support::{MockGit, TEST_NOW};
 
+fn missing_mock_response(args: &[&str]) -> String {
+    format!("missing mock git response: {}", args.join(" "))
+}
+
+fn missing_commit_meta_response(oid: &str) -> String {
+    missing_mock_response(&[
+        "show",
+        "-s",
+        "--format=%H%x00%ct%x00%s%x1e",
+        "--no-walk=unsorted",
+        oid,
+    ])
+}
+
+fn owned_args(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_string()).collect()
+}
+
 fn clap_error_kind(error: GitLsError) -> ErrorKind {
     match error {
         GitLsError::Cli(error) => error.kind(),
@@ -36,6 +54,43 @@ fn repository_snapshot(current_branch: Option<&str>, head: Option<&str>) -> Repo
 
 fn commit_meta(oid: &str, timestamp: i64, subject: &str) -> CommitMeta {
     CommitMeta::new(oid, timestamp, subject)
+}
+
+#[derive(Default)]
+struct RecordingWriter {
+    bytes: Vec<u8>,
+    fail_writes: bool,
+}
+
+impl RecordingWriter {
+    fn failing() -> Self {
+        Self {
+            bytes: Vec::new(),
+            fail_writes: true,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn into_string(self) -> String {
+        String::from_utf8(self.bytes).unwrap()
+    }
+}
+
+impl std::io::Write for RecordingWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.fail_writes {
+            return Err(std::io::Error::other("closed"));
+        }
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn populated_workflow_git(config_verbosity: &str) -> MockGit {
@@ -296,14 +351,36 @@ fn skips_main_metadata_lookup_when_metadata_is_not_rendered() {
 }
 
 #[test]
+fn propagates_main_metadata_lookup_errors() {
+    let args = runtime_options("draft()", Verbosity::Medium);
+    let git = MockGit::default();
+    let mut cache = HashMap::new();
+
+    let error = main_metadata(&args, &git, "main-oid", &mut cache).unwrap_err();
+
+    assert_eq!(error.to_string(), missing_commit_meta_response("main-oid"));
+}
+
+#[test]
 fn write_render_plan_is_the_output_boundary() {
     let plan = RenderPlan::new(vec!["abcdefgh".to_string(), "xy".to_string()]);
     let environment = RenderEnvironment::new(TEST_NOW, Some(5), false);
-    let mut output = Vec::new();
+    let mut output = RecordingWriter::default();
 
     write_render_plan(&mut output, &plan, environment).unwrap();
 
-    assert_eq!(String::from_utf8(output).unwrap(), "ab...\nxy\n");
+    assert_eq!(output.into_string(), "ab...\nxy\n");
+}
+
+#[test]
+fn write_render_plan_propagates_output_errors() {
+    let plan = RenderPlan::new(vec!["line".to_string()]);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    let mut writer = RecordingWriter::failing();
+
+    let error = write_render_plan(&mut writer, &plan, environment).unwrap_err();
+
+    assert_eq!(error.to_string(), "failed to write output: closed");
 }
 
 #[test]
@@ -354,24 +431,191 @@ fn render_session_supplies_shared_context_to_populated_plan() {
 #[test]
 fn run_uses_git_config_verbosity_in_mocked_workflow() {
     let git = populated_workflow_git("2");
-    let mut output = Vec::new();
+    let mut output = RecordingWriter::default();
 
-    run(["--color", "never"], &git, &mut output).unwrap();
+    run(owned_args(&["--color", "never"]), &git, &mut output).unwrap();
 
-    let output = String::from_utf8(output).unwrap();
+    let output = output.into_string();
     assert!(output.contains("feature tip"));
 }
 
 #[test]
 fn run_prefers_cli_verbosity_over_git_config() {
     let git = populated_workflow_git("2");
-    let mut output = Vec::new();
+    let mut output = RecordingWriter::default();
 
-    run(["--color", "never", "-v"], &git, &mut output).unwrap();
+    run(owned_args(&["--color", "never", "-v"]), &git, &mut output).unwrap();
 
-    let output = String::from_utf8(output).unwrap();
+    let output = output.into_string();
     assert!(output.contains("1m (1, feature) feature"));
     assert!(!output.contains("feature tip"));
+}
+
+#[test]
+fn build_render_plan_propagates_lane_selection_errors() {
+    let args = runtime_options("draft()", Verbosity::Low);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    let git = MockGit::default();
+
+    let error = build_render_plan(&args, &git, environment).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        missing_mock_response(&["branchless", "query", "-r", "main()"])
+    );
+}
+
+#[test]
+fn execute_propagates_plan_errors_before_writing() {
+    let args = runtime_options("draft()", Verbosity::Low);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    let git = MockGit::default();
+    let mut output = RecordingWriter::default();
+
+    let error = execute(&args, &git, &mut output, environment).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        missing_mock_response(&["branchless", "query", "-r", "main()"])
+    );
+    assert!(output.is_empty());
+}
+
+#[test]
+fn build_render_plan_propagates_empty_selection_main_metadata_errors() {
+    let revset = "((draft()) & branches()) - public()";
+    let git = MockGit::default()
+        .with(&["branchless", "query", "-r", "main()"], "main-oid")
+        .with(&["branchless", "query", "-b", revset], "");
+    let args = runtime_options("draft()", Verbosity::Medium);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+
+    let error = build_render_plan(&args, &git, environment).unwrap_err();
+
+    assert_eq!(error.to_string(), missing_commit_meta_response("main-oid"));
+}
+
+#[test]
+fn build_render_plan_propagates_populated_group_metadata_errors() {
+    let revset = "((draft()) & branches()) - public()";
+    let heads_revset = "heads(((draft()) & branches()) - public())";
+    let git = MockGit::default()
+        .with(&["branchless", "query", "-r", "main()"], "main-oid")
+        .with(&["branchless", "query", "-b", revset], "feature")
+        .with(
+            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            "feature-oid\nfeature",
+        )
+        .with(&["config", "--get", "branchless.core.mainBranch"], "")
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "feature-oid\x00feature",
+        )
+        .with(&["branchless", "query", "-r", heads_revset], "feature-oid")
+        .with(
+            &[
+                "show",
+                "-s",
+                "--format=%H%x00%ct%x00%s%x1e",
+                "--no-walk=unsorted",
+                "feature-oid",
+            ],
+            &format!("feature-oid\x00{}\x00feature tip\x1e", TEST_NOW - 60),
+        )
+        .with(&["merge-base", "main-oid", "feature-oid"], "old-base")
+        .with(
+            &[
+                "rev-list",
+                "--reverse",
+                "--ancestry-path",
+                "old-base..feature-oid",
+            ],
+            "feature-oid",
+        );
+    let args = runtime_options("draft()", Verbosity::Low);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+
+    let error = build_render_plan(&args, &git, environment).unwrap_err();
+
+    assert_eq!(error.to_string(), missing_commit_meta_response("old-base"));
+}
+
+#[test]
+fn build_render_plan_propagates_populated_main_metadata_errors() {
+    let revset = "((draft()) & branches()) - public()";
+    let heads_revset = "heads(((draft()) & branches()) - public())";
+    let git = MockGit::default()
+        .with(&["branchless", "query", "-r", "main()"], "main-oid")
+        .with(&["branchless", "query", "-b", revset], "feature")
+        .with(
+            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            "feature-oid\nfeature",
+        )
+        .with(&["config", "--get", "branchless.core.mainBranch"], "")
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "feature-oid\x00feature",
+        )
+        .with(&["branchless", "query", "-r", heads_revset], "feature-oid")
+        .with(
+            &[
+                "show",
+                "-s",
+                "--format=%H%x00%ct%x00%s%x1e",
+                "--no-walk=unsorted",
+                "feature-oid",
+            ],
+            &format!("feature-oid\x00{}\x00feature tip\x1e", TEST_NOW - 60),
+        )
+        .with(&["merge-base", "main-oid", "feature-oid"], "main-oid")
+        .with(
+            &[
+                "rev-list",
+                "--reverse",
+                "--ancestry-path",
+                "main-oid..feature-oid",
+            ],
+            "feature-oid",
+        );
+    let args = runtime_options("draft()", Verbosity::Medium);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+
+    let error = build_render_plan(&args, &git, environment).unwrap_err();
+
+    assert_eq!(error.to_string(), missing_commit_meta_response("main-oid"));
+}
+
+#[test]
+fn run_propagates_argument_parse_errors_before_reading_config() {
+    let git = MockGit::default();
+    let mut output = RecordingWriter::default();
+
+    let error = run(owned_args(&["--unknown"]), &git, &mut output).unwrap_err();
+
+    assert_eq!(clap_error_kind(error), ErrorKind::UnknownArgument);
+    assert!(git.calls().is_empty());
+}
+
+#[test]
+fn run_propagates_git_config_errors_before_execution() {
+    let git = MockGit::default().with(&["config", "--get", "git-ls.verbosity"], "full");
+    let mut output = RecordingWriter::default();
+
+    let error = run(owned_args(&["--color", "never"]), &git, &mut output).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "invalid git config git-ls.verbosity=\"full\": expected 0, 1, or 2"
+    );
+    assert!(output.is_empty());
 }
 
 #[test]
@@ -401,9 +645,14 @@ fn run_passes_hidden_selection_to_branchless_queries() {
             ],
             &format!("main-oid\x00{}\x00main tip\x1e", TEST_NOW - 120),
         );
-    let mut output = Vec::new();
+    let mut output = RecordingWriter::default();
 
-    run(["--color", "never", "--hidden"], &git, &mut output).unwrap();
+    run(
+        owned_args(&["--color", "never", "--hidden"]),
+        &git,
+        &mut output,
+    )
+    .unwrap();
 
     assert!(
         git.calls()
@@ -439,12 +688,12 @@ fn run_renders_empty_selection_as_trunk() {
             ],
             &format!("main-oid\x00{timestamp}\x00main tip\x1e"),
         );
-    let mut output = Vec::new();
+    let mut output = RecordingWriter::default();
 
-    run(["--color", "never"], &git, &mut output).unwrap();
+    run(owned_args(&["--color", "never"]), &git, &mut output).unwrap();
 
     assert_eq!(
-        String::from_utf8(output).unwrap(),
+        output.into_string(),
         "  ⁝\n▶ ◆── 2m (-, main-oi) main\n  ⁝\n"
     );
     assert!(

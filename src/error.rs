@@ -127,6 +127,13 @@ mod tests {
 
     use super::*;
 
+    fn assert_same_variant(actual: &GitLsError, expected: &GitLsError) {
+        assert_eq!(
+            std::mem::discriminant(actual),
+            std::mem::discriminant(expected)
+        );
+    }
+
     #[test]
     fn display_text_names_error_context_without_exposing_variant_syntax() {
         let timestamp_source = "not-a-timestamp".parse::<i64>().unwrap_err();
@@ -170,7 +177,10 @@ mod tests {
     fn source_chain_is_preserved_for_wrapped_errors() {
         let write_error: GitLsError =
             io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed").into();
-        assert!(matches!(write_error, GitLsError::Write(_)));
+        assert_same_variant(
+            &write_error,
+            &GitLsError::Write(io::Error::other("variant marker")),
+        );
         assert_eq!(write_error.source().unwrap().to_string(), "pipe closed");
 
         let exec_error =
@@ -198,11 +208,20 @@ mod tests {
     fn from_conversions_route_to_boundary_variants() {
         let cli_error: GitLsError =
             clap::Error::raw(ErrorKind::UnknownArgument, "unexpected argument").into();
-        assert!(matches!(cli_error, GitLsError::Cli(_)));
+        assert_same_variant(
+            &cli_error,
+            &GitLsError::Cli(clap::Error::raw(
+                ErrorKind::UnknownArgument,
+                "variant marker",
+            )),
+        );
 
         let write_error: GitLsError =
             io::Error::new(io::ErrorKind::Interrupted, "write interrupted").into();
-        assert!(matches!(write_error, GitLsError::Write(_)));
+        assert_same_variant(
+            &write_error,
+            &GitLsError::Write(io::Error::other("variant marker")),
+        );
     }
 
     #[test]

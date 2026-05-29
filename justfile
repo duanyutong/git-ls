@@ -34,8 +34,8 @@ coverage-package-baseline:
 
 # Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
 coverage-unit-baseline:
-    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 99 --fail-under-file-lines 99 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
-    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 100 --fail-under-file-lines 99 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
+    cargo llvm-cov report -p git-ls --summary-only --fail-uncovered-lines 0 --fail-uncovered-regions 0 --fail-uncovered-functions 0 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
+    cargo llvm-cov report -p xtask --summary-only --fail-uncovered-lines 0 --fail-uncovered-regions 0 --fail-uncovered-functions 0 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
 
 # Build the optimised binary.
 build-release:
