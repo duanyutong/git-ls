@@ -4,7 +4,13 @@ use std::process::Command as TestCommand;
 
 use tempfile::TempDir;
 
+use super::metadata::{
+    GIT_SHOW_COMMIT_META_ARG, insert_commit_meta, missing_commit_aliases, parse_shell_commit_meta,
+};
+use super::shell::{lines, shell_cache_commit_metas};
 use super::*;
+use crate::error::GitLsError;
+use crate::model::{CommitMeta, display_short_oid};
 use crate::test_support::MockGit;
 
 #[test]
