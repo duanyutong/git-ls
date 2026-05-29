@@ -64,7 +64,7 @@ pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> 
             );
             let line = format!(
                 "{TREE_LEFT_PADDING}{} {}{BRANCH_LABEL_GAP}{label}",
-                ctx.colours.dim(COLLAPSED_MAIN_GLYPH),
+                ctx.colours.stack(0, COLLAPSED_MAIN_GLYPH),
                 ctx.colours.orphaned_glyph(ORPHANED_BRANCH_GLYPH)
             );
             output.push(render_row(
