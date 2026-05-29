@@ -34,11 +34,14 @@ git ls --backend shell
 git ls --color never
 git ls --palette okabe
 git ls --order oldest
+git ls -v
+git ls -vv
 git ls 'draft() & branches(feature/)'
 ```
 
 ```text
 --hidden          include hidden commits when evaluating revsets
+-v, --verbose     increase branch annotation verbosity; repeat as -vv for commit titles
 --backend VALUE   Git plumbing backend: gix or shell
 --order VALUE     order stack lanes by head commit time: newest or oldest
 --color VALUE     colour mode: auto, always, or never
