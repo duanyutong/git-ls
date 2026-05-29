@@ -331,6 +331,8 @@ active work queue.
     Covered `M1`.
 19. **PR19: `chore(plan): reconcile completed and remaining refactor work`.**
     Covered `H5`.
+20. **PR20: `test(coverage): add module-level coverage targets`.**
+    Covered `N1`.
 
 ## Deferred Decisions
 
@@ -347,13 +349,5 @@ active work queue.
 
 ## Active Development Plan
 
-Coverage remains last in the sequence. No further structural PR is presently
-planned before the next coverage step.
-
-### PR20: `test(coverage): add module-level coverage targets` (~500 lines)
-
-- Covers: `N1`.
-- Add per-module coverage reporting or threshold checks after the backend,
-  application-test, model, and `xtask` boundaries have stabilised.
-- Raise thresholds incrementally from measured baselines rather than asserting
-  100% until uncovered code paths have been reviewed for test value.
+No active refactor or coverage PR remains in this sequence. Further work should
+begin from a fresh audit against the then-current codebase and coverage report.

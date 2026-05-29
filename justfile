@@ -17,9 +17,14 @@ typecheck:
 test:
     cargo test --workspace --all-targets --all-features --locked
 
-# Generate a line-coverage summary and enforce the current unit-test baseline.
+# Generate coverage once, then enforce package and testable-module baselines.
 coverage:
-    cargo llvm-cov --workspace --all-targets --all-features --locked --summary-only --fail-under-lines 85
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --all-targets --all-features --locked --no-report
+    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90
+    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 40
+    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90 --fail-under-file-lines 80 --ignore-filename-regex '(^|/)(src/main\.rs|src/backend/process\.rs|src/test_support\.rs)$'
+    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95 --fail-under-file-lines 90 --ignore-filename-regex '(^|/)xtask/src/(git|main|version)\.rs$'
 
 # Build the optimised binary.
 build-release:
