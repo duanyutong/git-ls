@@ -13,8 +13,8 @@ use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
 use crate::render::{
-    Colours, RenderContext, calculate_metadata_widths, render_lane_groups, render_main_tip,
-    render_omitted_main_past, render_top_spacer,
+    Colours, RenderContext, calculate_metadata_widths,
+    render_empty_selection as render_empty_lines, render_lane_groups,
 };
 use crate::terminal::{RenderEnvironment, write_rendered_line};
 
@@ -69,21 +69,16 @@ impl<'a> RenderSession<'a> {
     }
 
     fn context(&self, groups: &[LaneGroup]) -> RenderContext<'_> {
-        RenderContext {
-            main_name: &self.repository.main_name,
-            main_meta: self.main_meta,
-            current_branch: self.repository.current_branch.as_deref(),
-            head: self.repository.head.as_deref(),
-            now_timestamp: self.now_timestamp,
-            verbosity: self.verbosity,
-            metadata_widths: calculate_metadata_widths(
-                groups,
-                self.main_meta,
-                self.now_timestamp,
-                self.verbosity,
-            ),
-            colours: self.colours,
-        }
+        RenderContext::new(
+            &self.repository.main_name,
+            self.main_meta,
+            self.repository.current_branch.as_deref(),
+            self.repository.head.as_deref(),
+            self.now_timestamp,
+            self.verbosity,
+            calculate_metadata_widths(groups, self.main_meta, self.now_timestamp, self.verbosity),
+            self.colours,
+        )
     }
 }
 
@@ -102,11 +97,7 @@ fn main_metadata<G: CommitMetadataBackend + ?Sized>(
 
 fn render_empty_selection(session: &RenderSession<'_>) -> RenderPlan {
     let context = session.context(&[]);
-    RenderPlan::new(vec![
-        render_top_spacer(session.colours, false),
-        render_main_tip(&context),
-        render_omitted_main_past(session.colours),
-    ])
+    RenderPlan::new(render_empty_lines(&context))
 }
 
 fn render_populated_selection(groups: &[LaneGroup], session: &RenderSession<'_>) -> RenderPlan {

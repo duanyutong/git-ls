@@ -57,10 +57,7 @@ fn meta(oid: &str, subject: &str) -> CommitMeta {
 }
 
 fn test_colours(enabled: bool) -> Colours {
-    Colours {
-        enabled,
-        palette: Palette::Classic.ansi_colours(),
-    }
+    Colours::new(enabled, Palette::Classic)
 }
 
 #[test]
@@ -105,16 +102,16 @@ fn renders_trunk_commit_label_with_main_placeholder_count() {
         subject: "old main point".to_string(),
         timestamp: TEST_COMMIT_TIME,
     };
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: None,
-        head: None,
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Medium,
-        metadata_widths: MetadataWidths { age: 2, count: 2 },
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::Medium,
+        MetadataWidths { age: 2, count: 2 },
+        &colours,
+    );
 
     assert_eq!(
         trunk_label(TrunkLabel::Commit(&base_meta), &ctx),
@@ -158,16 +155,16 @@ fn renders_markers_names_and_trunk() {
             contains_current: true,
         },
     ];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature/two"),
-        head: Some("b"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature/two"),
+        Some("b"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_group(
         &lanes,
@@ -207,16 +204,16 @@ fn renders_exactly_one_future_line_above_main_node() {
             contains_current: true,
         },
     ];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature/two"),
-        head: Some("b"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature/two"),
+        Some("b"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_group(
         &lanes,
@@ -284,16 +281,16 @@ fn renders_single_main_based_lane_with_main_spine() {
         head_timestamp: 1,
         contains_current: true,
     }];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature/one"),
-        head: Some("a"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature/one"),
+        Some("a"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_group(
         &lanes,
@@ -320,16 +317,16 @@ fn renders_current_main_on_trunk_row() {
         head_timestamp: 1,
         contains_current: false,
     }];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("main"),
-        head: Some("main"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_group(
         &lanes,
@@ -356,16 +353,16 @@ fn renders_orphaned_lane_with_single_warning_marker() {
         head_timestamp: 1,
         contains_current: false,
     }];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("main"),
-        head: Some("main"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_orphaned_group(&lanes, &ctx);
 
@@ -390,16 +387,16 @@ fn renders_orphaned_only_groups_around_main_tip() {
             contains_current: false,
         }],
     }];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("main"),
-        head: Some("main"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_lane_groups(&groups, &ctx);
 
@@ -443,16 +440,16 @@ fn renders_main_metadata_in_aligned_annotation_column() {
     }];
     let metadata_widths =
         calculate_metadata_widths(&groups, Some(&main_meta), TEST_NOW, Verbosity::Medium);
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: Some(&main_meta),
-        current_branch: Some("main"),
-        head: Some("main-oid"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Medium,
+    let ctx = RenderContext::new(
+        "main",
+        Some(&main_meta),
+        Some("main"),
+        Some("main-oid"),
+        TEST_NOW,
+        Verbosity::Medium,
         metadata_widths,
-        colours: &colours,
-    };
+        &colours,
+    );
 
     let output = render_lane_groups(&groups, &ctx);
 
@@ -505,16 +502,16 @@ fn renders_orphaned_groups_below_connected_stacks() {
             ],
         },
     ];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature/current"),
-        head: Some("feature"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature/current"),
+        Some("feature"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_lane_groups(&groups, &ctx);
 
@@ -579,16 +576,16 @@ fn renders_old_main_groups_with_collapsed_main_history() {
             }],
         },
     ];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("dyt/tgs_api"),
-        head: Some("old-feature"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("dyt/tgs_api"),
+        Some("old-feature"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_lane_groups(&groups, &ctx);
 
@@ -636,31 +633,31 @@ fn colours_text_when_enabled() {
         colours.orphaned_status("x"),
         "\x1b[1m\x1b[38;5;255mx\x1b[0m"
     );
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("main"),
-        head: Some("main"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("main"),
+        Some("main"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
     assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m");
     assert_eq!(
         trunk_prefix(LaneRenderLayout::empty(), true, MainSpine::Hidden, &colours),
         "\x1b[38;5;41m◆\x1b[0m\x1b[38;5;41m──\x1b[0m"
     );
-    let inactive_main_ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature"),
-        head: Some("feature"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let inactive_main_ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature"),
+        Some("feature"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
     assert_eq!(main_label(&inactive_main_ctx), "\x1b[38;5;41mmain\x1b[0m");
     assert_eq!(
         trunk_prefix(
@@ -688,16 +685,16 @@ fn main_reserves_first_palette_colour() {
             contains_current: false,
         }],
     }];
-    let ctx = RenderContext {
-        main_name: "main",
-        main_meta: None,
-        current_branch: Some("feature/one"),
-        head: Some("feature"),
-        now_timestamp: TEST_NOW,
-        verbosity: Verbosity::Low,
-        metadata_widths: MetadataWidths::default(),
-        colours: &colours,
-    };
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        Some("feature/one"),
+        Some("feature"),
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    );
 
     let output = render_lane_groups(&groups, &ctx);
 

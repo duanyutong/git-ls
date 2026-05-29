@@ -156,3 +156,11 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
 
     output
 }
+
+pub(crate) fn render_empty_selection(ctx: &RenderContext<'_>) -> Vec<String> {
+    vec![
+        render_top_spacer(ctx.colours, false),
+        render_main_tip(ctx),
+        render_omitted_main_past(ctx.colours),
+    ]
+}
