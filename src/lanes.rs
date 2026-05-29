@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::backend::{GitBackend, get_commit_meta};
-use crate::cli::{EffectiveArgs, Order, Verbosity};
+use crate::cli::{Order, RuntimeOptions, Verbosity};
 use crate::error::{GitLsError, Result};
 use crate::model::{
     BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane, LaneGroup,
@@ -133,7 +133,7 @@ fn build_lane<G: GitBackend + ?Sized>(
 
 pub(crate) fn build_lanes<G: GitBackend + ?Sized>(
     git: &G,
-    args: &EffectiveArgs,
+    args: &RuntimeOptions,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
     let revset = branch_revset(&args.revset);
@@ -318,7 +318,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::cli::{Backend, ColourMode, EffectiveArgs, Order, Palette, Verbosity};
+    use crate::cli::{Backend, ColourMode, Order, Palette, RuntimeOptions, Verbosity};
     use crate::model::{
         BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane,
     };
@@ -590,7 +590,7 @@ mod tests {
                 &["rev-list", "--reverse", "--ancestry-path", "main-oid..c"],
                 "c",
             );
-        let args = EffectiveArgs {
+        let args = RuntimeOptions {
             revset: "draft()".to_string(),
             hidden: false,
             verbosity: Verbosity::Low,
