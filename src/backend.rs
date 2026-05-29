@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use gix::bstr::ByteSlice as _;
 
 use crate::error::{GitLsError, Result};
 use crate::model::{CommitMeta, display_short_oid};
+
+const GIT_SHOW_COMMIT_META_ARG: &str = "--format=%H%x00%ct%x00%s%x1e";
 
 pub(crate) trait GitCommand {
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String>;
@@ -15,40 +17,80 @@ pub(crate) struct ProcessGit;
 
 impl GitCommand for ProcessGit {
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
-        let output = Command::new("git")
-            .args(args)
-            .output()
-            .map_err(GitLsError::GitExec)?;
+        let output = execute_git(args)?;
 
         if !output.status.success() && !allow_failure {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let fallback = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let detail = if detail.is_empty() { fallback } else { detail };
-            return Err(GitLsError::git_command(args.join(" "), detail));
+            return Err(GitLsError::git_command(
+                args.join(" "),
+                command_failure_detail(&output),
+            ));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .trim_end_matches('\n')
-            .to_string())
+        Ok(normalised_stdout(&output))
     }
 }
 
-pub(crate) trait GitBackend {
+fn execute_git(args: &[&str]) -> Result<Output> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .map_err(GitLsError::GitExec)
+}
+
+fn normalised_stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches('\n')
+        .to_string()
+}
+
+fn command_failure_detail(output: &Output) -> String {
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if detail.is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        detail
+    }
+}
+
+pub(crate) trait BranchlessQueries {
     fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
+}
+
+pub(crate) trait CommitMetadataBackend {
     fn cache_commit_metas(
         &self,
         oids: &[&str],
         cache: &mut HashMap<String, CommitMeta>,
     ) -> Result<()>;
+}
+
+pub(crate) trait RepositoryStateBackend {
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>>;
     fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)>;
     fn main_branch_name(&self) -> Result<String>;
+}
+
+pub(crate) trait AncestryBackend {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>>;
     fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>>;
 }
 
-impl<T: GitCommand + ?Sized> GitBackend for T {
+pub(crate) trait GitBackend:
+    BranchlessQueries + CommitMetadataBackend + RepositoryStateBackend + AncestryBackend
+{
+}
+
+impl<T> GitBackend for T where
+    T: BranchlessQueries
+        + CommitMetadataBackend
+        + RepositoryStateBackend
+        + AncestryBackend
+        + ?Sized
+{
+}
+
+impl<T: GitCommand + ?Sized> BranchlessQueries for T {
     fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_revset(self, revset, hidden)
     }
@@ -56,7 +98,9 @@ impl<T: GitCommand + ?Sized> GitBackend for T {
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_branch_names(self, revset, hidden)
     }
+}
 
+impl<T: GitCommand + ?Sized> CommitMetadataBackend for T {
     fn cache_commit_metas(
         &self,
         oids: &[&str],
@@ -64,7 +108,9 @@ impl<T: GitCommand + ?Sized> GitBackend for T {
     ) -> Result<()> {
         shell_cache_commit_metas(self, oids, cache)
     }
+}
 
+impl<T: GitCommand + ?Sized> RepositoryStateBackend for T {
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
         shell_local_branches_by_oid(self)
     }
@@ -76,7 +122,9 @@ impl<T: GitCommand + ?Sized> GitBackend for T {
     fn main_branch_name(&self) -> Result<String> {
         shell_main_branch_name(self)
     }
+}
 
+impl<T: GitCommand + ?Sized> AncestryBackend for T {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         shell_merge_base(self, main_oid, head_oid)
     }
@@ -142,67 +190,70 @@ fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
     oids: &[&str],
     cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<()> {
-    let mut seen = HashSet::new();
-    let missing: Vec<&str> = oids
-        .iter()
-        .copied()
-        .filter(|oid| !cache.contains_key(*oid) && seen.insert(*oid))
-        .collect();
+    let missing = missing_commit_aliases(oids, cache);
     if missing.is_empty() {
         return Ok(());
     }
 
-    let mut args = vec![
-        "show",
-        "-s",
-        "--format=%H%x00%ct%x00%s%x1e",
-        "--no-walk=unsorted",
-    ];
+    let mut args = vec!["show", "-s", GIT_SHOW_COMMIT_META_ARG, "--no-walk=unsorted"];
     args.extend(missing.iter().copied());
 
     let output = git.run(&args, false)?;
-    let records: Vec<&str> = output
-        .split('\x1e')
-        .map(|record| record.strip_prefix('\n').unwrap_or(record))
-        .map(|record| record.strip_suffix('\n').unwrap_or(record))
-        .filter(|record| !record.is_empty())
-        .collect();
+    let records = git_show_commit_records(&output);
 
     if records.len() != missing.len() {
         return Err(GitLsError::unexpected_git_show(missing.join(", ")));
     }
 
     for (alias, record) in missing.into_iter().zip(records) {
-        shell_cache_commit_meta(alias, record, cache)?;
+        let meta = parse_shell_commit_meta(alias, record)?;
+        insert_commit_meta(cache, alias, meta);
     }
 
     Ok(())
 }
 
-fn shell_cache_commit_meta(
-    alias: &str,
-    record: &str,
-    cache: &mut HashMap<String, CommitMeta>,
-) -> Result<()> {
+fn missing_commit_aliases<'a>(
+    oids: &'a [&str],
+    cache: &HashMap<String, CommitMeta>,
+) -> Vec<&'a str> {
+    let mut seen = HashSet::new();
+    oids.iter()
+        .copied()
+        .filter(|oid| !cache.contains_key(*oid) && seen.insert(*oid))
+        .collect()
+}
+
+fn git_show_commit_records(output: &str) -> Vec<&str> {
+    output
+        .split('\x1e')
+        .map(|record| record.strip_prefix('\n').unwrap_or(record))
+        .map(|record| record.strip_suffix('\n').unwrap_or(record))
+        .filter(|record| !record.is_empty())
+        .collect()
+}
+
+fn parse_shell_commit_meta(alias: &str, record: &str) -> Result<CommitMeta> {
     let parts: Vec<&str> = record.splitn(3, '\0').collect();
     if parts.len() != 3 {
         return Err(GitLsError::unexpected_git_show(alias));
     }
 
-    let meta = CommitMeta {
+    Ok(CommitMeta {
         oid: parts[0].to_string(),
         short_oid: display_short_oid(parts[0]),
         timestamp: parts[1]
             .parse()
             .map_err(|source| GitLsError::invalid_commit_timestamp(alias, source))?,
         subject: parts[2].to_string(),
-    };
+    })
+}
 
+fn insert_commit_meta(cache: &mut HashMap<String, CommitMeta>, alias: &str, meta: CommitMeta) {
     if alias != meta.oid {
         cache.insert(alias.to_string(), meta.clone());
     }
     cache.insert(meta.oid.clone(), meta);
-    Ok(())
 }
 
 fn shell_local_branches_by_oid<G: GitCommand + ?Sized>(
@@ -282,6 +333,8 @@ fn shell_ancestry_path<G: GitCommand + ?Sized>(
     Ok(lines(&output))
 }
 
+/// Repository backend that uses `gix` for native Git data and shells out only
+/// for `git-branchless` revset queries, whose semantics are external to `gix`.
 pub(crate) struct GixBackend {
     repo: gix::Repository,
     command: ProcessGit,
@@ -364,7 +417,7 @@ impl GixBackend {
     }
 }
 
-impl GitBackend for GixBackend {
+impl BranchlessQueries for GixBackend {
     fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_revset(&self.command, revset, hidden)
     }
@@ -372,28 +425,23 @@ impl GitBackend for GixBackend {
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_branch_names(&self.command, revset, hidden)
     }
+}
 
+impl CommitMetadataBackend for GixBackend {
     fn cache_commit_metas(
         &self,
         oids: &[&str],
         cache: &mut HashMap<String, CommitMeta>,
     ) -> Result<()> {
-        let mut seen = HashSet::new();
-        let missing: Vec<&str> = oids
-            .iter()
-            .copied()
-            .filter(|oid| !cache.contains_key(*oid) && seen.insert(*oid))
-            .collect();
-        for alias in missing {
+        for alias in missing_commit_aliases(oids, cache) {
             let meta = self.commit_meta(alias)?;
-            if alias != meta.oid {
-                cache.insert(alias.to_string(), meta.clone());
-            }
-            cache.insert(meta.oid.clone(), meta);
+            insert_commit_meta(cache, alias, meta);
         }
         Ok(())
     }
+}
 
+impl RepositoryStateBackend for GixBackend {
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
         let mut result: HashMap<String, Vec<String>> = HashMap::new();
         for reference in self
@@ -438,7 +486,9 @@ impl GitBackend for GixBackend {
                 |value| value.to_str_lossy().into_owned(),
             ))
     }
+}
 
+impl AncestryBackend for GixBackend {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         let main_oid = Self::object_id(main_oid)?;
         let head_oid = Self::object_id(head_oid)?;
@@ -493,21 +543,95 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::test_support::MockGit;
 
     #[test]
-    fn shell_commit_metadata_uses_fixed_display_oid() {
+    fn shell_metadata_hydration_indexes_alias_and_full_oid() {
+        let full_oid = "309567f69abcdef0123456789abcdef01234567";
+        let git = MockGit::default().with(
+            &[
+                "show",
+                "-s",
+                GIT_SHOW_COMMIT_META_ARG,
+                "--no-walk=unsorted",
+                "branch-head",
+            ],
+            &format!("{full_oid}\x001700000001\x00subject\x1e"),
+        );
         let mut cache = HashMap::new();
 
-        shell_cache_commit_meta(
-            "branch-head",
-            "309567f69abcdef0123456789abcdef01234567\x001700000001\x00subject",
-            &mut cache,
-        )
-        .unwrap();
+        shell_cache_commit_metas(&git, &["branch-head"], &mut cache).unwrap();
 
         let meta = cache.get("branch-head").unwrap();
-        assert_eq!(meta.oid, "309567f69abcdef0123456789abcdef01234567");
+        assert_eq!(meta.oid, full_oid);
         assert_eq!(meta.short_oid, "309567f");
+        assert_eq!(cache.get(full_oid), Some(meta));
+    }
+
+    #[test]
+    fn metadata_cache_deduplicates_missing_aliases() {
+        let cached_meta = CommitMeta {
+            oid: "cached".to_string(),
+            short_oid: "cached".to_string(),
+            subject: "cached".to_string(),
+            timestamp: 1,
+        };
+        let mut cache = HashMap::new();
+        insert_commit_meta(&mut cache, "cached-alias", cached_meta);
+
+        assert_eq!(
+            missing_commit_aliases(&["cached", "cached-alias", "new", "new"], &cache),
+            vec!["new"]
+        );
+    }
+
+    #[test]
+    fn shell_metadata_hydration_rejects_record_count_mismatch() {
+        let full_oid = "309567f69abcdef0123456789abcdef01234567";
+        let git = MockGit::default().with(
+            &[
+                "show",
+                "-s",
+                GIT_SHOW_COMMIT_META_ARG,
+                "--no-walk=unsorted",
+                "one",
+                "two",
+            ],
+            &format!("{full_oid}\x001700000001\x00subject\x1e"),
+        );
+        let mut cache = HashMap::new();
+
+        let error = shell_cache_commit_metas(&git, &["one", "two"], &mut cache).unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitLsError::UnexpectedGitShow { oid } if oid == "one, two"
+        ));
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn shell_metadata_parser_rejects_malformed_records() {
+        let error = parse_shell_commit_meta("branch-head", "oid\x001700000001").unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitLsError::UnexpectedGitShow { oid } if oid == "branch-head"
+        ));
+    }
+
+    #[test]
+    fn shell_metadata_parser_rejects_invalid_timestamps() {
+        let error = parse_shell_commit_meta(
+            "branch-head",
+            "309567f69abcdef0123456789abcdef01234567\x00soon\x00subject",
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitLsError::InvalidCommitTimestamp { oid, .. } if oid == "branch-head"
+        ));
     }
 
     fn git(repo: &Path, args: &[&str]) -> String {
@@ -619,5 +743,42 @@ mod tests {
         let meta = cache.get(&head_oid).unwrap();
         assert_eq!(meta.short_oid, display_short_oid(&head_oid));
         assert_eq!(meta.subject, "merge side");
+    }
+
+    #[test]
+    fn gix_metadata_hydration_rejects_malformed_oid() {
+        let (temp, _base_oid, _head_oid, _side_oid) = parity_repo();
+        let backend = GixBackend::discover_from(temp.path()).unwrap();
+        let mut cache = HashMap::new();
+
+        let error = backend
+            .cache_commit_metas(&["not-an-oid"], &mut cache)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitLsError::InvalidObjectId { oid, .. } if oid == "not-an-oid"
+        ));
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn gix_metadata_hydration_reports_missing_commits() {
+        let (temp, _base_oid, _head_oid, _side_oid) = parity_repo();
+        let backend = GixBackend::discover_from(temp.path()).unwrap();
+        let mut cache = HashMap::new();
+
+        let error = backend
+            .cache_commit_metas(&["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], &mut cache)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitLsError::Gix {
+                context: "find commit",
+                ..
+            }
+        ));
+        assert!(cache.is_empty());
     }
 }
