@@ -7,8 +7,8 @@ const ANSI_MUTED_TEXT: u8 = 251;
 const ANSI_ORPHANED_LABEL: u8 = 255;
 
 pub(crate) struct Colours {
-    pub(super) enabled: bool,
-    pub(super) palette: &'static [u8],
+    enabled: bool,
+    palette: &'static [u8],
 }
 
 impl Colours {

@@ -101,7 +101,7 @@ pub(super) fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> Str
     }
 }
 
-pub(crate) fn render_main_tip(ctx: &RenderContext<'_>) -> String {
+pub(super) fn render_main_tip(ctx: &RenderContext<'_>) -> String {
     let current_main = main_is_current(ctx.main_name, ctx.current_branch);
     let line = format!(
         "{}{BRANCH_LABEL_GAP}{}",
@@ -116,7 +116,7 @@ pub(crate) fn render_main_tip(ctx: &RenderContext<'_>) -> String {
     render_row(&current_row_indicator(current_main, 0, ctx.colours), &line)
 }
 
-pub(crate) fn render_top_spacer(
+pub(super) fn render_top_spacer(
     colours: &super::colours::Colours,
     has_visible_rows_above_main: bool,
 ) -> String {
@@ -163,7 +163,7 @@ pub(super) fn render_collapsed_main_segment(
     ]
 }
 
-pub(crate) fn render_omitted_main_past(colours: &super::colours::Colours) -> String {
+pub(super) fn render_omitted_main_past(colours: &super::colours::Colours) -> String {
     let line = format!(
         "{TREE_LEFT_PADDING}{}",
         colours.stack(0, COLLAPSED_MAIN_GLYPH)
