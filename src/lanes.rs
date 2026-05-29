@@ -9,11 +9,11 @@ use crate::model::{
     RepositorySnapshot,
 };
 
-pub(crate) fn branch_revset(user_revset: &str) -> String {
+fn branch_revset(user_revset: &str) -> String {
     format!("(({user_revset}) & branches()) - public()")
 }
 
-pub(crate) fn branch_points_by_oid(
+fn branch_points_by_oid(
     branch_names: &[String],
     branch_oid_map: &HashMap<String, Vec<String>>,
 ) -> HashMap<String, BranchPointRef> {
@@ -66,7 +66,7 @@ fn build_branch_point<G: GitBackend + ?Sized>(
     })
 }
 
-pub(crate) fn build_lane<G: GitBackend + ?Sized>(
+fn build_lane<G: GitBackend + ?Sized>(
     git: &G,
     head_oid: &str,
     main_oid: &str,
@@ -211,7 +211,7 @@ pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
     lanes
 }
 
-pub(crate) fn grouped_by_base(lanes: Vec<Lane>, order: Order) -> Vec<(Option<String>, Vec<Lane>)> {
+fn grouped_by_base(lanes: Vec<Lane>, order: Order) -> Vec<(Option<String>, Vec<Lane>)> {
     let mut groups: HashMap<Option<String>, Vec<Lane>> = HashMap::new();
     for lane in lanes {
         groups.entry(lane.base_oid.clone()).or_default().push(lane);
@@ -311,4 +311,333 @@ fn lane_group_fallback_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> 
             .unwrap_or("")
             .cmp(rhs.base_oid.as_deref().unwrap_or(""))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::cli::{Backend, ColourMode, EffectiveArgs, Order, Palette, Verbosity};
+    use crate::model::{
+        BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane,
+    };
+    use crate::test_support::MockGit;
+
+    fn point(oid: &str, names: &[&str]) -> BranchPoint {
+        BranchPoint {
+            oid: oid.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: None,
+        }
+    }
+
+    fn point_with_count_at(
+        oid: &str,
+        names: &[&str],
+        commit_count: usize,
+        subject: &str,
+        timestamp: i64,
+    ) -> BranchPoint {
+        BranchPoint {
+            oid: oid.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            annotation: Some(BranchAnnotation {
+                meta: CommitMeta {
+                    oid: oid.to_string(),
+                    short_oid: oid.to_string(),
+                    subject: subject.to_string(),
+                    timestamp,
+                },
+                commit_count,
+            }),
+        }
+    }
+
+    fn meta(oid: &str, subject: &str) -> CommitMeta {
+        CommitMeta {
+            oid: oid.to_string(),
+            short_oid: oid.to_string(),
+            subject: subject.to_string(),
+            timestamp: 0,
+        }
+    }
+
+    fn lane(oid: &str, base: Option<&str>, timestamp: i64, contains_current: bool) -> Lane {
+        Lane {
+            head_oid: oid.to_string(),
+            base_oid: base.map(ToOwned::to_owned),
+            branch_points: vec![point(oid, &[oid])],
+            head_timestamp: timestamp,
+            contains_current,
+        }
+    }
+
+    #[test]
+    fn creates_branch_revset() {
+        assert_eq!(
+            branch_revset("draft()"),
+            "((draft()) & branches()) - public()"
+        );
+    }
+
+    #[test]
+    fn maps_selected_branch_points_by_oid() {
+        let mut branches = HashMap::new();
+        branches.insert(
+            "a".to_string(),
+            vec!["zeta".to_string(), "alpha".to_string(), "main".to_string()],
+        );
+        branches.insert("b".to_string(), vec!["ignored".to_string()]);
+
+        let selected = vec!["alpha".to_string(), "zeta".to_string()];
+        let points = branch_points_by_oid(&selected, &branches);
+
+        assert_eq!(points.len(), 1);
+        assert_eq!(
+            points.get("a").unwrap(),
+            &BranchPointRef {
+                oid: "a".to_string(),
+                names: vec!["alpha".to_string(), "zeta".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn orders_lanes_by_time_and_oid_without_current_promotion() {
+        let lanes = vec![
+            lane("older", Some("main"), 10, false),
+            lane("current", Some("main"), 15, true),
+            lane("newer-b", Some("main"), 20, false),
+            lane("newer-a", Some("main"), 20, false),
+        ];
+
+        let newest: Vec<String> = ordered_lanes(lanes.clone(), Order::Newest)
+            .into_iter()
+            .map(|lane| lane.head_oid)
+            .collect();
+        assert_eq!(newest, vec!["newer-a", "newer-b", "current", "older"]);
+
+        let oldest: Vec<String> = ordered_lanes(lanes, Order::Oldest)
+            .into_iter()
+            .map(|lane| lane.head_oid)
+            .collect();
+        assert_eq!(oldest, vec!["older", "current", "newer-a", "newer-b"]);
+    }
+
+    #[test]
+    fn groups_lanes_by_base_time_without_current_promotion() {
+        let lanes = vec![
+            lane("a", Some("base-a"), 30, false),
+            lane("b", Some("base-b"), 2, true),
+            lane("c", Some("base-a"), 10, false),
+        ];
+
+        let groups = grouped_by_base(lanes.clone(), Order::Newest);
+
+        assert_eq!(groups[0].0, Some("base-a".to_string()));
+        assert_eq!(groups[0].1.len(), 2);
+        assert_eq!(groups[1].0, Some("base-b".to_string()));
+        assert_eq!(groups[1].1.len(), 1);
+
+        let groups = grouped_by_base(lanes, Order::Oldest);
+
+        assert_eq!(groups[0].0, Some("base-b".to_string()));
+        assert_eq!(groups[0].1.len(), 1);
+        assert_eq!(groups[1].0, Some("base-a".to_string()));
+        assert_eq!(groups[1].1.len(), 2);
+    }
+
+    #[test]
+    fn builds_lane_groups_with_main_history_distances() {
+        let git = MockGit::default()
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "old-main",
+                ],
+                "old-main\x001700000001\x00old base\x1e",
+            )
+            .with(
+                &[
+                    "rev-list",
+                    "--reverse",
+                    "--ancestry-path",
+                    "old-main..main-oid",
+                ],
+                "main-1\nmain-2\nmain-oid",
+            );
+        let lanes = vec![
+            lane("current", Some("main-oid"), 2, false),
+            lane("old", Some("old-main"), 1, true),
+        ];
+        let mut cache = HashMap::new();
+
+        let groups = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].base_oid, Some("main-oid".to_string()));
+        assert_eq!(groups[0].main_distance, Some(0));
+        assert_eq!(groups[0].base_meta, None);
+        assert_eq!(groups[1].base_oid, Some("old-main".to_string()));
+        assert_eq!(groups[1].main_distance, Some(3));
+        assert_eq!(
+            groups[1]
+                .base_meta
+                .as_ref()
+                .map(|meta| meta.subject.as_str()),
+            Some("old base")
+        );
+    }
+
+    #[test]
+    fn counts_each_branch_point_from_previous_visible_stack_point() {
+        let git = MockGit::default()
+            .with(&["merge-base", "main-oid", "b"], "main-oid")
+            .with(
+                &["rev-list", "--reverse", "--ancestry-path", "main-oid..b"],
+                "a\nb",
+            );
+        let mut points_by_oid = HashMap::new();
+        points_by_oid.insert(
+            "a".to_string(),
+            BranchPointRef {
+                oid: "a".to_string(),
+                names: vec!["feature/one".to_string()],
+            },
+        );
+        points_by_oid.insert(
+            "b".to_string(),
+            BranchPointRef {
+                oid: "b".to_string(),
+                names: vec!["feature/two".to_string()],
+            },
+        );
+        let mut cache = HashMap::from([
+            ("a".to_string(), meta("a", "first")),
+            ("b".to_string(), meta("b", "second")),
+        ]);
+
+        let lane = build_lane(
+            &git,
+            "b",
+            "main-oid",
+            &points_by_oid,
+            None,
+            None,
+            Verbosity::Medium,
+            &mut cache,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            lane.branch_points,
+            vec![
+                point_with_count_at("b", &["feature/two"], 1, "second", 0),
+                point_with_count_at("a", &["feature/one"], 1, "first", 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_lanes_with_mocked_git_boundary() {
+        let revset = "((draft()) & branches()) - public()";
+        let git = MockGit::default()
+            .with(&["branchless", "query", "-r", "main()"], "main-oid")
+            .with(
+                &["branchless", "query", "-b", revset],
+                "feature/one\nfeature/two\nchore/other",
+            )
+            .with(
+                &[
+                    "for-each-ref",
+                    "--format=%(objectname)%00%(refname:short)",
+                    "refs/heads",
+                ],
+                "a\0feature/one\nb\0feature/two\nc\0chore/other\nmain-oid\0main",
+            )
+            .with(
+                &["branchless", "query", "-r", &format!("heads({revset})")],
+                "b\nc",
+            )
+            .with(
+                &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+                "b\nfeature/two",
+            )
+            .with(&["config", "--get", "branchless.core.mainBranch"], "")
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "b",
+                    "c",
+                ],
+                "b\x001700000002\x00second\x1e\nc\x001700000001\x00third\x1e",
+            )
+            .with(&["merge-base", "main-oid", "b"], "main-oid")
+            .with(
+                &["rev-list", "--reverse", "--ancestry-path", "main-oid..b"],
+                "a\nb",
+            )
+            .with(&["merge-base", "main-oid", "c"], "main-oid")
+            .with(
+                &["rev-list", "--reverse", "--ancestry-path", "main-oid..c"],
+                "c",
+            );
+        let args = EffectiveArgs {
+            revset: "draft()".to_string(),
+            hidden: false,
+            verbosity: Verbosity::Low,
+            backend: Backend::Gix,
+            order: Order::Newest,
+            colour_mode: ColourMode::Never,
+            palette: Palette::Classic,
+        };
+        let mut cache = HashMap::new();
+
+        let BuiltLanes::Populated {
+            lanes,
+            main_oid,
+            repository,
+        } = build_lanes(&git, &args, &mut cache).unwrap()
+        else {
+            panic!("expected populated lanes");
+        };
+
+        assert_eq!(main_oid, "main-oid");
+        assert_eq!(repository.main_name, "main");
+        assert_eq!(lanes.len(), 2);
+        assert_eq!(lanes[0].head_oid, "b");
+        assert!(lanes[0].contains_current);
+        assert_eq!(
+            lanes[0].branch_points,
+            vec![point("b", &["feature/two"]), point("a", &["feature/one"])]
+        );
+        assert_eq!(lanes[1].head_oid, "c");
+        assert!(!lanes[1].contains_current);
+
+        let calls = git.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.first().is_some_and(|arg| arg == "for-each-ref"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call
+                    .get(2)
+                    .is_some_and(|arg| arg == "--format=%H%x00%ct%x00%s%x1e"))
+                .count(),
+            1
+        );
+    }
 }

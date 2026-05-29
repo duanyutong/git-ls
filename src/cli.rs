@@ -15,7 +15,7 @@ const BOLD_PALETTE: [u8; 12] = [91, 36, 67, 220, 168, 107, 208, 30, 163, 209, 60
 const VIVID_PALETTE: [u8; 12] = [208, 61, 73, 149, 170, 30, 178, 32, 97, 203, 162, 145];
 const TOL_PALETTE: [u8; 7] = [67, 203, 29, 179, 81, 125, 250];
 const CLASSIC_PALETTE: [u8; 7] = [41, 203, 39, 220, 177, 33, 214];
-pub(crate) const DEFAULT_PALETTE: Palette = Palette::Classic;
+const DEFAULT_PALETTE: Palette = Palette::Classic;
 const DEFAULT_VERBOSITY: Verbosity = Verbosity::Medium;
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -219,11 +219,11 @@ fn invalid_git_config(key: &'static str, value: &str, expected: &'static str) ->
     }
 }
 
-pub(crate) fn parse_backend_config(key: &'static str, value: &str) -> Result<Backend> {
+fn parse_backend_config(key: &'static str, value: &str) -> Result<Backend> {
     Backend::from_str(value, true).map_err(|_| invalid_git_config(key, value, "gix or shell"))
 }
 
-pub(crate) fn parse_palette_config(key: &'static str, value: &str) -> Result<Palette> {
+fn parse_palette_config(key: &'static str, value: &str) -> Result<Palette> {
     Palette::from_str(value, true).map_err(|_| {
         invalid_git_config(
             key,
@@ -233,7 +233,7 @@ pub(crate) fn parse_palette_config(key: &'static str, value: &str) -> Result<Pal
     })
 }
 
-pub(crate) fn parse_verbosity_config(key: &'static str, value: &str) -> Result<Verbosity> {
+fn parse_verbosity_config(key: &'static str, value: &str) -> Result<Verbosity> {
     value
         .trim()
         .parse::<u8>()
@@ -261,4 +261,92 @@ pub(crate) fn read_git_ls_config<G: GitCommand + ?Sized>(git: &G) -> Result<GitL
             .map(|value| parse_palette_config(PALETTE_KEY, value))
             .transpose()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::GitLsError;
+    use crate::test_support::MockGit;
+
+    fn args_with(
+        verbose: u8,
+        backend: Option<Backend>,
+        colour_mode: Option<ColourMode>,
+        palette: Option<Palette>,
+    ) -> Args {
+        Args {
+            revset: "draft()".to_string(),
+            hidden: false,
+            verbose,
+            backend,
+            order: None,
+            colour_mode,
+            palette,
+        }
+    }
+
+    fn default_args() -> Args {
+        args_with(0, None, None, None)
+    }
+
+    #[test]
+    fn parses_integer_verbosity_config_only() {
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "0").unwrap(),
+            Verbosity::Low
+        );
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "1").unwrap(),
+            Verbosity::Medium
+        );
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "2").unwrap(),
+            Verbosity::High
+        );
+
+        assert!(matches!(
+            parse_verbosity_config("git-ls.verbosity", "full"),
+            Err(GitLsError::InvalidGitConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn reads_git_ls_config_defaults() {
+        let git = MockGit::default()
+            .with(&["config", "--get", "git-ls.verbosity"], "2")
+            .with(&["config", "--get", "git-ls.backend"], "shell")
+            .with(&["config", "--get", "git-ls.palette"], "okabe");
+
+        let config = read_git_ls_config(&git).unwrap();
+        let args = default_args().resolve(&config);
+
+        assert_eq!(config.verbosity, Some(Verbosity::High));
+        assert_eq!(config.backend, Some(Backend::Shell));
+        assert_eq!(config.palette, Some(Palette::Okabe));
+        assert_eq!(args.verbosity, Verbosity::High);
+        assert_eq!(args.backend, Backend::Shell);
+        assert_eq!(args.palette, Palette::Okabe);
+    }
+
+    #[test]
+    fn uses_medium_verbosity_by_default() {
+        let args = default_args().resolve(&GitLsConfig::default());
+
+        assert_eq!(args.verbosity, Verbosity::Medium);
+    }
+
+    #[test]
+    fn explicit_cli_options_override_git_ls_config() {
+        let config = GitLsConfig {
+            verbosity: Some(Verbosity::High),
+            backend: Some(Backend::Shell),
+            palette: Some(Palette::Okabe),
+        };
+        let args = args_with(1, Some(Backend::Gix), None, Some(Palette::Classic)).resolve(&config);
+
+        assert_eq!(args.verbosity, Verbosity::Medium);
+        assert_eq!(args.backend, Backend::Gix);
+        assert_eq!(args.palette, Palette::Classic);
+    }
 }
