@@ -23,7 +23,7 @@ rustup run stable cargo install --path . --locked --debug
 Cargo installs the local crate with the release profile by default, placing the binary in its configured binary directory, commonly `~/.cargo/bin`.
 When that directory is on `PATH`, Git exposes the executable as `git ls`.
 
-If Cargo shows curl time our errors, use `--frozen` instead of `--locked` to avoid attempting to update the lockfile.
+If Cargo shows curl timeout errors, use `--frozen` instead of `--locked` to avoid attempting to update the lockfile.
 
 ## Usage
 
@@ -50,6 +50,18 @@ git ls 'draft() & branches(feature/)'
                   paired, bold, vivid, tol, or classic
 ```
 
+## Configuration
+
+`git-ls` reads Git configuration from the ordinary Git configuration stack.
+Local repository configuration overrides global configuration, and explicit command-line options override both.
+
+```ini
+[git-ls]
+  backend = gix
+  palette = classic
+  verbosity = 2
+```
+
 ## Glyph System
 
 The graph uses `git-branchless` glyphs for equivalent concepts, preserving a branch-oriented layout while aligning commit vocabulary with `git branchless smartlog`.
@@ -67,11 +79,6 @@ The graph uses `git-branchless` glyphs for equivalent concepts, preserving a bra
 | `──` | Empty main-history connection stub, used when no stack lane is attached to the shown main node. |
 | `─┴` | Intermediate connection from main into a stack lane. |
 | `─┘` | Final connection from main into a stack lane. |
-
-When no visible stack row occupies the space above a shown main-history node, the graph renders an unlabelled `⁝` above that node; where a connected stack already occupies that space, the graph renders exactly one unlabelled `⁝` in the main-history column on the row immediately preceding that node, with a blank leading spacer above the stack.
-Each connected main-history component renders one omitted-history marker below its oldest shown main-history node.
-Orphaned branch groups render below the shown main-history anchor, beside the omitted-history column, so no future or ancestry marker visually connects them to `main`.
-When `main` is the current branch, the main marker and label use the first palette colour; ordinary stack lanes then begin with the second palette colour.
 
 ## Development
 

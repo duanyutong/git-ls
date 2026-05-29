@@ -21,7 +21,7 @@ const PAIRED_PALETTE: [u8; 12] = [153, 32, 150, 34, 210, 196, 215, 208, 183, 97,
 const BOLD_PALETTE: [u8; 12] = [91, 36, 67, 220, 168, 107, 208, 30, 163, 209, 60, 145];
 const VIVID_PALETTE: [u8; 12] = [208, 61, 73, 149, 170, 30, 178, 32, 97, 203, 162, 145];
 const TOL_PALETTE: [u8; 7] = [67, 203, 29, 179, 81, 125, 250];
-const CLASSIC_PALETTE: [u8; 7] = [41, 203, 45, 220, 176, 33, 214];
+const CLASSIC_PALETTE: [u8; 7] = [41, 203, 39, 220, 177, 33, 214];
 const DEFAULT_PALETTE: Palette = Palette::Classic;
 const MAIN_SPINE_GLYPH: &str = "│";
 const COLLAPSED_MAIN_GLYPH: &str = "⁝";
@@ -82,6 +82,13 @@ pub enum GitLsError {
 
     #[error("expected main() to resolve to one commit, got {count}")]
     AmbiguousMainRevset { count: usize },
+
+    #[error("invalid git config {key}={value:?}: expected {expected}")]
+    InvalidGitConfig {
+        key: &'static str,
+        value: String,
+        expected: &'static str,
+    },
 
     #[error("failed to write output: {0}")]
     Write(#[from] io::Error),
@@ -222,6 +229,13 @@ impl Verbosity {
         }
     }
 
+    fn try_from_config(value: u8) -> Option<Self> {
+        match value {
+            0..=2 => Some(Self::from_count(value)),
+            _ => None,
+        }
+    }
+
     fn includes_metadata(self) -> bool {
         !matches!(self, Self::Low)
     }
@@ -349,20 +363,27 @@ struct EffectiveArgs {
     palette: Palette,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct GitLsConfig {
+    verbosity: Option<Verbosity>,
+    backend: Option<Backend>,
+    palette: Option<Palette>,
+}
+
 impl Args {
-    fn resolve(&self) -> EffectiveArgs {
+    fn resolve(&self, config: &GitLsConfig) -> EffectiveArgs {
         EffectiveArgs {
             revset: self.revset.clone(),
             hidden: self.hidden,
             verbosity: if self.verbose == 0 {
-                DEFAULT_VERBOSITY
+                config.verbosity.unwrap_or(DEFAULT_VERBOSITY)
             } else {
                 Verbosity::from_count(self.verbose)
             },
-            backend: self.backend.unwrap_or(Backend::Gix),
+            backend: self.backend.or(config.backend).unwrap_or(Backend::Gix),
             order: self.order.unwrap_or(Order::Newest),
             colour_mode: self.colour_mode.unwrap_or(ColourMode::Auto),
-            palette: self.palette.unwrap_or(DEFAULT_PALETTE),
+            palette: self.palette.or(config.palette).unwrap_or(DEFAULT_PALETTE),
         }
     }
 }
@@ -673,6 +694,62 @@ fn non_empty(value: &str) -> Option<String> {
     } else {
         Some(trimmed)
     }
+}
+
+fn git_config_value<G: GitCommand + ?Sized>(git: &G, key: &'static str) -> Result<Option<String>> {
+    Ok(non_empty(&git.run(&["config", "--get", key], true)?))
+}
+
+fn invalid_git_config(key: &'static str, value: &str, expected: &'static str) -> GitLsError {
+    GitLsError::InvalidGitConfig {
+        key,
+        value: value.to_string(),
+        expected,
+    }
+}
+
+fn parse_backend_config(key: &'static str, value: &str) -> Result<Backend> {
+    Backend::from_str(value, true).map_err(|_| invalid_git_config(key, value, "gix or shell"))
+}
+
+fn parse_palette_config(key: &'static str, value: &str) -> Result<Palette> {
+    Palette::from_str(value, true).map_err(|_| {
+        invalid_git_config(
+            key,
+            value,
+            "okabe, tableau, dark2, set1, set2, paired, bold, vivid, tol, or classic",
+        )
+    })
+}
+
+fn parse_verbosity_config(key: &'static str, value: &str) -> Result<Verbosity> {
+    value
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .and_then(Verbosity::try_from_config)
+        .ok_or_else(|| invalid_git_config(key, value, "0, 1, or 2"))
+}
+
+fn read_git_ls_config<G: GitCommand + ?Sized>(git: &G) -> Result<GitLsConfig> {
+    const BACKEND_KEY: &str = "git-ls.backend";
+    const PALETTE_KEY: &str = "git-ls.palette";
+    const VERBOSITY_KEY: &str = "git-ls.verbosity";
+
+    Ok(GitLsConfig {
+        verbosity: git_config_value(git, VERBOSITY_KEY)?
+            .as_deref()
+            .map(|value| parse_verbosity_config(VERBOSITY_KEY, value))
+            .transpose()?,
+        backend: git_config_value(git, BACKEND_KEY)?
+            .as_deref()
+            .map(|value| parse_backend_config(BACKEND_KEY, value))
+            .transpose()?,
+        palette: git_config_value(git, PALETTE_KEY)?
+            .as_deref()
+            .map(|value| parse_palette_config(PALETTE_KEY, value))
+            .transpose()?,
+    })
 }
 
 fn branch_revset(user_revset: &str) -> String {
@@ -1400,10 +1477,34 @@ fn render_row(indicator: &str, content: &str) -> String {
     format!("{indicator} {content}")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LaneRenderLayout {
+    lane_count: usize,
+    lane_field_width: usize,
+    colour_offset: usize,
+}
+
+impl LaneRenderLayout {
+    fn new(lane_count: usize, lane_field_width: usize, colour_offset: usize) -> Self {
+        Self {
+            lane_count,
+            lane_field_width,
+            colour_offset,
+        }
+    }
+
+    fn empty() -> Self {
+        Self::new(0, 0, 0)
+    }
+
+    fn lane_padding(self) -> usize {
+        self.lane_field_width.saturating_sub(self.lane_count)
+    }
+}
+
 fn row_prefix(
     lane_index: usize,
-    lane_count: usize,
-    colour_offset: usize,
+    layout: LaneRenderLayout,
     point: &BranchPoint,
     current_branch: Option<&str>,
     head: Option<&str>,
@@ -1417,14 +1518,17 @@ fn row_prefix(
             slots.push(" ".to_string());
         }
         MainSpine::FutureLine => {
-            slots.push(colours.dim(COLLAPSED_MAIN_GLYPH));
+            slots.push(colours.stack(0, COLLAPSED_MAIN_GLYPH));
         }
         MainSpine::Connected => {
-            slots.push(colours.dim(MAIN_SPINE_GLYPH));
+            slots.push(colours.stack(0, MAIN_SPINE_GLYPH));
         }
     }
-    for index in 0..lane_count {
-        let colour_index = colour_offset + index;
+    for _ in 0..layout.lane_padding() {
+        slots.push(" ".to_string());
+    }
+    for index in 0..layout.lane_count {
+        let colour_index = layout.colour_offset + index;
         match index.cmp(&lane_index) {
             Ordering::Less => slots.push(colours.stack(colour_index, "│")),
             Ordering::Equal => {
@@ -1444,7 +1548,7 @@ fn main_label(ctx: &RenderContext<'_>) -> String {
     let name = if main_is_current(ctx.main_name, ctx.current_branch) {
         ctx.colours.current_stack(0, ctx.main_name)
     } else {
-        ctx.colours.dim(ctx.main_name)
+        ctx.colours.stack(0, ctx.main_name)
     };
 
     let Some(meta) = ctx.main_meta.filter(|_| ctx.verbosity.includes_metadata()) else {
@@ -1478,8 +1582,7 @@ impl MainSpine {
 }
 
 fn trunk_prefix(
-    lane_count: usize,
-    colour_offset: usize,
+    layout: LaneRenderLayout,
     main_is_current: bool,
     main_spine: MainSpine,
     colours: &Colours,
@@ -1487,11 +1590,12 @@ fn trunk_prefix(
     let marker = if main_is_current {
         colours.stack(0, CURRENT_MAIN_COMMIT_GLYPH)
     } else {
-        colours.dim(MAIN_COMMIT_GLYPH)
+        colours.stack(0, MAIN_COMMIT_GLYPH)
     };
 
-    if lane_count == 0 {
-        return format!("{TREE_LEFT_PADDING}{marker}{}", colours.dim("──"));
+    if layout.lane_count == 0 {
+        let extension = colours.stack(0, "──");
+        return format!("{TREE_LEFT_PADDING}{marker}{extension}");
     }
 
     if !main_spine.is_connected() {
@@ -1499,13 +1603,17 @@ fn trunk_prefix(
     }
 
     let mut parts = vec![marker];
-    for index in 0..lane_count {
-        let glyph = if index + 1 == lane_count {
+    for _ in 0..layout.lane_padding() {
+        let colour_index = layout.colour_offset;
+        parts.push(colours.stack(colour_index, "──"));
+    }
+    for index in 0..layout.lane_count {
+        let glyph = if index + 1 == layout.lane_count {
             "─┘"
         } else {
             "─┴"
         };
-        parts.push(colours.stack(colour_offset + index, glyph));
+        parts.push(colours.stack(layout.colour_offset + index, glyph));
     }
     format!("{TREE_LEFT_PADDING}{}", parts.join(""))
 }
@@ -1543,7 +1651,12 @@ fn render_main_tip(ctx: &RenderContext<'_>) -> String {
     let current_main = main_is_current(ctx.main_name, ctx.current_branch);
     let line = format!(
         "{}{BRANCH_LABEL_GAP}{}",
-        trunk_prefix(0, 0, current_main, MainSpine::Hidden, ctx.colours),
+        trunk_prefix(
+            LaneRenderLayout::empty(),
+            current_main,
+            MainSpine::Hidden,
+            ctx.colours
+        ),
         main_label(ctx)
     );
     render_row(&current_row_indicator(current_main, 0, ctx.colours), &line)
@@ -1570,12 +1683,14 @@ struct RenderContext<'a> {
 
 fn render_group(
     lanes: &[Lane],
+    lane_field_width: usize,
     colour_offset: usize,
     ctx: &RenderContext<'_>,
     label: TrunkLabel<'_>,
     main_spine: MainSpine,
 ) -> Vec<String> {
     let lane_count = lanes.len();
+    let layout = LaneRenderLayout::new(lane_count, lane_field_width, colour_offset);
     let point_count: usize = lanes.iter().map(|lane| lane.branch_points.len()).sum();
     let mut rendered_points = 0;
     let mut output = Vec::new();
@@ -1592,8 +1707,7 @@ fn render_group(
             let colour_index = colour_offset + lane_index;
             let prefix = row_prefix(
                 lane_index,
-                lane_count,
-                colour_offset,
+                layout,
                 point,
                 ctx.current_branch,
                 ctx.head,
@@ -1626,13 +1740,7 @@ fn render_group(
     let label = trunk_label(label, ctx);
     let line = format!(
         "{}{BRANCH_LABEL_GAP}{}",
-        trunk_prefix(
-            lane_count,
-            colour_offset,
-            current_main,
-            main_spine,
-            ctx.colours
-        ),
+        trunk_prefix(layout, current_main, main_spine, ctx.colours),
         label
     );
     output.push(render_row(
@@ -1685,26 +1793,44 @@ fn render_collapsed_main_segment(
     [
         render_row(
             " ",
-            &format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim(MAIN_SPINE_GLYPH)),
+            &format!(
+                "{TREE_LEFT_PADDING}{}",
+                ctx.colours.stack(0, MAIN_SPINE_GLYPH)
+            ),
         ),
         render_row(
             " ",
             &format!(
                 "{TREE_LEFT_PADDING}{} {}",
-                ctx.colours.dim(COLLAPSED_MAIN_GLYPH),
+                ctx.colours.stack(0, COLLAPSED_MAIN_GLYPH),
                 ctx.colours.dim(&label)
             ),
         ),
         render_row(
             " ",
-            &format!("{TREE_LEFT_PADDING}{}", ctx.colours.dim(MAIN_SPINE_GLYPH)),
+            &format!(
+                "{TREE_LEFT_PADDING}{}",
+                ctx.colours.stack(0, MAIN_SPINE_GLYPH)
+            ),
         ),
     ]
 }
 
 fn render_omitted_main_past(colours: &Colours) -> String {
-    let line = format!("{TREE_LEFT_PADDING}{}", colours.dim(COLLAPSED_MAIN_GLYPH));
+    let line = format!(
+        "{TREE_LEFT_PADDING}{}",
+        colours.stack(0, COLLAPSED_MAIN_GLYPH)
+    );
     render_row(" ", &line)
+}
+
+fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
+    groups
+        .iter()
+        .filter(|group| group.main_distance.is_some())
+        .map(|group| group.lanes.len())
+        .max()
+        .unwrap_or(0)
 }
 
 fn record_metadata_widths(widths: &mut MetadataWidths, age: &str, count: &str) {
@@ -1746,10 +1872,11 @@ fn calculate_metadata_widths(
 
 fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<String> {
     let mut output = Vec::new();
-    let mut colour_offset = usize::from(main_is_current(ctx.main_name, ctx.current_branch));
+    let mut colour_offset = 1;
     let mut connected_started = false;
     let mut rendered_connected_group = false;
     let mut previous_main_distance = 0;
+    let lane_field_width = connected_lane_field_width(groups);
 
     for group in groups {
         if let Some(main_distance) = group.main_distance {
@@ -1781,6 +1908,7 @@ fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<Stri
             };
             output.extend(render_group(
                 &group.lanes,
+                lane_field_width,
                 colour_offset,
                 ctx,
                 label,
@@ -1900,14 +2028,17 @@ where
     G: GitBackend + GitCommand + ?Sized,
 {
     let args = parse_args_from(args)?;
-    let args = args.resolve();
+    let config = read_git_ls_config(git)?;
+    let args = args.resolve(&config);
     execute(&args, git, stdout)
 }
 
 pub fn run_from_env() -> Result<()> {
     let mut stdout = io::stdout().lock();
     let args = parse_args_from(env::args().skip(1))?;
-    let args = args.resolve();
+    let config_git = ProcessGit;
+    let config = read_git_ls_config(&config_git)?;
+    let args = args.resolve(&config);
     match args.backend {
         Backend::Gix => {
             let git = GixBackend::discover()?;
@@ -2216,17 +2347,65 @@ mod tests {
     }
 
     #[test]
+    fn parses_integer_verbosity_config_only() {
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "0").unwrap(),
+            Verbosity::Low
+        );
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "1").unwrap(),
+            Verbosity::Medium
+        );
+        assert_eq!(
+            parse_verbosity_config("git-ls.verbosity", "2").unwrap(),
+            Verbosity::High
+        );
+
+        assert!(matches!(
+            parse_verbosity_config("git-ls.verbosity", "full"),
+            Err(GitLsError::InvalidGitConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn reads_git_ls_config_defaults() {
+        let git = MockGit::default()
+            .with(&["config", "--get", "git-ls.verbosity"], "2")
+            .with(&["config", "--get", "git-ls.backend"], "shell")
+            .with(&["config", "--get", "git-ls.palette"], "okabe");
+
+        let config = read_git_ls_config(&git).unwrap();
+        let args = parse_args_from(Vec::<String>::new())
+            .unwrap()
+            .resolve(&config);
+
+        assert_eq!(config.verbosity, Some(Verbosity::High));
+        assert_eq!(config.backend, Some(Backend::Shell));
+        assert_eq!(config.palette, Some(Palette::Okabe));
+        assert_eq!(args.verbosity, Verbosity::High);
+        assert_eq!(args.backend, Backend::Shell);
+        assert_eq!(args.palette, Palette::Okabe);
+    }
+
+    #[test]
     fn uses_medium_verbosity_by_default() {
-        let args = parse_args_from(Vec::<String>::new()).unwrap().resolve();
+        let args = parse_args_from(Vec::<String>::new())
+            .unwrap()
+            .resolve(&GitLsConfig::default());
 
         assert_eq!(args.verbosity, Verbosity::Medium);
     }
 
     #[test]
-    fn explicit_cli_options_override_defaults() {
+    fn explicit_cli_options_override_git_ls_config() {
+        let config = GitLsConfig {
+            verbosity: Some(Verbosity::High),
+            backend: Some(Backend::Shell),
+            palette: Some(Palette::Okabe),
+        };
         let args = parse_args_from(["-v", "--backend", "gix", "-p", "classic"])
             .unwrap()
-            .resolve();
+            .resolve(&config);
 
         assert_eq!(args.verbosity, Verbosity::Medium);
         assert_eq!(args.backend, Backend::Gix);
@@ -2533,7 +2712,14 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
 
         assert_eq!(
             output,
@@ -2575,7 +2761,14 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
 
         assert_eq!(
             output
@@ -2645,7 +2838,14 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
 
         assert_eq!(
             output,
@@ -2674,7 +2874,14 @@ mod tests {
             colours: &colours,
         };
 
-        let output = render_group(&lanes, 0, &ctx, TrunkLabel::Main, MainSpine::Future);
+        let output = render_group(
+            &lanes,
+            lanes.len(),
+            0,
+            &ctx,
+            TrunkLabel::Main,
+            MainSpine::Future,
+        );
 
         assert_eq!(
             output,
@@ -2875,13 +3082,29 @@ mod tests {
                 base_oid: Some("main".to_string()),
                 base_meta: Some(meta("main", "main tip")),
                 main_distance: Some(0),
-                lanes: vec![Lane {
-                    head_oid: "feature".to_string(),
-                    base_oid: Some("main".to_string()),
-                    branch_points: vec![point("feature", &["feature/current"])],
-                    head_timestamp: 2,
-                    contains_current: false,
-                }],
+                lanes: vec![
+                    Lane {
+                        head_oid: "feature-one".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-one", &["feature/one"])],
+                        head_timestamp: 4,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "feature-two".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-two", &["feature/two"])],
+                        head_timestamp: 3,
+                        contains_current: false,
+                    },
+                    Lane {
+                        head_oid: "feature-current".to_string(),
+                        base_oid: Some("main".to_string()),
+                        branch_points: vec![point("feature-current", &["feature/current"])],
+                        head_timestamp: 2,
+                        contains_current: false,
+                    },
+                ],
             },
             LaneGroup {
                 base_oid: Some("old-main".to_string()),
@@ -2916,13 +3139,15 @@ mod tests {
             output,
             vec![
                 String::new(),
-                "  ⁝ ◯ feature/current".to_string(),
-                "  ◇─┘ main".to_string(),
+                "    ◯     feature/one".to_string(),
+                "    │ ◯   feature/two".to_string(),
+                "  ⁝ │ │ ◯ feature/current".to_string(),
+                "  ◇─┴─┴─┘ main".to_string(),
                 "  │".to_string(),
                 "  ⁝ (842 commits on main)".to_string(),
                 "  │".to_string(),
-                "▶ │ ● dyt/tgs_api".to_string(),
-                "  ◇─┘ chore: this is an old commit in main history".to_string(),
+                "▶ │     ● dyt/tgs_api".to_string(),
+                "  ◇─────┘ chore: this is an old commit in main history".to_string(),
                 "  ⁝".to_string(),
             ]
         );
@@ -2966,13 +3191,33 @@ mod tests {
         };
         assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m");
         assert_eq!(
-            trunk_prefix(0, 0, true, MainSpine::Hidden, &colours),
-            "\x1b[38;5;41m◆\x1b[0m\x1b[2m──\x1b[0m"
+            trunk_prefix(LaneRenderLayout::empty(), true, MainSpine::Hidden, &colours),
+            "\x1b[38;5;41m◆\x1b[0m\x1b[38;5;41m──\x1b[0m"
+        );
+        let inactive_main_ctx = RenderContext {
+            main_name: "main",
+            main_meta: None,
+            current_branch: Some("feature"),
+            head: Some("feature"),
+            now_timestamp: TEST_NOW,
+            verbosity: Verbosity::Low,
+            metadata_widths: MetadataWidths::default(),
+            colours: &colours,
+        };
+        assert_eq!(main_label(&inactive_main_ctx), "\x1b[38;5;41mmain\x1b[0m");
+        assert_eq!(
+            trunk_prefix(
+                LaneRenderLayout::empty(),
+                false,
+                MainSpine::Hidden,
+                &colours
+            ),
+            "\x1b[38;5;41m◇\x1b[0m\x1b[38;5;41m──\x1b[0m"
         );
     }
 
     #[test]
-    fn active_main_reserves_first_palette_colour() {
+    fn main_reserves_first_palette_colour() {
         let colours = test_colours(true);
         let groups = vec![LaneGroup {
             base_oid: Some("main".to_string()),
@@ -2989,8 +3234,8 @@ mod tests {
         let ctx = RenderContext {
             main_name: "main",
             main_meta: None,
-            current_branch: Some("main"),
-            head: Some("main"),
+            current_branch: Some("feature/one"),
+            head: Some("feature"),
             now_timestamp: TEST_NOW,
             verbosity: Verbosity::Low,
             metadata_widths: MetadataWidths::default(),
@@ -2999,8 +3244,9 @@ mod tests {
 
         let output = render_lane_groups(&groups, &ctx);
 
-        assert!(output[1].contains("\x1b[38;5;203m◯\x1b[0m"));
-        assert!(output[2].contains("\x1b[38;5;41m◆\x1b[0m"));
+        assert!(output[1].contains("\x1b[38;5;203m●\x1b[0m"));
+        assert!(output[2].contains("\x1b[38;5;41m◇\x1b[0m"));
+        assert!(output[2].contains("\x1b[38;5;41mmain\x1b[0m"));
     }
 
     #[test]
@@ -3139,6 +3385,21 @@ mod tests {
         assert_eq!(
             git.calls(),
             vec![
+                vec![
+                    "config".to_string(),
+                    "--get".to_string(),
+                    "git-ls.verbosity".to_string()
+                ],
+                vec![
+                    "config".to_string(),
+                    "--get".to_string(),
+                    "git-ls.backend".to_string()
+                ],
+                vec![
+                    "config".to_string(),
+                    "--get".to_string(),
+                    "git-ls.palette".to_string()
+                ],
                 vec![
                     "branchless".to_string(),
                     "query".to_string(),
