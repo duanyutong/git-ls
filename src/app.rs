@@ -252,6 +252,64 @@ mod tests {
         }
     }
 
+    fn populated_workflow_git(config_verbosity: &str) -> MockGit {
+        let revset = "((draft()) & branches()) - public()";
+        let heads_revset = "heads(((draft()) & branches()) - public())";
+        let feature_timestamp = TEST_NOW - 60;
+        let main_timestamp = TEST_NOW - 120;
+
+        MockGit::default()
+            .with(&["config", "--get", "git-ls.verbosity"], config_verbosity)
+            .with(&["config", "--get", "git-ls.backend"], "")
+            .with(&["config", "--get", "git-ls.palette"], "")
+            .with(&["branchless", "query", "-r", "main()"], "main-oid")
+            .with(&["branchless", "query", "-b", revset], "feature")
+            .with(
+                &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+                "feature-oid\nfeature",
+            )
+            .with(&["config", "--get", "branchless.core.mainBranch"], "")
+            .with(
+                &[
+                    "for-each-ref",
+                    "--format=%(objectname)%00%(refname:short)",
+                    "refs/heads",
+                ],
+                "feature-oid\x00feature",
+            )
+            .with(&["branchless", "query", "-r", heads_revset], "feature-oid")
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "feature-oid",
+                ],
+                &format!("feature-oid\x00{feature_timestamp}\x00feature tip\x1e"),
+            )
+            .with(&["merge-base", "main-oid", "feature-oid"], "main-oid")
+            .with(
+                &[
+                    "rev-list",
+                    "--reverse",
+                    "--ancestry-path",
+                    "main-oid..feature-oid",
+                ],
+                "feature-oid",
+            )
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "main-oid",
+                ],
+                &format!("main-oid\x00{main_timestamp}\x00main tip\x1e"),
+            )
+    }
+
     #[test]
     fn parses_default_arguments() {
         assert_eq!(
@@ -495,6 +553,72 @@ mod tests {
             plan.lines
                 .iter()
                 .any(|line| line.contains("2m (-, main-oi) main"))
+        );
+    }
+
+    #[test]
+    fn run_uses_git_config_verbosity_in_mocked_workflow() {
+        let git = populated_workflow_git("2");
+        let mut output = Vec::new();
+
+        run(["--color", "never"], &git, &mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("feature tip"));
+    }
+
+    #[test]
+    fn run_prefers_cli_verbosity_over_git_config() {
+        let git = populated_workflow_git("2");
+        let mut output = Vec::new();
+
+        run(["--color", "never", "-v"], &git, &mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("1m (1, feature) feature"));
+        assert!(!output.contains("feature tip"));
+    }
+
+    #[test]
+    fn run_passes_hidden_selection_to_branchless_queries() {
+        let revset = "((draft()) & branches()) - public()";
+        let git = MockGit::default()
+            .with(&["config", "--get", "git-ls.verbosity"], "")
+            .with(&["config", "--get", "git-ls.backend"], "")
+            .with(&["config", "--get", "git-ls.palette"], "")
+            .with(
+                &["branchless", "query", "-r", "--hidden", "main()"],
+                "main-oid",
+            )
+            .with(&["branchless", "query", "-b", "--hidden", revset], "")
+            .with(
+                &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+                "main-oid\nmain",
+            )
+            .with(&["config", "--get", "branchless.core.mainBranch"], "")
+            .with(
+                &[
+                    "show",
+                    "-s",
+                    "--format=%H%x00%ct%x00%s%x1e",
+                    "--no-walk=unsorted",
+                    "main-oid",
+                ],
+                &format!("main-oid\x00{}\x00main tip\x1e", TEST_NOW - 120),
+            );
+        let mut output = Vec::new();
+
+        run(["--color", "never", "--hidden"], &git, &mut output).unwrap();
+
+        assert!(
+            git.calls()
+                .iter()
+                .any(|call| call == &["branchless", "query", "-r", "--hidden", "main()"])
+        );
+        assert!(
+            git.calls()
+                .iter()
+                .any(|call| call == &["branchless", "query", "-b", "--hidden", revset])
         );
     }
 
