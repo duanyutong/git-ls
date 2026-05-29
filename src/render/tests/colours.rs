@@ -83,6 +83,7 @@ fn main_reserves_first_palette_colour() {
             head_oid: "feature".to_string(),
             base_oid: Some("main".to_string()),
             branch_points: vec![point("feature", &["feature/one"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: 1,
             contains_current: false,
         }],

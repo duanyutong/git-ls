@@ -97,6 +97,10 @@ pub(crate) fn calculate_metadata_widths(
                     record_metadata_widths(&mut widths, &age, &count);
                 }
             }
+            for commit in &lane.rewritten_commits {
+                let age = format_age(now_timestamp, commit.meta.timestamp);
+                record_metadata_widths(&mut widths, &age, "");
+            }
         }
     }
     widths

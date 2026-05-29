@@ -5,6 +5,7 @@ mod graph;
 mod layout;
 mod metadata;
 mod orphan;
+mod rewrite;
 mod trunk;
 
 pub(crate) use colours::Colours;

@@ -1,5 +1,5 @@
 use crate::cli::Verbosity;
-use crate::model::{CommitMeta, Lane, LaneGroup};
+use crate::model::{CommitMeta, Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
 use crate::render::branch::display_names;
 use crate::render::layout::render_lane_groups;
@@ -81,6 +81,7 @@ fn metadata_widths_ignore_unannotated_branch_points() {
             head_oid: "feature-oid".to_string(),
             base_oid: None,
             branch_points: vec![point("feature-oid", &["feature"])],
+            rewritten_commits: Vec::new(),
             head_timestamp: TEST_NOW,
             contains_current: false,
         }],
@@ -89,6 +90,31 @@ fn metadata_widths_ignore_unannotated_branch_points() {
     assert_eq!(
         calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Medium),
         MetadataWidths::default()
+    );
+}
+
+#[test]
+fn metadata_widths_include_rewritten_commits() {
+    let groups = vec![LaneGroup {
+        base_oid: Some("main".to_string()),
+        base_meta: None,
+        main_distance: Some(0),
+        lanes: vec![Lane {
+            head_oid: "feature-oid".to_string(),
+            base_oid: Some("main".to_string()),
+            branch_points: vec![point("feature-oid", &["feature"])],
+            rewritten_commits: vec![RewrittenCommit::new(
+                CommitMeta::new("old-oid", TEST_NOW - 3_600, "old"),
+                CommitMeta::new("new-oid", TEST_NOW, "new"),
+            )],
+            head_timestamp: TEST_NOW,
+            contains_current: false,
+        }],
+    }];
+
+    assert_eq!(
+        calculate_metadata_widths(&groups, None, TEST_NOW, Verbosity::Medium),
+        MetadataWidths { age: 2, count: 0 }
     );
 }
 
@@ -167,6 +193,7 @@ fn renders_main_metadata_in_aligned_annotation_column() {
                 "backup tip",
                 TEST_COMMIT_TIME,
             )],
+            rewritten_commits: Vec::new(),
             head_timestamp: TEST_COMMIT_TIME,
             contains_current: false,
         }],

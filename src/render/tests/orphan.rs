@@ -32,6 +32,7 @@ fn renders_orphaned_lane_with_single_warning_marker() {
         head_oid: "backup".to_string(),
         base_oid: None,
         branch_points: vec![point("backup", &["test-branch-name"])],
+        rewritten_commits: Vec::new(),
         head_timestamp: 1,
         contains_current: false,
     }];
