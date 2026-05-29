@@ -77,7 +77,7 @@ where
     };
 
     let lanes = ordered_lanes(lanes, args.order);
-    let groups = build_lane_groups(git, lanes, &main_oid, &mut meta_cache)?;
+    let groups = build_lane_groups(git, lanes, &main_oid, args.order, &mut meta_cache)?;
     let now_timestamp = current_unix_timestamp();
     let main_meta = if args.verbosity.includes_metadata() {
         Some(get_commit_meta(git, &main_oid, &mut meta_cache)?)
