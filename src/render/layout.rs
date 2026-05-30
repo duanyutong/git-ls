@@ -125,7 +125,7 @@ fn render_branch_point_row(
     let oid = point
         .annotation
         .as_ref()
-        .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_metadata())
+        .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
         .map(|annotation| ctx.colours.metadata_oid(&annotation.meta.short_oid));
     match oid {
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
@@ -182,7 +182,7 @@ fn render_trunk_row(
         TrunkLabel::Main => ctx.main_meta,
         TrunkLabel::Commit(meta) => Some(meta),
     }
-    .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_metadata())
+    .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
     .map(|meta| ctx.colours.metadata_oid(&meta.short_oid));
     match oid {
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),

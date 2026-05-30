@@ -34,6 +34,9 @@ pub(crate) struct Args {
     #[arg(short, long, action = ArgAction::Count)]
     pub(crate) verbose: u8,
 
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=2), value_name = "VALUE")]
+    pub(crate) verbosity: Option<u8>,
+
     #[arg(long, value_enum, value_name = "VALUE")]
     pub(crate) backend: Option<Backend>,
 

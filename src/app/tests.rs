@@ -160,6 +160,7 @@ fn parses_default_arguments() {
             revset: "draft()".to_string(),
             hidden: false,
             verbose: 0,
+            verbosity: None,
             backend: None,
             order: None,
             colour_mode: None,
@@ -189,6 +190,7 @@ fn parses_flags_and_revset() {
             revset: "draft() & branches(feature/)".to_string(),
             hidden: true,
             verbose: 0,
+            verbosity: None,
             backend: Some(Backend::Shell),
             order: Some(Order::Oldest),
             colour_mode: Some(ColourMode::Never),
@@ -254,6 +256,7 @@ fn parses_dash_prefixed_revset_after_separator() {
             revset: "-synthetic-revset".to_string(),
             hidden: false,
             verbose: 0,
+            verbosity: None,
             backend: None,
             order: None,
             colour_mode: None,
@@ -268,6 +271,26 @@ fn parses_verbose_flag() {
     assert_eq!(parse_args_from(["-v"]).unwrap().verbose, 1);
     assert_eq!(parse_args_from(["--verbose"]).unwrap().verbose, 1);
     assert_eq!(parse_args_from(["-vv"]).unwrap().verbose, 2);
+}
+
+#[test]
+fn parses_numeric_verbosity_option() {
+    assert_eq!(
+        parse_args_from(["--verbosity", "0"]).unwrap().verbosity,
+        Some(0)
+    );
+    assert_eq!(
+        parse_args_from(["--verbosity", "1"]).unwrap().verbosity,
+        Some(1)
+    );
+    assert_eq!(
+        parse_args_from(["--verbosity", "2"]).unwrap().verbosity,
+        Some(2)
+    );
+    assert_eq!(
+        clap_error_kind(parse_args_from(["--verbosity", "3"]).unwrap_err()),
+        ErrorKind::ValueValidation
+    );
 }
 
 #[test]
@@ -353,7 +376,7 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
         plan,
         RenderPlan::new(vec![
             "  ⁝".to_string(),
-            "▶ ◆── 2m (-, main-oi) main".to_string(),
+            "▶ ◆── 2m (-) main".to_string(),
             "  ⁝".to_string(),
         ])
     );
@@ -488,13 +511,9 @@ fn render_session_supplies_shared_context_to_populated_plan() {
     assert!(
         plan.lines
             .iter()
-            .any(|line| line.contains("1m (1, feature) feature"))
+            .any(|line| line.contains("1m (1) feature"))
     );
-    assert!(
-        plan.lines
-            .iter()
-            .any(|line| line.contains("2m (-, main-oi) main"))
-    );
+    assert!(plan.lines.iter().any(|line| line.contains("2m (-) main")));
 }
 
 #[test]
@@ -516,7 +535,7 @@ fn run_prefers_cli_verbosity_over_git_config() {
     run(owned_args(&["--color", "never", "-v"]), &git, &mut output).unwrap();
 
     let output = output.into_string();
-    assert!(output.contains("1m (1, feature) feature"));
+    assert!(output.contains("1m (1) feature"));
     assert!(!output.contains("feature tip"));
 }
 
@@ -799,10 +818,7 @@ fn run_renders_empty_selection_as_trunk() {
 
     run(owned_args(&["--color", "never"]), &git, &mut output).unwrap();
 
-    assert_eq!(
-        output.into_string(),
-        "  ⁝\n▶ ◆── 2m (-, main-oi) main\n  ⁝\n"
-    );
+    assert_eq!(output.into_string(), "  ⁝\n▶ ◆── 2m (-) main\n  ⁝\n");
     assert_eq!(
         git.calls(),
         vec![

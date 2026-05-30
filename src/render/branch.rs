@@ -41,21 +41,24 @@ pub(super) fn display_names(
 
     if layout.is_columns() {
         let count_column = columns_count(&count, metadata_widths, colours, false);
-        let oid = colours.metadata_oid(&annotation.meta.short_oid);
-        return if verbosity.includes_title() {
-            format!(
-                "{count_column} {names} {} {oid}",
-                colours.commit_title(&annotation.meta.subject)
-            )
-        } else {
-            format!("{count_column} {names} {oid}")
-        };
+        let mut label = format!("{count_column} {names}");
+        if verbosity.includes_title() {
+            label.push(' ');
+            label.push_str(&colours.commit_title(&annotation.meta.subject));
+        }
+        if verbosity.includes_oid() {
+            label.push(' ');
+            label.push_str(&colours.metadata_oid(&annotation.meta.short_oid));
+        }
+        return label;
     }
 
     let prefix = format_metadata_prefix(
         &age,
         &count,
-        &annotation.meta.short_oid,
+        verbosity
+            .includes_oid()
+            .then_some(annotation.meta.short_oid.as_str()),
         metadata_widths,
         colours,
     );

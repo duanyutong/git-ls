@@ -52,18 +52,23 @@ pub(super) fn trunk_count_placeholder(widths: MetadataWidths) -> String {
 pub(super) fn format_metadata_prefix(
     age: &str,
     count: &str,
-    short_oid: &str,
+    short_oid: Option<&str>,
     widths: MetadataWidths,
     colours: &Colours,
 ) -> String {
     let count_width = widths.count.max(1);
     let age = colours.metadata_age(&format!("{age:>age_width$}", age_width = widths.age));
     let count = colours.metadata_count(&format!("{count:>count_width$}"));
-    let short_oid = colours.metadata_oid(short_oid);
     let open = colours.metadata_punctuation("(");
-    let comma = colours.metadata_punctuation(", ");
     let close = colours.metadata_punctuation(")");
-    format!("{age} {open}{count}{comma}{short_oid}{close}")
+    match short_oid {
+        Some(short_oid) => {
+            let short_oid = colours.metadata_oid(short_oid);
+            let comma = colours.metadata_punctuation(", ");
+            format!("{age} {open}{count}{comma}{short_oid}{close}")
+        }
+        None => format!("{age} {open}{count}{close}"),
+    }
 }
 
 /// Render the fixed-width age gutter that the columns layout places ahead of the

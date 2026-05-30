@@ -41,21 +41,24 @@ pub(super) fn display_orphaned_names(
 
     if layout.is_columns() {
         let count_column = columns_count(&count, metadata_widths, colours, false);
-        let oid = colours.metadata_oid(&annotation.meta.short_oid);
-        return if verbosity.includes_title() {
-            format!(
-                "{count_column} {names} {status} {} {oid}",
-                colours.commit_title(&annotation.meta.subject)
-            )
-        } else {
-            format!("{count_column} {names} {status} {oid}")
-        };
+        let mut label = format!("{count_column} {names} {status}");
+        if verbosity.includes_title() {
+            label.push(' ');
+            label.push_str(&colours.commit_title(&annotation.meta.subject));
+        }
+        if verbosity.includes_oid() {
+            label.push(' ');
+            label.push_str(&colours.metadata_oid(&annotation.meta.short_oid));
+        }
+        return label;
     }
 
     let prefix = format_metadata_prefix(
         &age,
         &count,
-        &annotation.meta.short_oid,
+        verbosity
+            .includes_oid()
+            .then_some(annotation.meta.short_oid.as_str()),
         metadata_widths,
         colours,
     );
@@ -106,7 +109,7 @@ pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> 
             let oid = point
                 .annotation
                 .as_ref()
-                .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_metadata())
+                .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
                 .map(|annotation| ctx.colours.metadata_oid(&annotation.meta.short_oid));
             output.push(match oid {
                 Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),

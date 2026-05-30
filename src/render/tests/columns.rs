@@ -1,7 +1,8 @@
 //! Behaviour of the `--layout columns` rendering: the age is relocated to
 //! a fixed-width left gutter, the commit count is promoted to a highlighted
-//! column following the rails, and the object identifier is demoted to a trailing
-//! position. Colour is disabled throughout so the assertions read as plain text.
+//! column following the rails, and full verbosity demotes the object identifier
+//! to a trailing position. Colour is disabled throughout so the assertions read
+//! as plain text.
 
 use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, Lane, LaneGroup, RewrittenCommit};
@@ -104,7 +105,7 @@ fn display_names_promotes_count_and_trails_the_identifier() {
             Layout::Columns,
             &colours,
         ),
-        " 3 feature/topic branch-"
+        " 3 feature/topic"
     );
 }
 
@@ -115,11 +116,28 @@ fn trunk_labels_render_muted_placeholder_count_and_trailing_identifier() {
     let widths = MetadataWidths { age: 2, count: 2 };
     let ctx = columns_context(Some(&main_meta), widths, &colours);
 
-    assert_eq!(trunk_label(TrunkLabel::Main, &ctx), "-- main main-oi");
+    assert_eq!(trunk_label(TrunkLabel::Main, &ctx), "-- main");
 
     let base_meta = CommitMeta::new("old-main", TEST_COMMIT_TIME, "old main point");
+    assert_eq!(trunk_label(TrunkLabel::Commit(&base_meta), &ctx), "--");
+
+    let detail_ctx = RenderContext::new(
+        "main",
+        Some(&main_meta),
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::High,
+        widths,
+        &colours,
+    )
+    .with_layout(Layout::Columns);
     assert_eq!(
-        trunk_label(TrunkLabel::Commit(&base_meta), &ctx),
+        trunk_label(TrunkLabel::Main, &detail_ctx),
+        "-- main main-oi"
+    );
+    assert_eq!(
+        trunk_label(TrunkLabel::Commit(&base_meta), &detail_ctx),
         "-- old main point old-mai"
     );
 }
@@ -164,7 +182,7 @@ fn rewritten_commit_drops_parentheses_and_keeps_identifiers_inline() {
     let ctx_summary = columns_context(None, widths, &colours);
     assert_eq!(
         display_rewritten_commit(&commit, &ctx_summary),
-        "   old-oid rewritten as new-oid"
+        "   rewritten"
     );
 
     let ctx_title = RenderContext::new(
@@ -210,7 +228,7 @@ fn orphaned_names_promote_count_and_trail_the_identifier() {
             Layout::Columns,
             &colours,
         ),
-        " 2 backup (orphaned) backup-"
+        " 2 backup (orphaned)"
     );
 }
 
@@ -256,8 +274,8 @@ fn render_lane_groups_aligns_the_age_gutter_across_every_row() {
         output,
         vec![
             "     ⁝".to_string(),
-            "2m ▶ ◆── -- main main-oi".to_string(),
-            "2m   ⁝ ⦸ 10 backup (orphaned) backup-".to_string(),
+            "2m ▶ ◆── -- main".to_string(),
+            "2m   ⁝ ⦸ 10 backup (orphaned)".to_string(),
             "     ⁝".to_string(),
         ]
     );
