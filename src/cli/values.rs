@@ -40,6 +40,10 @@ impl Verbosity {
         !matches!(self, Self::Low)
     }
 
+    pub(crate) fn includes_oid(self) -> bool {
+        matches!(self, Self::High)
+    }
+
     pub(crate) fn includes_title(self) -> bool {
         matches!(self, Self::High)
     }
@@ -140,7 +144,9 @@ mod tests {
         assert_eq!(Verbosity::try_from_config(3), None);
         assert_eq!(Verbosity::from_count(7), Verbosity::High);
         assert!(Verbosity::Medium.includes_metadata());
+        assert!(!Verbosity::Medium.includes_oid());
         assert!(!Verbosity::Medium.includes_title());
+        assert!(Verbosity::High.includes_oid());
     }
 
     #[test]

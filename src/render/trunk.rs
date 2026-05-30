@@ -29,15 +29,21 @@ pub(super) fn main_label(ctx: &RenderContext<'_>) -> String {
     let count = trunk_count_placeholder(ctx.metadata_widths);
     if ctx.layout.is_columns() {
         let count_column = columns_count(&count, ctx.metadata_widths, ctx.colours, true);
-        let oid = ctx.colours.metadata_oid(&meta.short_oid);
-        return format!("{count_column} {name} {oid}");
+        let mut label = format!("{count_column} {name}");
+        if ctx.verbosity.includes_oid() {
+            label.push(' ');
+            label.push_str(&ctx.colours.metadata_oid(&meta.short_oid));
+        }
+        return label;
     }
 
     let age = trunk_metadata_age(meta, ctx.now_timestamp);
     let prefix = format_metadata_prefix(
         &age,
         &count,
-        &meta.short_oid,
+        ctx.verbosity
+            .includes_oid()
+            .then_some(meta.short_oid.as_str()),
         ctx.metadata_widths,
         ctx.colours,
     );
@@ -99,19 +105,33 @@ pub(super) fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> Str
             let count = trunk_count_placeholder(ctx.metadata_widths);
             if ctx.layout.is_columns() {
                 let count_column = columns_count(&count, ctx.metadata_widths, ctx.colours, true);
-                let oid = ctx.colours.metadata_oid(&meta.short_oid);
-                return format!("{count_column} {subject} {oid}");
+                let mut label = if ctx.verbosity.includes_title() {
+                    format!("{count_column} {subject}")
+                } else {
+                    count_column
+                };
+                if ctx.verbosity.includes_oid() {
+                    label.push(' ');
+                    label.push_str(&ctx.colours.metadata_oid(&meta.short_oid));
+                }
+                return label;
             }
 
             let age = trunk_metadata_age(meta, ctx.now_timestamp);
             let prefix = format_metadata_prefix(
                 &age,
                 &count,
-                &meta.short_oid,
+                ctx.verbosity
+                    .includes_oid()
+                    .then_some(meta.short_oid.as_str()),
                 ctx.metadata_widths,
                 ctx.colours,
             );
-            format!("{prefix} {subject}")
+            if ctx.verbosity.includes_title() {
+                format!("{prefix} {subject}")
+            } else {
+                prefix
+            }
         }
     }
 }
@@ -149,7 +169,7 @@ pub(super) fn render_main_tip(ctx: &RenderContext<'_>) -> RenderLine {
     );
     let oid = ctx
         .main_meta
-        .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_metadata())
+        .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
         .map(|meta| ctx.colours.metadata_oid(&meta.short_oid));
     match oid {
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),

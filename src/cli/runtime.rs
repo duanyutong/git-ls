@@ -41,7 +41,9 @@ impl Args {
     }
 
     fn explicit_verbosity(&self) -> Option<Verbosity> {
-        (self.verbose > 0).then(|| Verbosity::from_count(self.verbose))
+        self.verbosity
+            .map(Verbosity::from_count)
+            .or_else(|| (self.verbose > 0).then(|| Verbosity::from_count(self.verbose)))
     }
 }
 
@@ -52,6 +54,7 @@ mod tests {
 
     fn args_with(
         verbose: u8,
+        verbosity: Option<u8>,
         backend: Option<Backend>,
         order: Option<Order>,
         colour_mode: Option<ColourMode>,
@@ -62,6 +65,7 @@ mod tests {
             revset: DEFAULT_REVSET.to_string(),
             hidden: false,
             verbose,
+            verbosity,
             backend,
             order,
             colour_mode,
@@ -71,7 +75,7 @@ mod tests {
     }
 
     fn default_args() -> Args {
-        args_with(0, None, None, None, None, None)
+        args_with(0, None, None, None, None, None, None)
     }
 
     #[test]
@@ -122,6 +126,7 @@ mod tests {
         };
         let args = args_with(
             1,
+            Some(0),
             Some(Backend::Gix),
             Some(Order::Oldest),
             Some(ColourMode::Never),
@@ -130,7 +135,7 @@ mod tests {
         )
         .resolve(&config);
 
-        assert_eq!(args.verbosity, Verbosity::Medium);
+        assert_eq!(args.verbosity, Verbosity::Low);
         assert_eq!(args.backend, Backend::Gix);
         assert_eq!(args.order, Order::Oldest);
         assert_eq!(args.colour_mode, ColourMode::Never);

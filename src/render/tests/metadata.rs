@@ -17,8 +17,12 @@ fn formats_metadata_prefix_with_aligned_placeholders() {
     let widths = MetadataWidths { age: 3, count: 2 };
 
     assert_eq!(
-        format_metadata_prefix("2m", "--", "main-oi", widths, &colours),
+        format_metadata_prefix("2m", "--", Some("main-oi"), widths, &colours),
         " 2m (--, main-oi)"
+    );
+    assert_eq!(
+        format_metadata_prefix("2m", "--", None, widths, &colours),
+        " 2m (--)"
     );
     assert_eq!(
         crate::render::metadata::trunk_count_placeholder(widths),
@@ -134,10 +138,7 @@ fn renders_trunk_commit_label_with_main_placeholder_count() {
     )
     .with_layout(Layout::Inline);
 
-    assert_eq!(
-        trunk_label(TrunkLabel::Commit(&base_meta), &ctx),
-        "2m (--, old-mai) old main point"
-    );
+    assert_eq!(trunk_label(TrunkLabel::Commit(&base_meta), &ctx), "2m (--)");
 }
 
 #[test]
@@ -175,7 +176,7 @@ fn renders_summary_branch_metadata_without_commit_title() {
         &colours,
     );
 
-    assert_eq!(label, "2m (3, branch-) feature/topic");
+    assert_eq!(label, "2m (3) feature/topic");
 }
 
 #[test]
@@ -221,8 +222,8 @@ fn renders_main_metadata_in_aligned_annotation_column() {
         output,
         vec![
             "  ⁝".to_string(),
-            "▶ ◆── 2m (--, main-oi) main".to_string(),
-            "  ⁝ ⦸ 2m (10, backup-) backup (orphaned)".to_string(),
+            "▶ ◆── 2m (--) main".to_string(),
+            "  ⁝ ⦸ 2m (10) backup (orphaned)".to_string(),
             "  ⁝".to_string(),
         ]
     );
