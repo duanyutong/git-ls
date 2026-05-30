@@ -1,4 +1,4 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
 use crate::render::branch::display_names;
@@ -131,7 +131,8 @@ fn renders_trunk_commit_label_with_main_placeholder_count() {
         Verbosity::Medium,
         MetadataWidths { age: 2, count: 2 },
         &colours,
-    );
+    )
+    .with_layout(Layout::Inline);
 
     assert_eq!(
         trunk_label(TrunkLabel::Commit(&base_meta), &ctx),
@@ -151,6 +152,7 @@ fn renders_branch_metadata_with_commit_count_for_multi_commit_branch() {
         TEST_NOW,
         Verbosity::High,
         MetadataWidths::default(),
+        Layout::Inline,
         &colours,
     );
 
@@ -169,6 +171,7 @@ fn renders_summary_branch_metadata_without_commit_title() {
         TEST_NOW,
         Verbosity::Medium,
         MetadataWidths::default(),
+        Layout::Inline,
         &colours,
     );
 
@@ -209,7 +212,8 @@ fn renders_main_metadata_in_aligned_annotation_column() {
         Verbosity::Medium,
         metadata_widths,
         &colours,
-    );
+    )
+    .with_layout(Layout::Inline);
 
     let output = render_lane_groups(&groups, &ctx);
 

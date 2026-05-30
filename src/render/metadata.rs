@@ -2,6 +2,7 @@ use crate::cli::Verbosity;
 use crate::model::{BranchAnnotation, CommitMeta, LaneGroup};
 
 use super::colours::Colours;
+use super::context::RenderContext;
 
 pub(super) fn format_age(now_timestamp: i64, commit_timestamp: i64) -> String {
     const MINUTE: i64 = 60;
@@ -63,6 +64,38 @@ pub(super) fn format_metadata_prefix(
     let comma = colours.metadata_punctuation(", ");
     let close = colours.metadata_punctuation(")");
     format!("{age} {open}{count}{comma}{short_oid}{close}")
+}
+
+/// Render the fixed-width age gutter that the columns layout places ahead of the
+/// current-row indicator. Returns an empty string for the inline layout, so the
+/// same call site serves both layouts. `age` is `None` for rows that carry no
+/// commit (spacers, collapsed segments), which still reserve the column width so
+/// the topology spine stays vertically aligned.
+pub(super) fn age_gutter(ctx: &RenderContext<'_>, age: Option<String>) -> String {
+    if !ctx.layout.is_columns() || ctx.metadata_widths.age == 0 {
+        return String::new();
+    }
+    let width = ctx.metadata_widths.age;
+    let text = age.unwrap_or_default();
+    format!("{} ", ctx.colours.metadata_age(&format!("{text:>width$}")))
+}
+
+/// Render the standalone commit-count column used by the columns layout. Genuine
+/// branch counts are highlighted; the trunk placeholder is muted so that only
+/// real counts draw the eye.
+pub(super) fn columns_count(
+    count: &str,
+    widths: MetadataWidths,
+    colours: &Colours,
+    is_placeholder: bool,
+) -> String {
+    let width = widths.count.max(1);
+    let text = format!("{count:>width$}");
+    if is_placeholder {
+        colours.metadata_punctuation(&text)
+    } else {
+        colours.metadata_count(&text)
+    }
 }
 
 fn record_metadata_widths(widths: &mut MetadataWidths, age: &str, count: &str) {

@@ -1,4 +1,4 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::{BranchPoint, Lane};
 
 use super::colours::Colours;
@@ -7,13 +7,18 @@ use super::graph::{
     BRANCH_LABEL_GAP, COLLAPSED_MAIN_GLYPH, ORPHANED_BRANCH_GLYPH, TREE_LEFT_PADDING,
     is_current_branch_point, orphaned_row_indicator, render_row,
 };
-use super::metadata::{MetadataWidths, branch_metadata_columns, format_metadata_prefix};
+use super::line::RenderLine;
+use super::metadata::{
+    MetadataWidths, age_gutter, branch_metadata_columns, columns_count, format_age,
+    format_metadata_prefix,
+};
 
 pub(super) fn display_orphaned_names(
     point: &BranchPoint,
     now_timestamp: i64,
     verbosity: Verbosity,
     metadata_widths: MetadataWidths,
+    layout: Layout,
     colours: &Colours,
 ) -> String {
     let names = point
@@ -33,6 +38,20 @@ pub(super) fn display_orphaned_names(
     };
 
     let (age, count) = branch_metadata_columns(annotation, now_timestamp);
+
+    if layout.is_columns() {
+        let count_column = columns_count(&count, metadata_widths, colours, false);
+        let oid = colours.metadata_oid(&annotation.meta.short_oid);
+        return if verbosity.includes_title() {
+            format!(
+                "{count_column} {names} {status} {} {oid}",
+                colours.commit_title(&annotation.meta.subject)
+            )
+        } else {
+            format!("{count_column} {names} {status} {oid}")
+        };
+    }
+
     let prefix = format_metadata_prefix(
         &age,
         &count,
@@ -50,7 +69,7 @@ pub(super) fn display_orphaned_names(
     }
 }
 
-pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<String> {
+pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> Vec<RenderLine> {
     let mut output = Vec::new();
 
     for lane in lanes {
@@ -60,20 +79,39 @@ pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> 
                 ctx.now_timestamp,
                 ctx.verbosity,
                 ctx.metadata_widths,
+                ctx.layout,
                 ctx.colours,
+            );
+            let gutter = age_gutter(
+                ctx,
+                point
+                    .annotation
+                    .as_ref()
+                    .filter(|_| ctx.verbosity.includes_metadata())
+                    .map(|annotation| format_age(ctx.now_timestamp, annotation.meta.timestamp)),
             );
             let line = format!(
                 "{TREE_LEFT_PADDING}{} {}{BRANCH_LABEL_GAP}{label}",
                 ctx.colours.stack(0, COLLAPSED_MAIN_GLYPH),
                 ctx.colours.orphaned_glyph(ORPHANED_BRANCH_GLYPH)
             );
-            output.push(render_row(
+            let rendered = render_row(
+                &gutter,
                 &orphaned_row_indicator(
                     is_current_branch_point(point, ctx.current_branch),
                     ctx.colours,
                 ),
                 &line,
-            ));
+            );
+            let oid = point
+                .annotation
+                .as_ref()
+                .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_metadata())
+                .map(|annotation| ctx.colours.metadata_oid(&annotation.meta.short_oid));
+            output.push(match oid {
+                Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
+                None => RenderLine::plain(rendered),
+            });
         }
     }
 

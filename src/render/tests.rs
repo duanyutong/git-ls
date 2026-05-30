@@ -1,4 +1,5 @@
 mod colours;
+mod columns;
 mod graph;
 mod layout;
 mod metadata;

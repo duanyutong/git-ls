@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 
 use super::defaults::DEFAULT_REVSET;
-use super::values::{Backend, ColourMode, Order, Palette};
+use super::values::{Backend, ColourMode, Layout, Order, Palette};
 
 const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
@@ -45,4 +45,7 @@ pub(crate) struct Args {
 
     #[arg(short = 'p', long, value_enum, value_name = "VALUE")]
     pub(crate) palette: Option<Palette>,
+
+    #[arg(long, value_enum, value_name = "VALUE")]
+    pub(crate) layout: Option<Layout>,
 }

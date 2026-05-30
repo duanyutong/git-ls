@@ -106,6 +106,19 @@ impl fmt::Display for Palette {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum Layout {
+    #[default]
+    Inline,
+    Columns,
+}
+
+impl Layout {
+    pub(crate) fn is_columns(self) -> bool {
+        matches!(self, Self::Columns)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum Order {
     Newest,
@@ -128,6 +141,13 @@ mod tests {
         assert_eq!(Verbosity::from_count(7), Verbosity::High);
         assert!(Verbosity::Medium.includes_metadata());
         assert!(!Verbosity::Medium.includes_title());
+    }
+
+    #[test]
+    fn layout_default_is_inline_and_columns_is_detected() {
+        assert_eq!(Layout::default(), Layout::Inline);
+        assert!(!Layout::Inline.is_columns());
+        assert!(Layout::Columns.is_columns());
     }
 
     #[test]

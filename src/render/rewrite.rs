@@ -1,7 +1,7 @@
 use crate::model::RewrittenCommit;
 
 use super::context::RenderContext;
-use super::metadata::format_age;
+use super::metadata::{columns_count, format_age};
 
 pub(super) fn display_rewritten_commit(
     commit: &RewrittenCommit,
@@ -12,6 +12,17 @@ pub(super) fn display_rewritten_commit(
 
     if !ctx.verbosity.includes_metadata() {
         return format!("{old_oid} rewritten as {replacement_oid}");
+    }
+
+    if ctx.layout.is_columns() {
+        let count_column = columns_count("", ctx.metadata_widths, ctx.colours, true);
+        let status = ctx.colours.metadata_punctuation("rewritten as");
+        let body = format!("{count_column} {old_oid} {status} {replacement_oid}");
+        return if ctx.verbosity.includes_title() {
+            format!("{body} {}", ctx.colours.commit_title(&commit.meta.subject))
+        } else {
+            body
+        };
     }
 
     let age = format_age(ctx.now_timestamp, commit.meta.timestamp);

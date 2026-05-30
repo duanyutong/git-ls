@@ -1,4 +1,4 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::Lane;
 use crate::render::RenderContext;
 use crate::render::graph::COLLAPSED_MAIN_GLYPH;
@@ -19,6 +19,7 @@ fn renders_orphaned_names_with_status_metadata_and_title() {
             TEST_NOW,
             Verbosity::High,
             MetadataWidths::default(),
+            Layout::Inline,
             &colours,
         ),
         "2m (2, backup-) backup (orphaned) backup tip"
