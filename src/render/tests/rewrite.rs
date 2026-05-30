@@ -1,4 +1,4 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, RewrittenCommit};
 use crate::render::RenderContext;
 use crate::render::metadata::MetadataWidths;
@@ -23,7 +23,8 @@ fn renders_rewritten_commit_metadata_and_title() {
         Verbosity::High,
         MetadataWidths { age: 2, count: 1 },
         &colours,
-    );
+    )
+    .with_layout(Layout::Inline);
 
     assert_eq!(
         display_rewritten_commit(&commit, &ctx),

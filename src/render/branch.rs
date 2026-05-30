@@ -1,8 +1,10 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::BranchPoint;
 
 use super::colours::Colours;
-use super::metadata::{MetadataWidths, branch_metadata_columns, format_metadata_prefix};
+use super::metadata::{
+    MetadataWidths, branch_metadata_columns, columns_count, format_metadata_prefix,
+};
 
 pub(super) fn display_names(
     point: &BranchPoint,
@@ -11,6 +13,7 @@ pub(super) fn display_names(
     now_timestamp: i64,
     verbosity: Verbosity,
     metadata_widths: MetadataWidths,
+    layout: Layout,
     colours: &Colours,
 ) -> String {
     let names = point
@@ -35,6 +38,20 @@ pub(super) fn display_names(
     };
 
     let (age, count) = branch_metadata_columns(annotation, now_timestamp);
+
+    if layout.is_columns() {
+        let count_column = columns_count(&count, metadata_widths, colours, false);
+        let oid = colours.metadata_oid(&annotation.meta.short_oid);
+        return if verbosity.includes_title() {
+            format!(
+                "{count_column} {names} {} {oid}",
+                colours.commit_title(&annotation.meta.subject)
+            )
+        } else {
+            format!("{count_column} {names} {oid}")
+        };
+    }
+
     let prefix = format_metadata_prefix(
         &age,
         &count,

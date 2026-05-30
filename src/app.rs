@@ -9,12 +9,12 @@ use crate::backend::GitCommand;
 use crate::backend::{CommitMetadataBackend, GitBackend, get_commit_meta};
 #[cfg(test)]
 use crate::cli::read_git_ls_config;
-use crate::cli::{Args, RuntimeOptions, Verbosity};
+use crate::cli::{Args, Layout, RuntimeOptions, Verbosity};
 use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
 use crate::render::{
-    Colours, RenderContext, calculate_metadata_widths,
+    Colours, RenderContext, RenderLine, calculate_metadata_widths,
     render_empty_selection as render_empty_lines, render_lane_groups,
 };
 use crate::terminal::{RenderEnvironment, write_rendered_line};
@@ -34,16 +34,22 @@ where
 
 #[derive(Debug, Eq, PartialEq)]
 struct RenderPlan {
-    lines: Vec<String>,
+    lines: Vec<RenderLine>,
 }
 
 impl RenderPlan {
-    fn new(lines: Vec<String>) -> Self {
-        Self { lines }
+    fn new<I>(lines: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<RenderLine>,
+    {
+        Self {
+            lines: lines.into_iter().map(Into::into).collect(),
+        }
     }
 
-    fn lines(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().map(String::as_str)
+    fn lines(&self) -> impl Iterator<Item = &RenderLine> {
+        self.lines.iter()
     }
 }
 
@@ -52,6 +58,7 @@ struct RenderSession<'a> {
     main_meta: Option<&'a CommitMeta>,
     now_timestamp: i64,
     verbosity: Verbosity,
+    layout: Layout,
     colours: &'a Colours,
 }
 
@@ -68,6 +75,7 @@ impl<'a> RenderSession<'a> {
             main_meta,
             now_timestamp: environment.now_timestamp(),
             verbosity: args.verbosity,
+            layout: args.layout,
             colours,
         }
     }
@@ -83,6 +91,7 @@ impl<'a> RenderSession<'a> {
             calculate_metadata_widths(groups, self.main_meta, self.now_timestamp, self.verbosity),
             self.colours,
         )
+        .with_layout(self.layout)
     }
 }
 

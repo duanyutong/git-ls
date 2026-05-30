@@ -3,13 +3,14 @@ use clap::ValueEnum;
 use crate::backend::{GitCommand, non_empty};
 use crate::error::{GitLsError, Result};
 
-use super::values::{Backend, Palette, Verbosity};
+use super::values::{Backend, Layout, Palette, Verbosity};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct GitLsConfig {
     pub(crate) verbosity: Option<Verbosity>,
     pub(crate) backend: Option<Backend>,
     pub(crate) palette: Option<Palette>,
+    pub(crate) layout: Option<Layout>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,16 +18,18 @@ enum ConfigKey {
     Verbosity,
     Backend,
     Palette,
+    Layout,
 }
 
 impl ConfigKey {
-    const LOOKUP_ORDER: [Self; 3] = [Self::Verbosity, Self::Backend, Self::Palette];
+    const LOOKUP_ORDER: [Self; 4] = [Self::Verbosity, Self::Backend, Self::Palette, Self::Layout];
 
     fn name(self) -> &'static str {
         match self {
             Self::Verbosity => "git-ls.verbosity",
             Self::Backend => "git-ls.backend",
             Self::Palette => "git-ls.palette",
+            Self::Layout => "git-ls.layout",
         }
     }
 
@@ -37,6 +40,7 @@ impl ConfigKey {
             Self::Palette => {
                 "okabe, tableau, dark2, set1, set2, paired, bold, vivid, tol, or classic"
             }
+            Self::Layout => "columns or inline",
         }
     }
 }
@@ -57,6 +61,10 @@ fn parse_palette_config(key: ConfigKey, value: &str) -> Result<Palette> {
     Palette::from_str(value, true).map_err(|_| invalid_git_config(key, value))
 }
 
+fn parse_layout_config(key: ConfigKey, value: &str) -> Result<Layout> {
+    Layout::from_str(value, true).map_err(|_| invalid_git_config(key, value))
+}
+
 fn parse_verbosity_config(key: ConfigKey, value: &str) -> Result<Verbosity> {
     value
         .trim()
@@ -72,6 +80,7 @@ impl GitLsConfig {
             ConfigKey::Verbosity => self.verbosity = Some(parse_verbosity_config(key, value)?),
             ConfigKey::Backend => self.backend = Some(parse_backend_config(key, value)?),
             ConfigKey::Palette => self.palette = Some(parse_palette_config(key, value)?),
+            ConfigKey::Layout => self.layout = Some(parse_layout_config(key, value)?),
         }
         Ok(())
     }
@@ -177,6 +186,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_layout_config() {
+        assert_eq!(
+            parse_layout_config(ConfigKey::Layout, "columns").unwrap(),
+            Layout::Columns
+        );
+        assert_eq!(
+            parse_layout_config(ConfigKey::Layout, "inline").unwrap(),
+            Layout::Inline
+        );
+
+        let error = parse_layout_config(ConfigKey::Layout, "wide").unwrap_err();
+        assert_invalid_config(error, ConfigKey::Layout, "wide");
+    }
+
+    #[test]
     fn reads_empty_git_config_values_as_absent() {
         let git = ConfigGit::default().with(&["config", "--get", ConfigKey::Backend.name()], " \n");
 
@@ -226,13 +250,15 @@ mod tests {
         let git = ConfigGit::default()
             .with(&["config", "--get", ConfigKey::Verbosity.name()], "2")
             .with(&["config", "--get", ConfigKey::Backend.name()], "shell")
-            .with(&["config", "--get", ConfigKey::Palette.name()], "okabe");
+            .with(&["config", "--get", ConfigKey::Palette.name()], "okabe")
+            .with(&["config", "--get", ConfigKey::Layout.name()], "columns");
 
         let config = read_git_ls_config(&git).unwrap();
 
         assert_eq!(config.verbosity, Some(Verbosity::High));
         assert_eq!(config.backend, Some(Backend::Shell));
         assert_eq!(config.palette, Some(Palette::Okabe));
+        assert_eq!(config.layout, Some(Layout::Columns));
     }
 
     #[test]
@@ -250,6 +276,7 @@ mod tests {
             (ConfigKey::Verbosity, "3"),
             (ConfigKey::Backend, "native"),
             (ConfigKey::Palette, "safe"),
+            (ConfigKey::Layout, "wide"),
         ];
 
         for (key, value) in cases {

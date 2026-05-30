@@ -1,4 +1,4 @@
-use crate::cli::Verbosity;
+use crate::cli::{Layout, Verbosity};
 use crate::model::CommitMeta;
 
 use super::colours::Colours;
@@ -12,6 +12,7 @@ pub(crate) struct RenderContext<'a> {
     pub(super) now_timestamp: i64,
     pub(super) verbosity: Verbosity,
     pub(super) metadata_widths: MetadataWidths,
+    pub(super) layout: Layout,
     pub(super) colours: &'a Colours,
 }
 
@@ -34,7 +35,13 @@ impl<'a> RenderContext<'a> {
             now_timestamp,
             verbosity,
             metadata_widths,
+            layout: Layout::default(),
             colours,
         }
+    }
+
+    pub(crate) fn with_layout(mut self, layout: Layout) -> Self {
+        self.layout = layout;
+        self
     }
 }

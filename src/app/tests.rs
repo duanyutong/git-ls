@@ -2,7 +2,7 @@ use clap::error::ErrorKind;
 use std::collections::HashMap;
 
 use super::*;
-use crate::cli::{Args, Backend, ColourMode, Order, Palette, Verbosity};
+use crate::cli::{Args, Backend, ColourMode, Layout, Order, Palette, Verbosity};
 use crate::error::GitLsError;
 use crate::model::{BranchAnnotation, BranchPoint, Lane};
 use crate::test_support::{MockGit, TEST_NOW};
@@ -41,6 +41,7 @@ fn runtime_options(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
         order: Order::Newest,
         colour_mode: ColourMode::Never,
         palette: Palette::Classic,
+        layout: Layout::Inline,
     }
 }
 
@@ -163,6 +164,7 @@ fn parses_default_arguments() {
             order: None,
             colour_mode: None,
             palette: None,
+            layout: None,
         }
     );
 }
@@ -178,6 +180,8 @@ fn parses_flags_and_revset() {
             "never",
             "--palette",
             "tableau",
+            "--layout",
+            "inline",
             "draft() & branches(feature/)",
         ])
         .unwrap(),
@@ -189,7 +193,20 @@ fn parses_flags_and_revset() {
             order: Some(Order::Oldest),
             colour_mode: Some(ColourMode::Never),
             palette: Some(Palette::Tableau),
+            layout: Some(Layout::Inline),
         }
+    );
+}
+
+#[test]
+fn parses_layout_names() {
+    assert_eq!(
+        parse_args_from(["--layout", "columns"]).unwrap().layout,
+        Some(Layout::Columns)
+    );
+    assert_eq!(
+        parse_args_from(["--layout", "inline"]).unwrap().layout,
+        Some(Layout::Inline)
     );
 }
 
@@ -241,6 +258,7 @@ fn parses_dash_prefixed_revset_after_separator() {
             order: None,
             colour_mode: None,
             palette: None,
+            layout: None,
         }
     );
 }
@@ -802,6 +820,11 @@ fn run_renders_empty_selection_as_trunk() {
                 "config".to_string(),
                 "--get".to_string(),
                 "git-ls.palette".to_string()
+            ],
+            vec![
+                "config".to_string(),
+                "--get".to_string(),
+                "git-ls.layout".to_string()
             ],
             vec![
                 "branchless".to_string(),

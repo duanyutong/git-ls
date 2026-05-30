@@ -28,28 +28,7 @@ If Cargo shows curl timeout errors, use `--frozen` instead of `--locked` to avoi
 ## Usage
 
 ```sh
-git ls
-git ls --version
-git ls --backend shell
-git ls --color never
-git ls --palette okabe
-git ls --order oldest
-git ls -v
-git ls -vv
-git ls 'draft() & branches(feature/)'
-```
-
-```text
-REVSET            branchless revset used for stack selection; defaults to draft()
-                  custom revsets require git-branchless
---hidden          include hidden commits when evaluating branchless revsets
--v, --verbose     increase branch annotation verbosity; repeat as -vv for commit titles
---backend VALUE   Git plumbing backend: gix or shell
---order VALUE     order stack lanes by head commit time: newest or oldest
---color VALUE     colour mode: auto, always, or never
---palette, -p VALUE
-                  lane colour palette: okabe, tableau, dark2, set1, set2,
-                  paired, bold, vivid, tol, or classic
+git ls -h
 ```
 
 ## Configuration
@@ -60,6 +39,7 @@ Local repository configuration overrides global configuration, and explicit comm
 ```ini
 [git-ls]
   backend = gix
+  layout = columns
   palette = classic
   verbosity = 2
 ```

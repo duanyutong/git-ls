@@ -1,7 +1,7 @@
 use super::args::Args;
 use super::config::GitLsConfig;
 use super::defaults::DEFAULT_RUNTIME_OPTIONS;
-use super::values::{Backend, ColourMode, Order, Palette, Verbosity};
+use super::values::{Backend, ColourMode, Layout, Order, Palette, Verbosity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeOptions {
@@ -12,6 +12,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) order: Order,
     pub(crate) colour_mode: ColourMode,
     pub(crate) palette: Palette,
+    pub(crate) layout: Layout,
 }
 
 impl RuntimeOptions {
@@ -29,6 +30,7 @@ impl RuntimeOptions {
             order: args.order.unwrap_or(defaults.order),
             colour_mode: args.colour_mode.unwrap_or(defaults.colour_mode),
             palette: args.palette.or(config.palette).unwrap_or(defaults.palette),
+            layout: args.layout.or(config.layout).unwrap_or(defaults.layout),
         }
     }
 }
@@ -54,6 +56,7 @@ mod tests {
         order: Option<Order>,
         colour_mode: Option<ColourMode>,
         palette: Option<Palette>,
+        layout: Option<Layout>,
     ) -> Args {
         Args {
             revset: DEFAULT_REVSET.to_string(),
@@ -63,11 +66,12 @@ mod tests {
             order,
             colour_mode,
             palette,
+            layout,
         }
     }
 
     fn default_args() -> Args {
-        args_with(0, None, None, None, None)
+        args_with(0, None, None, None, None, None)
     }
 
     #[test]
@@ -84,6 +88,7 @@ mod tests {
                 order: DEFAULT_RUNTIME_OPTIONS.order,
                 colour_mode: DEFAULT_RUNTIME_OPTIONS.colour_mode,
                 palette: DEFAULT_RUNTIME_OPTIONS.palette,
+                layout: DEFAULT_RUNTIME_OPTIONS.layout,
             }
         );
     }
@@ -94,6 +99,7 @@ mod tests {
             verbosity: Some(Verbosity::High),
             backend: Some(Backend::Shell),
             palette: Some(Palette::Okabe),
+            layout: Some(Layout::Columns),
         };
 
         let args = default_args().resolve(&config);
@@ -101,6 +107,7 @@ mod tests {
         assert_eq!(args.verbosity, Verbosity::High);
         assert_eq!(args.backend, Backend::Shell);
         assert_eq!(args.palette, Palette::Okabe);
+        assert_eq!(args.layout, Layout::Columns);
         assert_eq!(args.order, DEFAULT_RUNTIME_OPTIONS.order);
         assert_eq!(args.colour_mode, DEFAULT_RUNTIME_OPTIONS.colour_mode);
     }
@@ -111,6 +118,7 @@ mod tests {
             verbosity: Some(Verbosity::High),
             backend: Some(Backend::Shell),
             palette: Some(Palette::Okabe),
+            layout: Some(Layout::Columns),
         };
         let args = args_with(
             1,
@@ -118,6 +126,7 @@ mod tests {
             Some(Order::Oldest),
             Some(ColourMode::Never),
             Some(Palette::Classic),
+            Some(Layout::Inline),
         )
         .resolve(&config);
 
@@ -126,5 +135,6 @@ mod tests {
         assert_eq!(args.order, Order::Oldest);
         assert_eq!(args.colour_mode, ColourMode::Never);
         assert_eq!(args.palette, Palette::Classic);
+        assert_eq!(args.layout, Layout::Inline);
     }
 }

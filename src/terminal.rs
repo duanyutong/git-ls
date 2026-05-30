@@ -5,6 +5,7 @@ use console::truncate_str;
 
 use crate::cli::ColourMode;
 use crate::error::Result;
+use crate::render::RenderLine;
 
 const TRUNCATION_TAIL: &str = "...";
 
@@ -66,15 +67,41 @@ fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<
     truncate_str(line, width, truncation_tail(width))
 }
 
+fn fit_line_with_fixed_suffix(line: &RenderLine, terminal_width: Option<usize>) -> Cow<'_, str> {
+    let Some(width) = terminal_width else {
+        return Cow::Borrowed(line.as_str());
+    };
+    let Some((prefix, suffix)) = line.fixed_suffix() else {
+        return fit_line_to_terminal_width(line.as_str(), Some(width));
+    };
+
+    if width == 0 {
+        return Cow::Borrowed("");
+    }
+
+    let suffix_width = console::measure_text_width(suffix);
+    if width <= suffix_width {
+        return truncate_str(suffix, width, truncation_tail(width));
+    }
+
+    let prefix_width = width - suffix_width - 1;
+    let prefix = truncate_str(prefix, prefix_width, truncation_tail(prefix_width));
+    let padding_width = width
+        .saturating_sub(console::measure_text_width(prefix.as_ref()) + suffix_width)
+        .max(1);
+
+    Cow::Owned(format!("{}{}{}", prefix, " ".repeat(padding_width), suffix))
+}
+
 pub(crate) fn write_rendered_line(
     stdout: &mut dyn Write,
-    line: &str,
+    line: &RenderLine,
     environment: RenderEnvironment,
 ) -> Result<()> {
     writeln!(
         stdout,
         "{}",
-        fit_line_to_terminal_width(line, environment.terminal_width())
+        fit_line_with_fixed_suffix(line, environment.terminal_width())
     )?;
     Ok(())
 }
@@ -139,11 +166,37 @@ mod tests {
     }
 
     #[test]
+    fn fits_columns_rows_by_preserving_the_fixed_suffix() {
+        let line = RenderLine::with_fixed_suffix(
+            " 1h   ⁝ │ │ │ ◯ 1 dyt/topic ci(pkg-types): derive releases from package metadata",
+            "6b49c9d",
+        );
+
+        let fitted = fit_line_with_fixed_suffix(&line, Some(72));
+
+        assert_eq!(
+            fitted.as_ref(),
+            " 1h   ⁝ │ │ │ ◯ 1 dyt/topic ci(pkg-types): derive releases fr... 6b49c9d"
+        );
+        assert_eq!(console::measure_text_width(fitted.as_ref()), 72);
+    }
+
+    #[test]
+    fn pads_columns_suffix_to_the_right_edge_when_no_truncation_is_required() {
+        let line = RenderLine::with_fixed_suffix(" 1h   ◇─┘ - main", "25353c1");
+
+        let fitted = fit_line_with_fixed_suffix(&line, Some(30));
+
+        assert_eq!(fitted.as_ref(), " 1h   ◇─┘ - main       25353c1");
+        assert_eq!(console::measure_text_width(fitted.as_ref()), 30);
+    }
+
+    #[test]
     fn writes_lines_with_environment_terminal_width() {
         let mut output = Vec::new();
         let environment = RenderEnvironment::new(1_700_000_000, Some(5), false);
 
-        write_rendered_line(&mut output, "abcdefgh", environment).unwrap();
+        write_rendered_line(&mut output, &RenderLine::plain("abcdefgh"), environment).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "ab...\n");
     }
@@ -166,7 +219,8 @@ mod tests {
         let mut writer = FailingWriter;
 
         assert!(writer.flush().is_ok());
-        let error = write_rendered_line(&mut writer, "line", environment).unwrap_err();
+        let error =
+            write_rendered_line(&mut writer, &RenderLine::plain("line"), environment).unwrap_err();
 
         assert_eq!(error.to_string(), "failed to write output: closed");
     }

@@ -51,8 +51,8 @@ pub(super) fn orphaned_row_indicator(is_current: bool, colours: &Colours) -> Str
     }
 }
 
-pub(super) fn render_row(indicator: &str, content: &str) -> String {
-    format!("{indicator} {content}")
+pub(super) fn render_row(gutter: &str, indicator: &str, content: &str) -> String {
+    format!("{gutter}{indicator} {content}")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

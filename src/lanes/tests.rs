@@ -5,7 +5,7 @@ use super::*;
 use crate::backend::{
     AncestryBackend, BranchlessQueries, CommitMetadataBackend, RepositoryStateBackend,
 };
-use crate::cli::{Backend, ColourMode, Order, Palette, RuntimeOptions, Verbosity};
+use crate::cli::{Backend, ColourMode, Layout, Order, Palette, RuntimeOptions, Verbosity};
 use crate::model::{
     BranchAnnotation, BranchPoint, BranchPointRef, BuiltLanes, CommitMeta, Lane, RewrittenCommit,
 };
@@ -263,6 +263,7 @@ fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
         order: Order::Newest,
         colour_mode: ColourMode::Never,
         palette: Palette::Classic,
+        layout: Layout::Inline,
     }
 }
 
@@ -1081,6 +1082,7 @@ fn builds_lanes_from_backend_facts() {
         order: Order::Newest,
         colour_mode: ColourMode::Never,
         palette: Palette::Classic,
+        layout: Layout::Inline,
     };
     let mut cache = HashMap::new();
 
