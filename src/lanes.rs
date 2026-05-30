@@ -160,12 +160,7 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend) -> Result<LaneSelection>
 
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let head_oids = plain_git_stack_heads(git, points_by_oid.keys())?;
-    if head_oids.is_empty() {
-        return Ok(LaneSelection::Empty {
-            main_oid,
-            repository,
-        });
-    }
+    debug_assert!(!head_oids.is_empty());
 
     Ok(LaneSelection::Populated {
         main_oid,
