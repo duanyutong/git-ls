@@ -23,11 +23,7 @@ pub(super) fn display_rewritten_commit(
 
         let status = ctx.colours.metadata_punctuation("rewritten as");
         let body = format!("{count_column} {old_oid} {status} {replacement_oid}");
-        return if ctx.verbosity.includes_title() {
-            format!("{body} {}", ctx.colours.commit_title(&commit.meta.subject))
-        } else {
-            body
-        };
+        return format!("{body} {}", ctx.colours.commit_title(&commit.meta.subject));
     }
 
     let age = format_age(ctx.now_timestamp, commit.meta.timestamp);
@@ -48,12 +44,8 @@ pub(super) fn display_rewritten_commit(
 
     let prefix = format!("{age} {open}{status} {replacement_oid}{close}");
 
-    if ctx.verbosity.includes_title() {
-        format!(
-            "{prefix} {old_oid} {}",
-            ctx.colours.commit_title(&commit.meta.subject)
-        )
-    } else {
-        format!("{prefix} {old_oid}")
-    }
+    format!(
+        "{prefix} {old_oid} {}",
+        ctx.colours.commit_title(&commit.meta.subject)
+    )
 }

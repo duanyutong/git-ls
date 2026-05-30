@@ -2,6 +2,7 @@ mod colours;
 mod columns;
 mod graph;
 mod layout;
+mod line;
 mod metadata;
 mod orphan;
 mod rewrite;

@@ -182,6 +182,14 @@ mod tests {
     }
 
     #[test]
+    fn fits_fixed_suffix_rows_to_tiny_terminal_widths() {
+        let line = RenderLine::with_fixed_suffix("prefix", "abcdef");
+
+        assert_eq!(fit_line_with_fixed_suffix(&line, Some(0)).as_ref(), "");
+        assert_eq!(fit_line_with_fixed_suffix(&line, Some(3)).as_ref(), "...");
+    }
+
+    #[test]
     fn pads_columns_suffix_to_the_right_edge_when_no_truncation_is_required() {
         let line = RenderLine::with_fixed_suffix(" 1h   ◇─┘ - main", "25353c1");
 

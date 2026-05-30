@@ -280,3 +280,77 @@ fn render_lane_groups_aligns_the_age_gutter_across_every_row() {
         ]
     );
 }
+
+#[test]
+fn render_lane_groups_preserves_high_verbosity_column_identifiers_as_fixed_suffixes() {
+    let colours = test_colours(false);
+    let main_meta = CommitMeta::new("main-oid", TEST_COMMIT_TIME, "main tip");
+    let groups = vec![
+        LaneGroup {
+            base_oid: Some("base-oid".to_string()),
+            base_meta: Some(CommitMeta::new("base-oid", TEST_COMMIT_TIME, "base point")),
+            main_distance: Some(1),
+            lanes: vec![Lane {
+                head_oid: "feature-oid".to_string(),
+                base_oid: Some("base-oid".to_string()),
+                branch_points: vec![point_with_count_at(
+                    "feature-oid",
+                    &["feature/topic"],
+                    3,
+                    "feature tip",
+                    TEST_COMMIT_TIME,
+                )],
+                rewritten_commits: Vec::new(),
+                head_timestamp: TEST_COMMIT_TIME,
+                contains_current: false,
+            }],
+        },
+        LaneGroup {
+            base_oid: None,
+            base_meta: None,
+            main_distance: None,
+            lanes: vec![Lane {
+                head_oid: "backup-oid".to_string(),
+                base_oid: None,
+                branch_points: vec![point_with_count_at(
+                    "backup-oid",
+                    &["backup"],
+                    2,
+                    "backup tip",
+                    TEST_COMMIT_TIME,
+                )],
+                rewritten_commits: Vec::new(),
+                head_timestamp: TEST_COMMIT_TIME,
+                contains_current: false,
+            }],
+        },
+    ];
+    let widths = calculate_metadata_widths(&groups, Some(&main_meta), TEST_NOW, Verbosity::High);
+    let ctx = RenderContext::new(
+        "main",
+        Some(&main_meta),
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::High,
+        widths,
+        &colours,
+    )
+    .with_layout(Layout::Columns);
+
+    let suffixes = render_lane_groups(&groups, &ctx)
+        .iter()
+        .filter_map(|line| line.fixed_suffix())
+        .map(|(_, suffix)| suffix.to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        suffixes,
+        vec![
+            "main-oi".to_string(),
+            "feature".to_string(),
+            "base-oi".to_string(),
+            "backup-".to_string(),
+        ]
+    );
+}

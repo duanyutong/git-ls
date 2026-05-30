@@ -373,6 +373,66 @@ fn propagates_lane_selection_query_and_repository_errors() {
 }
 
 #[test]
+fn propagates_custom_branchless_main_query_errors() {
+    let args = runtime_options_with_revset("custom()", Verbosity::Low);
+    let mut cache = HashMap::new();
+
+    let error = build_lanes(&FakeLaneBackend::default(), &args, &mut cache).unwrap_err();
+
+    assert_test_fixture_error(error, "revset");
+}
+
+#[test]
+fn default_branchless_selection_falls_back_when_branch_or_head_queries_fail() {
+    let default_revset = branch_revset(DEFAULT_REVSET);
+    let missing_branch_names =
+        FakeLaneBackend::default().with_revset("main()", false, &["main-oid"]);
+
+    assert!(
+        query_branchless_lane_selection(&missing_branch_names, DEFAULT_REVSET, false)
+            .unwrap()
+            .is_none()
+    );
+
+    let missing_heads = FakeLaneBackend::default()
+        .with_revset("main()", false, &["main-oid"])
+        .with_branch_names(&default_revset, false, &["feature/one"])
+        .with_head(Some("head"), Some("feature/one"))
+        .with_main_name("main")
+        .with_local_branches(&[("head", &["feature/one"])]);
+
+    assert!(
+        query_branchless_lane_selection(&missing_heads, DEFAULT_REVSET, false)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn builds_empty_branchless_selection_for_custom_empty_revsets() {
+    let revset = "((custom()) & branches()) - public()";
+    let git = FakeLaneBackend::default()
+        .with_revset("main()", false, &["main-oid"])
+        .with_branch_names(revset, false, &[])
+        .with_head(Some("main-oid"), Some("main"))
+        .with_main_name("main");
+    let args = runtime_options_with_revset("custom()", Verbosity::Low);
+    let mut cache = HashMap::new();
+
+    let BuiltLanes::Empty {
+        main_oid,
+        repository,
+    } = build_lanes(&git, &args, &mut cache).unwrap()
+    else {
+        panic!("expected empty selection");
+    };
+
+    assert_eq!(main_oid, "main-oid");
+    assert_eq!(repository.main_name, "main");
+    assert_eq!(repository.head.as_deref(), Some("main-oid"));
+}
+
+#[test]
 fn falls_back_to_plain_git_when_branchless_is_unavailable() {
     let git = FakeLaneBackend::default()
         .with_local_branches(&[
@@ -411,6 +471,37 @@ fn falls_back_to_plain_git_when_branchless_is_unavailable() {
             point("base", &["feature/base"]),
         ]
     );
+}
+
+#[test]
+fn populated_branchless_selection_propagates_repository_snapshot_errors() {
+    let revset = "((custom()) & branches()) - public()";
+    let args = runtime_options_with_revset("custom()", Verbosity::Low);
+    let cases = [
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_current_state_error("current state failed"),
+            "current state failed",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_revset("main()", false, &["main-oid"])
+                .with_branch_names(revset, false, &["feature/one"])
+                .with_head(Some("head"), Some("feature/one"))
+                .with_main_name_error("main branch failed"),
+            "main branch failed",
+        ),
+    ];
+
+    for (git, expected) in cases {
+        let mut cache = HashMap::new();
+
+        let error = build_lanes(&git, &args, &mut cache).unwrap_err();
+
+        assert_test_fixture_error(error, expected);
+    }
 }
 
 #[test]
@@ -454,6 +545,109 @@ fn plain_git_fallback_excludes_branches_already_merged_to_main() {
     };
 
     assert_eq!(main_oid, "main-oid");
+}
+
+#[test]
+fn plain_git_fallback_propagates_repository_state_errors() {
+    let cases = [
+        (
+            FakeLaneBackend::default()
+                .with_local_branches(&[("main-oid", &["main"])])
+                .with_main_name_error("main branch failed"),
+            "main branch failed",
+        ),
+        (
+            FakeLaneBackend::default()
+                .with_local_branches(&[("main-oid", &["main"])])
+                .with_current_state_error("current state failed"),
+            "current state failed",
+        ),
+    ];
+
+    for (git, expected) in cases {
+        let mut cache = HashMap::new();
+
+        let error = build_lanes(&git, &runtime_options(Verbosity::Low), &mut cache).unwrap_err();
+
+        assert_test_fixture_error(error, expected);
+    }
+}
+
+#[test]
+fn plain_git_fallback_propagates_main_resolution_and_ancestry_errors() {
+    let missing_main = FakeLaneBackend::default().with_local_branches(&[("tip", &["feature/tip"])]);
+    let mut cache = HashMap::new();
+    assert!(matches!(
+        build_lanes(&missing_main, &runtime_options(Verbosity::Low), &mut cache),
+        Err(GitLsError::PlainGitMainBranchNotFound { .. })
+    ));
+
+    let missing_branch_ancestry = FakeLaneBackend::default()
+        .with_local_branches(&[("main-oid", &["main"]), ("tip", &["feature/tip"])])
+        .with_head(Some("tip"), Some("feature/tip"));
+    let mut cache = HashMap::new();
+    let error = build_lanes(
+        &missing_branch_ancestry,
+        &runtime_options(Verbosity::Low),
+        &mut cache,
+    )
+    .unwrap_err();
+    assert_test_fixture_error(error, "merge base");
+
+    let missing_stack_ancestry = FakeLaneBackend::default()
+        .with_local_branches(&[
+            ("main-oid", &["main"]),
+            ("first", &["feature/first"]),
+            ("second", &["feature/second"]),
+        ])
+        .with_head(Some("first"), Some("feature/first"))
+        .with_merge_base("first", "main-oid", None)
+        .with_merge_base("second", "main-oid", None);
+    let mut cache = HashMap::new();
+    let error = build_lanes(
+        &missing_stack_ancestry,
+        &runtime_options(Verbosity::Low),
+        &mut cache,
+    )
+    .unwrap_err();
+    assert_test_fixture_error(error, "merge base");
+}
+
+#[test]
+fn plain_git_main_branch_uses_fallback_candidates_and_reports_absence() {
+    let branch_oid_map = HashMap::from([("trunk-oid".to_string(), vec!["trunk".to_string()])]);
+
+    assert_eq!(
+        plain_git_main_branch(&branch_oid_map, "missing").unwrap(),
+        ("trunk".to_string(), "trunk-oid".to_string())
+    );
+
+    let error = plain_git_main_branch(&HashMap::new(), "missing").unwrap_err();
+    assert!(matches!(
+        error,
+        GitLsError::PlainGitMainBranchNotFound { .. }
+    ));
+    assert_eq!(
+        error.to_string(),
+        "could not resolve plain Git main branch from local branches; tried missing, main, master, trunk"
+    );
+}
+
+#[test]
+fn plain_git_stack_heads_handles_empty_and_identical_inputs() {
+    let git = FakeLaneBackend::default();
+    let empty: Vec<String> = Vec::new();
+    assert_eq!(
+        plain_git_stack_heads(&git, empty.iter()).unwrap(),
+        Vec::<String>::new()
+    );
+
+    let selected = ["same".to_string()];
+    assert_eq!(
+        plain_git_stack_heads(&git, selected.iter()).unwrap(),
+        vec!["same".to_string()]
+    );
+    assert!(is_ancestor(&git, "same", "same").unwrap());
 }
 
 #[test]
@@ -830,6 +1024,41 @@ fn detects_rewritten_commits_whose_current_target_is_selected() {
 }
 
 #[test]
+fn ignores_rewritten_candidates_without_exactly_one_current_target() {
+    let git = FakeLaneBackend::default()
+        .with_revset("current(old)", true, &[])
+        .with_revset("current(other)", true, &["first", "second"]);
+    let points_by_oid = HashMap::from([(
+        "replacement".to_string(),
+        point_ref("replacement", &["base"]),
+    )]);
+    let lane_path = LanePath {
+        head_oid: "replacement".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "other".to_string()],
+    };
+
+    let rewritten = rewritten_commits_for_path(&git, &lane_path, &points_by_oid).unwrap();
+
+    assert!(rewritten.is_empty());
+}
+
+#[test]
+fn rewritten_commit_detection_propagates_current_query_errors() {
+    let git = FakeLaneBackend::default();
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "head".to_string()],
+    };
+
+    let error = rewritten_commits_for_path(&git, &lane_path, &points_by_oid).unwrap_err();
+
+    assert_test_fixture_error(error, "revset");
+}
+
+#[test]
 fn builds_lane_from_path_with_metadata_and_current_status() {
     let git = FakeLaneBackend::default()
         .with_meta("a", "first", 10)
@@ -915,6 +1144,75 @@ fn builds_lane_from_path_with_rewritten_commit_marker() {
             CommitMeta::new("replacement", 30, "new base"),
         )]
     );
+}
+
+#[test]
+fn build_lane_from_path_propagates_rewritten_query_errors() {
+    let git = FakeLaneBackend::default();
+    let points_by_oid = HashMap::from([("head".to_string(), point_ref("head", &["feature/head"]))]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let error = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        lane_context(None, None, Verbosity::Low, true),
+        &mut cache,
+    )
+    .unwrap_err();
+
+    assert_test_fixture_error(error, "revset");
+}
+
+#[test]
+fn build_lane_from_path_propagates_rewritten_metadata_errors() {
+    let git = FakeLaneBackend::default()
+        .with_revset("current(old)", true, &["replacement"])
+        .with_meta("head", "head", 20)
+        .with_meta("replacement", "new base", 30);
+    let points_by_oid = HashMap::from([
+        ("head".to_string(), point_ref("head", &["feature/head"])),
+        (
+            "replacement".to_string(),
+            point_ref("replacement", &["feature/base"]),
+        ),
+    ]);
+    let lane_path = LanePath {
+        head_oid: "head".to_string(),
+        base_oid: Some("main-oid".to_string()),
+        ancestry_path: vec!["old".to_string(), "head".to_string()],
+    };
+    let mut cache = HashMap::new();
+
+    let error = build_lane_from_path(
+        &git,
+        &lane_path,
+        &points_by_oid,
+        lane_context(None, None, Verbosity::Low, true),
+        &mut cache,
+    )
+    .unwrap_err();
+
+    assert_test_fixture_error(error, "metadata");
+}
+
+#[test]
+fn build_rewritten_commits_propagates_replacement_metadata_errors() {
+    let git = FakeLaneBackend::default().with_meta("old", "old base", 10);
+    let rewritten_refs = vec![RewrittenCommitRef {
+        oid: "old".to_string(),
+        replacement_oid: "replacement".to_string(),
+    }];
+    let mut cache = HashMap::new();
+
+    let error = build_rewritten_commits(&git, &rewritten_refs, &mut cache).unwrap_err();
+
+    assert_test_fixture_error(error, "metadata");
 }
 
 #[test]

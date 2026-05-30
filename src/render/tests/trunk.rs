@@ -1,9 +1,10 @@
 use crate::cli::Verbosity;
+use crate::model::CommitMeta;
 use crate::render::RenderContext;
 use crate::render::graph::{LaneRenderLayout, MainSpine};
 use crate::render::metadata::MetadataWidths;
-use crate::render::trunk::{render_collapsed_main_segment, trunk_prefix};
-use crate::test_support::TEST_NOW;
+use crate::render::trunk::{TrunkLabel, render_collapsed_main_segment, trunk_label, trunk_prefix};
+use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
 
 use super::test_colours;
 
@@ -43,5 +44,26 @@ fn collapsed_main_segment_uses_singular_commit_label() {
             "  ⁝ (1 commit on main)".to_string(),
             "  │".to_string(),
         ]
+    );
+}
+
+#[test]
+fn inline_trunk_commit_label_includes_metadata_title() {
+    let colours = test_colours(false);
+    let base_meta = CommitMeta::new("old-main", TEST_COMMIT_TIME, "old main point");
+    let ctx = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::High,
+        MetadataWidths { age: 2, count: 2 },
+        &colours,
+    );
+
+    assert_eq!(
+        trunk_label(TrunkLabel::Commit(&base_meta), &ctx),
+        "2m (--, old-mai) old main point"
     );
 }
