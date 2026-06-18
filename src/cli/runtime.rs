@@ -7,6 +7,7 @@ use super::values::{Backend, ColourMode, Layout, Order, Palette, Verbosity};
 pub(crate) struct RuntimeOptions {
     pub(crate) revset: String,
     pub(crate) hidden: bool,
+    pub(crate) debug: bool,
     pub(crate) verbosity: Verbosity,
     pub(crate) backend: Backend,
     pub(crate) order: Order,
@@ -22,6 +23,7 @@ impl RuntimeOptions {
         Self {
             revset: args.revset.clone(),
             hidden: args.hidden,
+            debug: args.debug,
             verbosity: args
                 .explicit_verbosity()
                 .or(config.verbosity)
@@ -64,6 +66,7 @@ mod tests {
         Args {
             revset: DEFAULT_REVSET.to_string(),
             hidden: false,
+            debug: false,
             verbose,
             verbosity,
             backend,
@@ -87,6 +90,7 @@ mod tests {
             RuntimeOptions {
                 revset: DEFAULT_REVSET.to_string(),
                 hidden: false,
+                debug: false,
                 verbosity: DEFAULT_RUNTIME_OPTIONS.verbosity,
                 backend: DEFAULT_RUNTIME_OPTIONS.backend,
                 order: DEFAULT_RUNTIME_OPTIONS.order,

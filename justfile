@@ -71,6 +71,7 @@ install-hooks:
 install-tools:
     cargo binstall --no-confirm \
         cargo-deny@0.19.8 \
+        cargo-edit@0.13.11 \
         cargo-llvm-cov@0.8.7 \
         cargo-machete@0.9.2 \
         cargo-sort@2.1.4 \
