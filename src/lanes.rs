@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use crate::backend::{
     AncestryBackend, BranchlessQueries, GitBackend, RepositoryStateBackend, get_commit_meta,
@@ -13,6 +14,12 @@ use crate::model::{
 
 fn branch_revset(user_revset: &str) -> String {
     format!("(({user_revset}) & branches()) - public()")
+}
+
+fn debug_log(enabled: bool, message: fmt::Arguments<'_>) {
+    if enabled {
+        eprintln!("git-ls debug: {message}");
+    }
 }
 
 fn branch_points_by_oid(
@@ -76,12 +83,18 @@ fn query_lane_selection(
     git: &dyn GitBackend,
     user_revset: &str,
     hidden: bool,
+    debug: bool,
 ) -> Result<LaneSelection> {
-    if let Some(selection) = query_branchless_lane_selection(git, user_revset, hidden)? {
+    debug_log(
+        debug,
+        format_args!("selection: trying branchless revset={user_revset:?} hidden={hidden}"),
+    );
+    if let Some(selection) = query_branchless_lane_selection(git, user_revset, hidden, debug)? {
         return Ok(selection);
     }
 
-    query_plain_git_lane_selection(git)
+    debug_log(debug, format_args!("selection: using plain Git fallback"));
+    query_plain_git_lane_selection(git, debug)
 }
 
 fn uses_plain_git_fallback(user_revset: &str) -> bool {
@@ -92,11 +105,18 @@ fn query_branchless_lane_selection(
     git: &dyn GitBackend,
     user_revset: &str,
     hidden: bool,
+    debug: bool,
 ) -> Result<Option<LaneSelection>> {
     let revset = branch_revset(user_revset);
     let main_oids = match BranchlessQueries::query_revset(git, "main()", hidden) {
         Ok(main_oids) => main_oids,
-        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) if uses_plain_git_fallback(user_revset) => {
+            debug_log(
+                debug,
+                format_args!("branchless selection: main() query failed: {error}"),
+            );
+            return Ok(None);
+        }
         Err(error) => return Err(error),
     };
     if main_oids.len() != 1 {
@@ -106,11 +126,21 @@ fn query_branchless_lane_selection(
 
     let branch_names = match BranchlessQueries::query_branch_names(git, &revset, hidden) {
         Ok(branch_names) => branch_names,
-        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) if uses_plain_git_fallback(user_revset) => {
+            debug_log(
+                debug,
+                format_args!("branchless selection: branch query failed: {error}"),
+            );
+            return Ok(None);
+        }
         Err(error) => return Err(error),
     };
     if branch_names.is_empty() {
         if uses_plain_git_fallback(user_revset) {
+            debug_log(
+                debug,
+                format_args!("branchless selection: default revset selected no branches"),
+            );
             return Ok(None);
         }
         let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
@@ -130,9 +160,25 @@ fn query_branchless_lane_selection(
     let heads_revset = format!("heads({revset})");
     let head_oids = match BranchlessQueries::query_revset(git, &heads_revset, hidden) {
         Ok(head_oids) => head_oids,
-        Err(_) if uses_plain_git_fallback(user_revset) => return Ok(None),
+        Err(error) if uses_plain_git_fallback(user_revset) => {
+            debug_log(
+                debug,
+                format_args!("branchless selection: heads query failed: {error}"),
+            );
+            return Ok(None);
+        }
         Err(error) => return Err(error),
     };
+
+    debug_log(
+        debug,
+        format_args!(
+            "branchless selection: branches={} heads={} main={}",
+            branch_names.len(),
+            head_oids.len(),
+            main_oid
+        ),
+    );
 
     Ok(Some(LaneSelection::Populated {
         main_oid,
@@ -143,13 +189,31 @@ fn query_branchless_lane_selection(
     }))
 }
 
-fn query_plain_git_lane_selection(git: &dyn GitBackend) -> Result<LaneSelection> {
+fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<LaneSelection> {
     let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
+    debug_log(
+        debug,
+        format_args!(
+            "plain Git fallback: local branch tips={}",
+            branch_oid_map.len()
+        ),
+    );
     let configured_main_name = RepositoryStateBackend::main_branch_name(git)?;
     let (main_name, main_oid) = plain_git_main_branch(&branch_oid_map, &configured_main_name)?;
+    debug_log(
+        debug,
+        format_args!("plain Git fallback: main branch={main_name} oid={main_oid}"),
+    );
     let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name.clone());
     let branch_names = plain_git_branch_names(git, &branch_oid_map, &main_name, &main_oid)?;
+    debug_log(
+        debug,
+        format_args!(
+            "plain Git fallback: selected local branches={}",
+            branch_names.len()
+        ),
+    );
 
     if branch_names.is_empty() {
         return Ok(LaneSelection::Empty {
@@ -160,6 +224,10 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend) -> Result<LaneSelection>
 
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let head_oids = plain_git_stack_heads(git, points_by_oid.keys())?;
+    debug_log(
+        debug,
+        format_args!("plain Git fallback: stack heads={}", head_oids.len()),
+    );
     debug_assert!(!head_oids.is_empty());
 
     Ok(LaneSelection::Populated {
@@ -409,6 +477,7 @@ struct LaneBuildContext<'a> {
     head: Option<&'a str>,
     verbosity: Verbosity,
     detect_rewritten_commits: bool,
+    debug: bool,
 }
 
 fn build_lane_from_path(
@@ -424,7 +493,19 @@ fn build_lane_from_path(
     }
 
     let rewritten_refs = if context.detect_rewritten_commits {
-        rewritten_commits_for_path(git, lane_path, points_by_oid)?
+        debug_log(
+            context.debug,
+            format_args!(
+                "lane: detecting rewritten commits along {} ancestry commits",
+                lane_path.ancestry_path.len()
+            ),
+        );
+        let rewritten_refs = rewritten_commits_for_path(git, lane_path, points_by_oid)?;
+        debug_log(
+            context.debug,
+            format_args!("lane: detected rewritten commits={}", rewritten_refs.len()),
+        );
+        rewritten_refs
     } else {
         Vec::new()
     };
@@ -461,6 +542,10 @@ fn build_lane(
     context: LaneBuildContext<'_>,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Option<Lane>> {
+    debug_log(
+        context.debug,
+        format_args!("lane: collecting ancestry path main={main_oid} head={head_oid}"),
+    );
     let lane_path = collect_lane_path(git, main_oid, head_oid)?;
     build_lane_from_path(git, &lane_path, points_by_oid, context, meta_cache)
 }
@@ -471,7 +556,7 @@ pub(crate) fn build_lanes(
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BuiltLanes> {
     let (main_oid, head_oids, points_by_oid, repository, detect_rewritten_commits) =
-        match query_lane_selection(git, &args.revset, args.hidden)? {
+        match query_lane_selection(git, &args.revset, args.hidden, args.debug)? {
             LaneSelection::Empty {
                 main_oid,
                 repository,
@@ -493,6 +578,16 @@ pub(crate) fn build_lanes(
             ),
         };
 
+    debug_log(
+        args.debug,
+        format_args!(
+            "selection: populated main={} heads={} branch_points={} rewritten_detection={}",
+            main_oid,
+            head_oids.len(),
+            points_by_oid.len(),
+            detect_rewritten_commits
+        ),
+    );
     prefetch_lane_metadata(git, &head_oids, &points_by_oid, args.verbosity, meta_cache)?;
 
     let mut lanes = Vec::new();
@@ -507,6 +602,7 @@ pub(crate) fn build_lanes(
                 head: repository.head.as_deref(),
                 verbosity: args.verbosity,
                 detect_rewritten_commits,
+                debug: args.debug,
             },
             meta_cache,
         )? {
@@ -551,8 +647,13 @@ pub(crate) fn build_lane_groups(
     lanes: Vec<Lane>,
     main_oid: &str,
     order: Order,
+    debug: bool,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Vec<LaneGroup>> {
+    debug_log(
+        debug,
+        format_args!("lane groups: building groups for {} lanes", lanes.len()),
+    );
     let mut groups = Vec::new();
     for (base_oid, lanes) in grouped_by_base(lanes, order) {
         let base_meta = match base_oid.as_deref() {
@@ -564,6 +665,12 @@ pub(crate) fn build_lane_groups(
         let main_distance = match base_oid.as_deref() {
             Some(base_oid) if base_oid == main_oid => Some(0),
             Some(base_oid) => {
+                debug_log(
+                    debug,
+                    format_args!(
+                        "lane groups: measuring main distance base={base_oid} main={main_oid}"
+                    ),
+                );
                 let path = AncestryBackend::ancestry_path(git, Some(base_oid), main_oid)?;
                 if path.is_empty() {
                     None

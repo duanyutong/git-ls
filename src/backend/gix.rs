@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gix::bstr::ByteSlice as _;
 
@@ -17,6 +17,11 @@ use super::traits::{
 pub(crate) struct GixBackend {
     repo: gix::Repository,
     command: ProcessGit,
+}
+
+struct PendingCommit {
+    oid: gix::ObjectId,
+    parents: Option<Vec<gix::ObjectId>>,
 }
 
 impl GixBackend {
@@ -72,20 +77,63 @@ impl GixBackend {
             return Ok(*result);
         }
 
-        let commit_object = self
-            .repo
-            .find_commit(commit)
-            .map_err(|source| GitLsError::gix("find ancestry commit", source))?;
-        for parent in commit_object.parent_ids() {
-            let parent = parent.detach();
-            if parent == ancestor || self.is_descendant_of(parent, ancestor, cache)? {
-                cache.insert(commit, true);
-                return Ok(true);
+        let mut scheduled = HashSet::from([commit]);
+        let mut stack = vec![PendingCommit {
+            oid: commit,
+            parents: None,
+        }];
+
+        while let Some(pending) = stack.pop() {
+            if cache.contains_key(&pending.oid) {
+                continue;
+            }
+            if pending.oid == ancestor {
+                cache.insert(pending.oid, true);
+                continue;
+            }
+
+            if let Some(parents) = pending.parents {
+                let descendant = parents.iter().any(|parent| {
+                    *parent == ancestor || cache.get(parent).copied().unwrap_or(false)
+                });
+                cache.insert(pending.oid, descendant);
+            } else {
+                let commit_object = self
+                    .repo
+                    .find_commit(pending.oid)
+                    .map_err(|source| GitLsError::gix("find ancestry commit", source))?;
+                let parents = commit_object
+                    .parent_ids()
+                    .map(gix::Id::detach)
+                    .collect::<Vec<_>>();
+
+                if parents.iter().any(|parent| {
+                    *parent == ancestor || cache.get(parent).copied().unwrap_or(false)
+                }) {
+                    cache.insert(pending.oid, true);
+                    continue;
+                }
+                if parents.iter().all(|parent| cache.contains_key(parent)) {
+                    cache.insert(pending.oid, false);
+                    continue;
+                }
+
+                stack.push(PendingCommit {
+                    oid: pending.oid,
+                    parents: Some(parents.clone()),
+                });
+                for parent in parents.into_iter().rev() {
+                    if !cache.contains_key(&parent) && scheduled.insert(parent) {
+                        stack.push(PendingCommit {
+                            oid: parent,
+                            parents: None,
+                        });
+                    }
+                }
             }
         }
 
-        cache.insert(commit, false);
-        Ok(false)
+        Ok(cache.get(&commit).copied().unwrap_or(false))
     }
 }
 

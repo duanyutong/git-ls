@@ -36,6 +36,7 @@ fn runtime_options(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
     RuntimeOptions {
         revset: revset.to_string(),
         hidden: false,
+        debug: false,
         verbosity,
         backend: Backend::Shell,
         order: Order::Newest,
@@ -159,6 +160,7 @@ fn parses_default_arguments() {
         Args {
             revset: "draft()".to_string(),
             hidden: false,
+            debug: false,
             verbose: 0,
             verbosity: None,
             backend: None,
@@ -175,6 +177,7 @@ fn parses_flags_and_revset() {
     assert_eq!(
         parse_args_from([
             "--hidden",
+            "--debug",
             "--backend=shell",
             "--order=oldest",
             "--colour",
@@ -189,6 +192,7 @@ fn parses_flags_and_revset() {
         Args {
             revset: "draft() & branches(feature/)".to_string(),
             hidden: true,
+            debug: true,
             verbose: 0,
             verbosity: None,
             backend: Some(Backend::Shell),
@@ -255,6 +259,7 @@ fn parses_dash_prefixed_revset_after_separator() {
         Args {
             revset: "-synthetic-revset".to_string(),
             hidden: false,
+            debug: false,
             verbose: 0,
             verbosity: None,
             backend: None,

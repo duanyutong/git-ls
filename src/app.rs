@@ -22,6 +22,12 @@ use crate::terminal::{RenderEnvironment, write_rendered_line};
 mod env;
 pub(crate) use env::run_from_env;
 
+fn debug_log(enabled: bool, message: std::fmt::Arguments<'_>) {
+    if enabled {
+        eprintln!("git-ls debug: {message}");
+    }
+}
+
 fn parse_args_from<I, S>(args: I) -> Result<Args>
 where
     I: IntoIterator<Item = S>,
@@ -123,6 +129,13 @@ fn build_render_plan(
     git: &dyn GitBackend,
     environment: RenderEnvironment,
 ) -> Result<RenderPlan> {
+    debug_log(
+        args.debug,
+        format_args!(
+            "render plan: backend={:?} revset={:?} hidden={} order={:?} layout={:?}",
+            args.backend, args.revset, args.hidden, args.order, args.layout
+        ),
+    );
     let colours = Colours::new(environment.colour_enabled(args.colour_mode), args.palette);
 
     let mut meta_cache = HashMap::new();
@@ -131,6 +144,13 @@ fn build_render_plan(
             main_oid,
             repository,
         } => {
+            debug_log(
+                args.debug,
+                format_args!(
+                    "render plan: empty selection main={} main_branch={}",
+                    main_oid, repository.main_name
+                ),
+            );
             let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;
             let session =
                 RenderSession::new(args, &repository, main_meta.as_ref(), environment, &colours);
@@ -141,8 +161,24 @@ fn build_render_plan(
             main_oid,
             repository,
         } => {
+            debug_log(
+                args.debug,
+                format_args!(
+                    "render plan: populated selection lanes={} main={} main_branch={}",
+                    lanes.len(),
+                    main_oid,
+                    repository.main_name
+                ),
+            );
             let lanes = ordered_lanes(lanes, args.order);
-            let groups = build_lane_groups(git, lanes, &main_oid, args.order, &mut meta_cache)?;
+            let groups = build_lane_groups(
+                git,
+                lanes,
+                &main_oid,
+                args.order,
+                args.debug,
+                &mut meta_cache,
+            )?;
             let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;
             let session =
                 RenderSession::new(args, &repository, main_meta.as_ref(), environment, &colours);

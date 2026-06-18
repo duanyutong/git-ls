@@ -31,6 +31,9 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) hidden: bool,
 
+    #[arg(long)]
+    pub(crate) debug: bool,
+
     #[arg(short, long, action = ArgAction::Count)]
     pub(crate) verbose: u8,
 

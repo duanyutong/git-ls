@@ -251,6 +251,7 @@ fn lane_context<'a>(
         head,
         verbosity,
         detect_rewritten_commits,
+        debug: false,
     }
 }
 
@@ -258,6 +259,7 @@ fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
     RuntimeOptions {
         revset: "draft()".to_string(),
         hidden: false,
+        debug: false,
         verbosity,
         backend: Backend::Gix,
         order: Order::Newest,
@@ -389,7 +391,7 @@ fn default_branchless_selection_falls_back_when_branch_or_head_queries_fail() {
         FakeLaneBackend::default().with_revset("main()", false, &["main-oid"]);
 
     assert!(
-        query_branchless_lane_selection(&missing_branch_names, DEFAULT_REVSET, false)
+        query_branchless_lane_selection(&missing_branch_names, DEFAULT_REVSET, false, false)
             .unwrap()
             .is_none()
     );
@@ -402,7 +404,7 @@ fn default_branchless_selection_falls_back_when_branch_or_head_queries_fail() {
         .with_local_branches(&[("head", &["feature/one"])]);
 
     assert!(
-        query_branchless_lane_selection(&missing_heads, DEFAULT_REVSET, false)
+        query_branchless_lane_selection(&missing_heads, DEFAULT_REVSET, false, false)
             .unwrap()
             .is_none()
     );
@@ -815,7 +817,8 @@ fn builds_lane_groups_with_main_history_distances() {
     ];
     let mut cache = HashMap::new();
 
-    let groups = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap();
+    let groups =
+        build_lane_groups(&git, lanes, "main-oid", Order::Newest, false, &mut cache).unwrap();
 
     assert_eq!(groups.len(), 2);
     assert_eq!(groups[0].base_oid, Some("main-oid".to_string()));
@@ -843,7 +846,8 @@ fn builds_lane_groups_without_main_distance_for_empty_or_orphaned_base_paths() {
     ];
     let mut cache = HashMap::new();
 
-    let groups = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap();
+    let groups =
+        build_lane_groups(&git, lanes, "main-oid", Order::Newest, false, &mut cache).unwrap();
 
     assert_eq!(groups.len(), 2);
     assert!(groups.iter().all(|group| group.main_distance.is_none()));
@@ -856,7 +860,8 @@ fn build_lane_groups_propagates_main_distance_path_errors() {
     let lanes = vec![lane("old", Some("old-main"), 2, false)];
     let mut cache = HashMap::new();
 
-    let error = build_lane_groups(&git, lanes, "main-oid", Order::Newest, &mut cache).unwrap_err();
+    let error =
+        build_lane_groups(&git, lanes, "main-oid", Order::Newest, false, &mut cache).unwrap_err();
 
     assert_test_fixture_error(error, "ancestry path");
 }
@@ -1375,6 +1380,7 @@ fn builds_lanes_from_backend_facts() {
     let args = RuntimeOptions {
         revset: "draft()".to_string(),
         hidden: false,
+        debug: false,
         verbosity: Verbosity::Low,
         backend: Backend::Gix,
         order: Order::Newest,
