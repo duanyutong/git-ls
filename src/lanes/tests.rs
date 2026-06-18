@@ -294,6 +294,12 @@ fn creates_branch_revset() {
 }
 
 #[test]
+fn uses_plain_git_fallback_trims_default_revset() {
+    assert!(uses_plain_git_fallback(" draft() "));
+    assert!(!uses_plain_git_fallback("custom()"));
+}
+
+#[test]
 fn maps_selected_branch_points_by_oid() {
     let mut branches = HashMap::new();
     branches.insert(
@@ -408,6 +414,48 @@ fn default_branchless_selection_falls_back_when_branch_or_head_queries_fail() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn query_branchless_lane_selection_builds_populated_selection() {
+    let user_revset = "custom()";
+    let revset = branch_revset(user_revset);
+    let git = FakeLaneBackend::default()
+        .with_revset("main()", true, &["main-oid"])
+        .with_branch_names(&revset, true, &["feature/one", "feature/two"])
+        .with_head(Some("tip"), Some("feature/two"))
+        .with_main_name("trunk")
+        .with_local_branches(&[
+            ("base", &["feature/one"]),
+            ("tip", &["feature/two"]),
+            ("main-oid", &["trunk"]),
+        ])
+        .with_revset(&format!("heads({revset})"), true, &["tip"]);
+
+    let Some(LaneSelection::Populated {
+        main_oid,
+        head_oids,
+        points_by_oid,
+        repository,
+        detect_rewritten_commits,
+    }) = query_branchless_lane_selection(&git, user_revset, true, false).unwrap()
+    else {
+        panic!("expected populated branchless selection");
+    };
+
+    assert_eq!(main_oid, "main-oid");
+    assert_eq!(head_oids, vec!["tip".to_string()]);
+    assert_eq!(repository.main_name, "trunk");
+    assert_eq!(repository.current_branch.as_deref(), Some("feature/two"));
+    assert_eq!(
+        points_by_oid.get("base"),
+        Some(&point_ref("base", &["feature/one"]))
+    );
+    assert_eq!(
+        points_by_oid.get("tip"),
+        Some(&point_ref("tip", &["feature/two"]))
+    );
+    assert!(detect_rewritten_commits);
 }
 
 #[test]
@@ -636,6 +684,39 @@ fn plain_git_main_branch_uses_fallback_candidates_and_reports_absence() {
 }
 
 #[test]
+fn plain_git_branch_names_sorts_deduplicates_and_excludes_main_alias() {
+    let git = FakeLaneBackend::default()
+        .with_merge_base("feature-a", "main-oid", Some("main-oid"))
+        .with_merge_base("feature-b", "main-oid", Some("main-oid"));
+    let branch_oid_map = HashMap::from([
+        ("main-oid".to_string(), vec!["main".to_string()]),
+        (
+            "feature-a".to_string(),
+            vec![
+                "feature/z".to_string(),
+                "main".to_string(),
+                "feature/a".to_string(),
+            ],
+        ),
+        (
+            "feature-b".to_string(),
+            vec!["feature/a".to_string(), "feature/b".to_string()],
+        ),
+    ]);
+
+    let branch_names = plain_git_branch_names(&git, &branch_oid_map, "main", "main-oid").unwrap();
+
+    assert_eq!(
+        branch_names,
+        vec![
+            "feature/a".to_string(),
+            "feature/b".to_string(),
+            "feature/z".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn plain_git_stack_heads_handles_empty_and_identical_inputs() {
     let git = FakeLaneBackend::default();
     let empty: Vec<String> = Vec::new();
@@ -650,6 +731,22 @@ fn plain_git_stack_heads_handles_empty_and_identical_inputs() {
         vec!["same".to_string()]
     );
     assert!(is_ancestor(&git, "same", "same").unwrap());
+}
+
+#[test]
+fn plain_git_stack_heads_keeps_independent_heads_and_drops_ancestors() {
+    let git = FakeLaneBackend::default()
+        .with_merge_base("base", "other", None)
+        .with_merge_base("base", "tip", Some("base"))
+        .with_merge_base("other", "base", None)
+        .with_merge_base("other", "tip", None)
+        .with_merge_base("tip", "base", Some("base"))
+        .with_merge_base("tip", "other", None);
+    let selected = ["base".to_string(), "tip".to_string(), "other".to_string()];
+
+    let heads = plain_git_stack_heads(&git, selected.iter()).unwrap();
+
+    assert_eq!(heads, vec!["other".to_string(), "tip".to_string()]);
 }
 
 #[test]
@@ -692,6 +789,76 @@ fn propagates_lane_build_metadata_and_ancestry_errors() {
 
         assert_test_fixture_error(error, expected);
     }
+}
+
+#[test]
+fn prefetch_lane_metadata_requests_branch_points_when_metadata_is_rendered() {
+    let git = FakeLaneBackend::default()
+        .with_meta("base", "base", 10)
+        .with_meta("child", "child", 20)
+        .with_meta("tip", "tip", 30);
+    let head_oids = vec!["tip".to_string(), "child".to_string(), "tip".to_string()];
+    let points_by_oid = HashMap::from([
+        ("base".to_string(), point_ref("base", &["feature/base"])),
+        ("child".to_string(), point_ref("child", &["feature/child"])),
+    ]);
+    let mut cache = HashMap::new();
+
+    prefetch_lane_metadata(
+        &git,
+        &head_oids,
+        &points_by_oid,
+        Verbosity::Medium,
+        &mut cache,
+    )
+    .unwrap();
+
+    assert_eq!(
+        git.metadata_requests(),
+        vec![vec![
+            "base".to_string(),
+            "child".to_string(),
+            "tip".to_string(),
+        ]]
+    );
+}
+
+#[test]
+fn prefetch_lane_metadata_requests_only_heads_at_low_verbosity() {
+    let git = FakeLaneBackend::default()
+        .with_meta("child", "child", 20)
+        .with_meta("tip", "tip", 30);
+    let head_oids = vec!["tip".to_string(), "child".to_string(), "tip".to_string()];
+    let points_by_oid = HashMap::from([
+        ("base".to_string(), point_ref("base", &["feature/base"])),
+        ("child".to_string(), point_ref("child", &["feature/child"])),
+    ]);
+    let mut cache = HashMap::new();
+
+    prefetch_lane_metadata(&git, &head_oids, &points_by_oid, Verbosity::Low, &mut cache).unwrap();
+
+    assert_eq!(
+        git.metadata_requests(),
+        vec![vec!["child".to_string(), "tip".to_string()]]
+    );
+}
+
+#[test]
+fn collect_lane_path_handles_orphaned_history() {
+    let git = FakeLaneBackend::default()
+        .with_merge_base("main-oid", "head", None)
+        .with_ancestry_path(None, "head", &["root", "head"]);
+
+    let lane_path = collect_lane_path(&git, "main-oid", "head").unwrap();
+
+    assert_eq!(
+        lane_path,
+        LanePath {
+            head_oid: "head".to_string(),
+            base_oid: None,
+            ancestry_path: vec!["root".to_string(), "head".to_string()],
+        }
+    );
 }
 
 #[test]
