@@ -421,7 +421,8 @@ fn build_render_plan_falls_back_to_plain_git_when_branchless_is_unavailable() {
             &["rev-list", "--reverse", "--ancestry-path", "main-oid..tip"],
             "base\ntip",
         );
-    let args = runtime_options("draft()", Verbosity::Low);
+    let mut args = runtime_options("draft()", Verbosity::Low);
+    args.debug = true;
     let environment = RenderEnvironment::new(TEST_NOW, None, false);
 
     let plan = build_render_plan(&args, &git, environment).unwrap();
