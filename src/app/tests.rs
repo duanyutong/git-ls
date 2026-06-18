@@ -153,6 +153,36 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
         )
 }
 
+fn empty_selection_git(timestamp: i64) -> MockGit {
+    let revset = "((draft()) & branches()) - public()";
+    MockGit::default()
+        .with(&["branchless", "query", "-r", "main()"], "main-oid")
+        .with(&["branchless", "query", "-b", revset], "")
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)%00%(refname:short)",
+                "refs/heads",
+            ],
+            "main-oid\x00main",
+        )
+        .with(
+            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            "main-oid\nmain",
+        )
+        .with(&["config", "--get", "branchless.core.mainBranch"], "")
+        .with(
+            &[
+                "show",
+                "-s",
+                "--format=%H%x00%ct%x00%s%x1e",
+                "--no-walk=unsorted",
+                "main-oid",
+            ],
+            &format!("main-oid\x00{timestamp}\x00main tip\x1e"),
+        )
+}
+
 #[test]
 fn parses_default_arguments() {
     assert_eq!(
@@ -303,6 +333,14 @@ fn parses_help_without_requiring_git() {
     assert_eq!(
         clap_error_kind(parse_args_from(["--help"]).unwrap_err()),
         ErrorKind::DisplayHelp
+    );
+}
+
+#[test]
+fn parses_version_without_requiring_git() {
+    assert_eq!(
+        clap_error_kind(parse_args_from(["--version"]).unwrap_err()),
+        ErrorKind::DisplayVersion
     );
 }
 
@@ -471,6 +509,17 @@ fn write_render_plan_is_the_output_boundary() {
 }
 
 #[test]
+fn write_render_plan_writes_empty_plan_as_noop() {
+    let plan = RenderPlan::new(Vec::<String>::new());
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    let mut output = RecordingWriter::default();
+
+    write_render_plan(&mut output, &plan, environment).unwrap();
+
+    assert!(output.is_empty());
+}
+
+#[test]
 fn write_render_plan_propagates_output_errors() {
     let plan = RenderPlan::new(vec!["line".to_string()]);
     let environment = RenderEnvironment::new(TEST_NOW, None, false);
@@ -520,6 +569,36 @@ fn render_session_supplies_shared_context_to_populated_plan() {
             .any(|line| line.contains("1m (1) feature"))
     );
     assert!(plan.lines.iter().any(|line| line.contains("2m (-) main")));
+}
+
+#[test]
+fn execute_writes_successful_render_plan() {
+    let args = runtime_options("draft()", Verbosity::Medium);
+    let git = empty_selection_git(TEST_NOW - 120);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    let mut output = RecordingWriter::default();
+
+    execute(&args, &git, &mut output, environment).unwrap();
+
+    assert_eq!(output.into_string(), "  ⁝\n▶ ◆── 2m (-) main\n  ⁝\n");
+}
+
+#[test]
+fn debug_mode_does_not_change_render_plan() {
+    let args = runtime_options("draft()", Verbosity::Medium);
+    let mut debug_args = args.clone();
+    debug_args.debug = true;
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+
+    let plan = build_render_plan(&args, &empty_selection_git(TEST_NOW - 120), environment).unwrap();
+    let debug_plan = build_render_plan(
+        &debug_args,
+        &empty_selection_git(TEST_NOW - 120),
+        environment,
+    )
+    .unwrap();
+
+    assert_eq!(debug_plan, plan);
 }
 
 #[test]

@@ -20,7 +20,7 @@ use crate::render::{
 use crate::terminal::{RenderEnvironment, write_rendered_line};
 
 mod env;
-pub(crate) use env::run_from_env;
+pub use env::run_from_env;
 
 fn debug_log(enabled: bool, message: std::fmt::Arguments<'_>) {
     if enabled {

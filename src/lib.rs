@@ -23,9 +23,7 @@ pub use error::{GitLsError, Result};
 /// This is the only supported public execution entry point. It is deliberately
 /// narrow because command parsing, repository access, lane construction, and
 /// rendering remain implementation details of the CLI.
-pub fn run_from_env() -> Result<()> {
-    app::run_from_env()
-}
+pub use app::run_from_env;
 
 #[cfg(test)]
 mod tests {

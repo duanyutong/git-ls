@@ -10,7 +10,7 @@ use super::{execute, parse_args_from};
 
 /// Executes the command-line entry point with process arguments and detected
 /// terminal capabilities.
-pub(crate) fn run_from_env() -> Result<()> {
+pub fn run_from_env() -> Result<()> {
     let mut stdout = io::stdout().lock();
     let environment = RenderEnvironment::detect();
     let args = parse_args_from(env::args().skip(1))?;

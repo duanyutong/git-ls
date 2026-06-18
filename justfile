@@ -20,20 +20,22 @@ typecheck:
 test:
     cargo test --workspace --all-targets --all-features --locked
 
-# Generate coverage once, then enforce package and unit-testable baselines.
+# Generate package and unit-test coverage, then enforce their separate baselines.
 coverage:
-    cargo llvm-cov clean --workspace
-    cargo llvm-cov --workspace --all-targets --all-features --locked --no-report
     just coverage-package-baseline
     just coverage-unit-baseline
 
 # Enforce broad package baselines, including binary and process-boundary adapters.
 coverage-package-baseline:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --all-targets --all-features --locked --no-report
     cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90
     cargo llvm-cov report -p xtask --summary-only --fail-under-lines 40
 
 # Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
 coverage-unit-baseline:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --workspace --lib --bins --all-features --locked --no-report
     cargo llvm-cov report -p git-ls --summary-only --fail-uncovered-lines 0 --fail-uncovered-regions 0 --fail-uncovered-functions 0 --ignore-filename-regex '{{git_ls_unit_ignore_regex}}'
     cargo llvm-cov report -p xtask --summary-only --fail-uncovered-lines 0 --fail-uncovered-regions 0 --fail-uncovered-functions 0 --ignore-filename-regex '{{xtask_unit_ignore_regex}}'
 
