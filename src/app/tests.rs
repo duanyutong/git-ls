@@ -118,7 +118,7 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
                 "--format=%(objectname)%00%(refname:short)",
                 "refs/heads",
             ],
-            "feature-oid\x00feature",
+            "main-oid\x00main\nfeature-oid\x00feature",
         )
         .with(&["branchless", "query", "-r", heads_revset], "feature-oid")
         .with(
@@ -426,7 +426,7 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
 }
 
 #[test]
-fn build_render_plan_falls_back_to_plain_git_when_branchless_is_unavailable() {
+fn build_render_plan_uses_plain_git_for_default_selection() {
     let git = MockGit::default()
         .with(
             &[
@@ -470,7 +470,7 @@ fn build_render_plan_falls_back_to_plain_git_when_branchless_is_unavailable() {
     assert!(
         git.calls()
             .iter()
-            .any(|call| call == &["branchless", "query", "-r", "main()"])
+            .all(|call| call.first().is_none_or(|command| command != "branchless"))
     );
 }
 
@@ -692,8 +692,8 @@ fn build_render_plan_propagates_empty_selection_main_metadata_errors() {
 
 #[test]
 fn build_render_plan_propagates_populated_group_metadata_errors() {
-    let revset = "((draft()) & branches()) - public()";
-    let heads_revset = "heads(((draft()) & branches()) - public())";
+    let revset = "((custom()) & branches()) - public()";
+    let heads_revset = "heads(((custom()) & branches()) - public())";
     let git = MockGit::default()
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
@@ -731,7 +731,7 @@ fn build_render_plan_propagates_populated_group_metadata_errors() {
             ],
             "feature-oid",
         );
-    let args = runtime_options("draft()", Verbosity::Low);
+    let args = runtime_options("custom()", Verbosity::Low);
     let environment = RenderEnvironment::new(TEST_NOW, None, false);
 
     let error = build_render_plan(&args, &git, environment).unwrap_err();
@@ -741,8 +741,8 @@ fn build_render_plan_propagates_populated_group_metadata_errors() {
 
 #[test]
 fn build_render_plan_propagates_populated_main_metadata_errors() {
-    let revset = "((draft()) & branches()) - public()";
-    let heads_revset = "heads(((draft()) & branches()) - public())";
+    let revset = "((custom()) & branches()) - public()";
+    let heads_revset = "heads(((custom()) & branches()) - public())";
     let git = MockGit::default()
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
@@ -780,7 +780,7 @@ fn build_render_plan_propagates_populated_main_metadata_errors() {
             ],
             "feature-oid",
         );
-    let args = runtime_options("draft()", Verbosity::Medium);
+    let args = runtime_options("custom()", Verbosity::Medium);
     let environment = RenderEnvironment::new(TEST_NOW, None, false);
 
     let error = build_render_plan(&args, &git, environment).unwrap_err();
@@ -871,11 +871,8 @@ fn run_passes_hidden_selection_to_branchless_queries() {
 
 #[test]
 fn run_renders_empty_selection_as_trunk() {
-    let revset = "((draft()) & branches()) - public()";
     let timestamp = TEST_NOW - 120;
     let git = MockGit::default()
-        .with(&["branchless", "query", "-r", "main()"], "main-oid")
-        .with(&["branchless", "query", "-b", revset], "")
         .with(
             &[
                 "for-each-ref",
@@ -926,18 +923,6 @@ fn run_renders_empty_selection_as_trunk() {
                 "config".to_string(),
                 "--get".to_string(),
                 "git-ls.layout".to_string()
-            ],
-            vec![
-                "branchless".to_string(),
-                "query".to_string(),
-                "-r".to_string(),
-                "main()".to_string()
-            ],
-            vec![
-                "branchless".to_string(),
-                "query".to_string(),
-                "-b".to_string(),
-                revset.to_string()
             ],
             vec![
                 "for-each-ref".to_string(),

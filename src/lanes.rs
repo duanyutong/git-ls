@@ -85,6 +85,11 @@ fn query_lane_selection(
     hidden: bool,
     debug: bool,
 ) -> Result<LaneSelection> {
+    if uses_plain_git_fallback(user_revset) && !hidden {
+        debug_log(debug, format_args!("selection: using plain Git default"));
+        return query_plain_git_lane_selection(git, debug);
+    }
+
     debug_log(
         debug,
         format_args!("selection: trying branchless revset={user_revset:?} hidden={hidden}"),
