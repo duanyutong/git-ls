@@ -195,7 +195,7 @@ fn shell_metadata_hydration_skips_fully_cached_aliases() {
 
     shell_cache_commit_metas(&git, &["cached"], &mut cache).unwrap();
 
-    assert!(git.calls().is_empty());
+    assert_eq!(git.calls(), Vec::<Vec<String>>::new());
 }
 
 #[test]

@@ -85,6 +85,11 @@ fn query_lane_selection(
     hidden: bool,
     debug: bool,
 ) -> Result<LaneSelection> {
+    if uses_plain_git_fallback(user_revset) && !hidden {
+        debug_log(debug, format_args!("selection: using plain Git default"));
+        return query_plain_git_lane_selection(git, debug);
+    }
+
     debug_log(
         debug,
         format_args!("selection: trying branchless revset={user_revset:?} hidden={hidden}"),
@@ -228,7 +233,7 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<L
         debug,
         format_args!("plain Git fallback: stack heads={}", head_oids.len()),
     );
-    debug_assert!(!head_oids.is_empty());
+    debug_assert_ne!(head_oids, Vec::<String>::new());
 
     Ok(LaneSelection::Populated {
         main_oid,
