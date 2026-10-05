@@ -516,3 +516,69 @@ fn gix_metadata_hydration_reports_missing_commits() {
     ));
     assert!(cache.is_empty());
 }
+
+#[test]
+fn native_ancestry_matches_git_with_redundant_parents_in_either_order() {
+    let repo = TestRepo::new();
+    let base = repo.commit("base");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let y = repo.git(&["commit-tree", &tree, "-p", &base, "-m", "y"]);
+    let x = repo.git(&["commit-tree", &tree, "-p", &y, "-m", "x"]);
+    for parents in [[&x, &y], [&y, &x]] {
+        let head = repo.git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            parents[0],
+            "-p",
+            parents[1],
+            "-m",
+            "tip",
+        ]);
+        let expected = lines(&repo.git(&[
+            "rev-list",
+            "--reverse",
+            "--ancestry-path",
+            &format!("{base}..{head}"),
+        ]));
+        let backend = GixBackend::discover_from(repo.path()).unwrap();
+        assert_eq!(backend.ancestry_path(Some(&base), &head).unwrap(), expected);
+        assert!(expected.contains(&x));
+        assert!(expected.contains(&y));
+    }
+}
+
+#[test]
+fn native_ancestry_excludes_old_side_history_and_handles_unrelated_ranges() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let base = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "base"]);
+    let feature = repo.git(&["commit-tree", &tree, "-p", &base, "-m", "feature"]);
+    let side = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "side"]);
+    let head = repo.git(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        &feature,
+        "-p",
+        &side,
+        "-m",
+        "merge",
+    ]);
+    let orphan = repo.git(&["commit-tree", &tree, "-m", "orphan"]);
+    let backend = GixBackend::discover_from(repo.path()).unwrap();
+    assert_eq!(
+        backend.ancestry_path(Some(&base), &head).unwrap(),
+        vec![feature, head.clone()]
+    );
+    assert_eq!(
+        backend.ancestry_path(Some(&orphan), &head).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        backend.ancestry_path(Some(&head), &head).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(backend.ancestry_path(None, &orphan).unwrap(), vec![orphan]);
+}

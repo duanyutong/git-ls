@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use gix::bstr::ByteSlice as _;
 
@@ -17,11 +17,6 @@ use super::traits::{
 pub(crate) struct GixBackend {
     repo: gix::Repository,
     command: ProcessGit,
-}
-
-struct PendingCommit {
-    oid: gix::ObjectId,
-    parents: Option<Vec<gix::ObjectId>>,
 }
 
 impl GixBackend {
@@ -62,79 +57,6 @@ impl GixBackend {
             .map_err(|source| GitLsError::gix("read commit timestamp", source))?
             .seconds;
         Ok(CommitMeta::new(full_oid, timestamp, subject))
-    }
-
-    fn is_descendant_of(
-        &self,
-        commit: gix::ObjectId,
-        ancestor: gix::ObjectId,
-        cache: &mut HashMap<gix::ObjectId, bool>,
-    ) -> Result<bool> {
-        if commit == ancestor {
-            return Ok(true);
-        }
-        if let Some(result) = cache.get(&commit) {
-            return Ok(*result);
-        }
-
-        let mut scheduled = HashSet::from([commit]);
-        let mut stack = vec![PendingCommit {
-            oid: commit,
-            parents: None,
-        }];
-
-        while let Some(pending) = stack.pop() {
-            if cache.contains_key(&pending.oid) {
-                continue;
-            }
-            if pending.oid == ancestor {
-                cache.insert(pending.oid, true);
-                continue;
-            }
-
-            if let Some(parents) = pending.parents {
-                let descendant = parents.iter().any(|parent| {
-                    *parent == ancestor || cache.get(parent).copied().unwrap_or(false)
-                });
-                cache.insert(pending.oid, descendant);
-            } else {
-                crate::diagnostics::count("parent_loads", 1);
-                let commit_object = self
-                    .repo
-                    .find_commit(pending.oid)
-                    .map_err(|source| GitLsError::gix("find ancestry commit", source))?;
-                let parents = commit_object
-                    .parent_ids()
-                    .map(gix::Id::detach)
-                    .collect::<Vec<_>>();
-
-                if parents.iter().any(|parent| {
-                    *parent == ancestor || cache.get(parent).copied().unwrap_or(false)
-                }) {
-                    cache.insert(pending.oid, true);
-                    continue;
-                }
-                if parents.iter().all(|parent| cache.contains_key(parent)) {
-                    cache.insert(pending.oid, false);
-                    continue;
-                }
-
-                stack.push(PendingCommit {
-                    oid: pending.oid,
-                    parents: Some(parents.clone()),
-                });
-                for parent in parents.into_iter().rev() {
-                    if !cache.contains_key(&parent) && scheduled.insert(parent) {
-                        stack.push(PendingCommit {
-                            oid: parent,
-                            parents: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(cache.get(&commit).copied().unwrap_or(false))
     }
 }
 
@@ -236,23 +158,27 @@ impl AncestryBackend for GixBackend {
             walk = walk.with_hidden([base_oid]);
         }
 
-        let mut descendant_cache = HashMap::new();
-        let mut path = Vec::new();
+        let mut nodes = Vec::new();
         for info in walk
             .all()
             .map_err(|source| GitLsError::gix("walk revisions", source))?
         {
-            let oid = info
-                .map_err(|source| GitLsError::gix("read revision walk entry", source))?
-                .id;
-            let include = match base_oid {
-                Some(base) => self.is_descendant_of(oid, base, &mut descendant_cache)?,
-                None => true,
-            };
-            if include {
-                path.push(oid.to_string());
-            }
+            let info =
+                info.map_err(|source| GitLsError::gix("read revision walk entry", source))?;
+            nodes.push((info.id, info.parent_ids.into_vec()));
         }
+        crate::diagnostics::count("ancestry_vertices", nodes.len());
+        crate::diagnostics::count(
+            "ancestry_edges",
+            nodes.iter().map(|(_, parents)| parents.len()).sum(),
+        );
+        let included = base_oid.map(|base| super::graph::descendants(&nodes, base));
+        let mut path: Vec<_> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| included.as_ref().is_none_or(|flags| flags[*index]))
+            .map(|(_, (oid, _))| oid.to_string())
+            .collect();
         crate::diagnostics::count("returned_commits", path.len());
         path.reverse();
         Ok(path)
