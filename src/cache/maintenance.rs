@@ -20,6 +20,8 @@ const PASS_BYTES: u64 = 8 * ENTRY_LIMIT;
 struct State {
     publications: u64,
     last_attempt: u64,
+    #[serde(default)]
+    bytes_published: u64,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -62,12 +64,22 @@ pub(crate) fn after_render(store: &Store, published: bool, disabled: bool, retai
     };
     let mut state: State = store.read(STATE, STATE).unwrap_or_default();
     state.publications = state.publications.saturating_add(u64::from(published));
+    if published {
+        state.bytes_published = state.bytes_published.saturating_add(
+            fs::metadata(store.root.join(retain)).map_or(0, |metadata| metadata.len()),
+        );
+    }
     let current = now();
-    if state.publications < 16 || current.saturating_sub(state.last_attempt) < INTERVAL {
+    if (state.publications < 16 && state.bytes_published < 4 * ENTRY_LIMIT)
+        || current.saturating_sub(state.last_attempt) < INTERVAL
+    {
         if published {
             store.publish_locked(&lock, STATE, STATE, &state);
         }
-        crate::diagnostics::event(format_args!("maintenance=not_due"));
+        crate::diagnostics::event(format_args!(
+            "maintenance=not_due publications={} admitted_bytes={}",
+            state.publications, state.bytes_published
+        ));
         return;
     }
     // Reserving the attempt under the publication lock coalesces worktrees.
@@ -196,6 +208,7 @@ pub(crate) fn run(root: &Path, retain: &str) {
         &State {
             publications: 0,
             last_attempt: report.completed_at,
+            bytes_published: 0,
         },
     );
 }
@@ -228,6 +241,43 @@ mod tests {
     }
 
     #[test]
+    fn large_cache_eviction_is_bounded_and_never_removes_the_active_publication() {
+        let common = tempfile::tempdir().unwrap();
+        let store = Store::open(common.path()).unwrap();
+        for slot in 0..SLOTS {
+            let path = store.root.join(format!("snapshot-{slot:02}.json"));
+            fs::write(&path, vec![b'x'; usize::try_from(ENTRY_LIMIT).unwrap()]).unwrap();
+            fs::File::open(path)
+                .unwrap()
+                .set_modified(UNIX_EPOCH)
+                .unwrap();
+        }
+        let temporary = store.root.join("publication.tmp");
+        fs::write(&temporary, "in progress").unwrap();
+        let lock = store.lock("publication.lock").unwrap();
+        run(&store.root, "snapshot-00.json");
+        assert!(temporary.exists());
+        assert!(store.read::<Report>(REPORT, REPORT).is_none());
+        drop(lock);
+        run(&store.root, "snapshot-00.json");
+        let report: Report = store.read(REPORT, REPORT).unwrap();
+        assert!(report.entries_removed <= 8);
+        assert!(report.bytes_reclaimed <= PASS_BYTES);
+        assert!(store.root.join("snapshot-00.json").exists());
+        assert!(!temporary.exists());
+        // Another pass can make progress after an interrupted or budgeted pass.
+        run(&store.root, "snapshot-00.json");
+        assert!(store.root.join("snapshot-00.json").exists());
+        assert!(
+            store
+                .read::<Report>(REPORT, REPORT)
+                .unwrap()
+                .bytes_reclaimed
+                <= PASS_BYTES
+        );
+    }
+
+    #[test]
     fn scheduling_is_disabled_or_coalesced_without_waiting() {
         let common = tempfile::tempdir().unwrap();
         let store = Store::open(common.path()).unwrap();
@@ -244,6 +294,7 @@ mod tests {
             &State {
                 publications: 100,
                 last_attempt: now(),
+                bytes_published: 0,
             },
         );
         after_render(&store, false, false, "");

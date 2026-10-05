@@ -176,6 +176,14 @@ impl AncestryBackend for GixBackend {
 
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         let _perf = crate::diagnostics::operation("merge_base");
+        if let Some(selection) = self.selection.borrow().as_ref()
+            && selection.main == main_oid
+            && let Some(base) = selection.bases.get(head_oid)
+        {
+            crate::diagnostics::count("merge_base_selection_hits", 1);
+            return Ok(base.clone());
+        }
+        crate::diagnostics::count("merge_base_searches", 1);
         let main_oid = Self::object_id(main_oid)?;
         let head_oid = Self::object_id(head_oid)?;
         let bases = self
@@ -223,6 +231,8 @@ impl AncestryBackend for GixBackend {
             .map(|(_, (oid, _))| oid.to_string())
             .collect();
         crate::diagnostics::count("returned_commits", path.len());
+        crate::diagnostics::maximum("peak_path_entries", path.len());
+        crate::diagnostics::maximum("peak_parent_entries", self.parents.borrow().len());
         path.reverse();
         Ok(path)
     }

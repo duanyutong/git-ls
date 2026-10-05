@@ -2,6 +2,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::io::Write as _;
 
 use crate::backend::{
     AncestryBackend, BranchlessQueries, GitBackend, RepositoryStateBackend, get_commit_meta,
@@ -19,7 +20,7 @@ fn branch_revset(user_revset: &str) -> String {
 
 fn debug_log(enabled: bool, message: fmt::Arguments<'_>) {
     if enabled {
-        eprintln!("git-ls debug: {message}");
+        let _ = writeln!(std::io::stderr().lock(), "git-ls debug: {message}");
     }
 }
 
@@ -634,6 +635,7 @@ pub(crate) fn build_lanes(
         }
     }
 
+    crate::diagnostics::count("lanes", lanes.len());
     Ok(BuiltLanes::populated(lanes, main_oid, repository))
 }
 

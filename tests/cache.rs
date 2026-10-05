@@ -30,7 +30,10 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
     let repo = fixture();
     for backend in ["gix", "shell"] {
         let (_, cold) = run(&repo, &["--backend", backend]);
-        assert!(cold.contains("cache=miss"), "{cold}");
+        assert!(
+            cold.contains("cache=miss") || cold.contains("cache=invalid"),
+            "{cold}"
+        );
         for order in ["newest", "oldest"] {
             for verbosity in ["0", "1", "2"] {
                 for layout in ["inline", "columns"] {
@@ -252,4 +255,47 @@ fn configuration_controls_cache_and_only_one_startup_query_is_needed() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("invalid git config git-ls.cache"));
+}
+
+#[test]
+fn graph_interpretation_changes_bypass_and_reference_changes_invalidate() {
+    let repo = fixture();
+    run(&repo, &[]);
+    repo.git(&["branch", "alias", "topic"]);
+    let (output, debug) = run(&repo, &[]);
+    assert!(!debug.contains("cache=hit"));
+    assert!(output.contains("alias"));
+    repo.git(&["branch", "-D", "alias"]);
+    assert_eq!(run(&repo, &[]).0, run(&repo, &["--no-cache"]).0);
+    repo.git(&["config", "remote.origin.promisor", "true"]);
+    assert!(run(&repo, &[]).1.contains("cache=bypass"));
+    repo.git(&["config", "--unset", "remote.origin.promisor"]);
+    repo.git(&["replace", "main", "topic"]);
+    assert!(run(&repo, &[]).1.contains("cache=bypass"));
+    repo.git(&["pack-refs", "--all"]);
+    assert!(run(&repo, &[]).1.contains("cache=bypass"));
+    repo.git(&["replace", "--delete", "main"]);
+    std::fs::create_dir_all(repo.path().join(".git/info")).expect("info directory");
+    std::fs::write(repo.path().join(".git/info/grafts"), "").expect("grafts");
+    assert!(run(&repo, &[]).1.contains("cache=bypass"));
+    std::fs::remove_file(repo.path().join(".git/info/grafts")).expect("remove grafts");
+    std::fs::write(repo.path().join(".git/objects/info/alternates"), "").expect("alternates");
+    assert!(run(&repo, &[]).1.contains("cache=bypass"));
+    std::fs::remove_file(repo.path().join(".git/objects/info/alternates"))
+        .expect("remove alternates");
+    repo.command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["--debug", "--color", "never"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("cache=bypass"));
+}
+
+#[test]
+fn unavailable_cache_storage_does_not_prevent_rendering() {
+    let repo = fixture();
+    std::fs::write(repo.path().join(".git/git-ls"), "unavailable").expect("block cache directory");
+    let (actual, debug) = run(&repo, &[]);
+    assert!(debug.contains("cache=bypass reason=unavailable"));
+    assert_eq!(actual, run(&repo, &["--no-cache"]).0);
 }

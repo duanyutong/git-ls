@@ -34,12 +34,13 @@ pub(super) fn descendants<K: Copy + Eq + Hash>(nodes: &[(K, Vec<K>)], base: K) -
     included
 }
 
-/// Counts strict descendants for many bases in a shared graph. A block of 64
-/// bases requires one mask per vertex, independently of the total base count.
-pub(super) fn descendant_counts<K: Copy + Eq + Hash>(
-    nodes: &[(K, Vec<K>)],
-    bases: &[K],
-) -> Vec<usize> {
+struct IndexedGraph<K> {
+    index: HashMap<K, usize>,
+    children: Vec<Vec<usize>>,
+    order: Vec<usize>,
+}
+
+fn indexed_graph<K: Copy + Eq + Hash>(nodes: &[(K, Vec<K>)]) -> IndexedGraph<K> {
     let index: HashMap<K, usize> = nodes
         .iter()
         .enumerate()
@@ -70,6 +71,69 @@ pub(super) fn descendant_counts<K: Copy + Eq + Hash>(
             }
         }
     }
+    IndexedGraph {
+        index,
+        children,
+        order,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Boundary<K> {
+    Empty,
+    One(K),
+    Multiple,
+}
+
+impl<K: Copy + Eq> Boundary<K> {
+    fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Empty, value) | (value, Self::Empty) => value,
+            (Self::One(a), Self::One(b)) if a == b => Self::One(a),
+            _ => Self::Multiple,
+        }
+    }
+}
+
+/// A complete tip-minus-main range proves a merge base when exactly one
+/// outside parent is reachable. Several boundaries require the backend's
+/// usual merge-base policy; no boundary proves an unrelated history.
+pub(super) fn proven_bases<K: Copy + Eq + Hash>(nodes: &[(K, Vec<K>)]) -> HashMap<K, Option<K>> {
+    let graph = indexed_graph(nodes);
+    let mut boundaries = vec![Boundary::Empty; nodes.len()];
+    let mut bases = HashMap::new();
+    for vertex in graph.order {
+        for parent in &nodes[vertex].1 {
+            let boundary = graph
+                .index
+                .get(parent)
+                .map_or(Boundary::One(*parent), |i| boundaries[*i]);
+            boundaries[vertex] = boundaries[vertex].join(boundary);
+        }
+        match boundaries[vertex] {
+            Boundary::Empty => {
+                bases.insert(nodes[vertex].0, None);
+            }
+            Boundary::One(base) => {
+                bases.insert(nodes[vertex].0, Some(base));
+            }
+            Boundary::Multiple => {}
+        }
+    }
+    bases
+}
+
+/// Counts strict descendants for many bases in a shared graph. A block of 64
+/// bases requires one mask per vertex, independently of the total base count.
+pub(super) fn descendant_counts<K: Copy + Eq + Hash>(
+    nodes: &[(K, Vec<K>)],
+    bases: &[K],
+) -> Vec<usize> {
+    let IndexedGraph {
+        index,
+        children,
+        order,
+    } = indexed_graph(nodes);
     let mut counts = vec![0; bases.len()];
     for (block, bases) in bases.chunks(64).enumerate() {
         let seeds: HashMap<K, u64> =
@@ -136,6 +200,36 @@ mod tests {
                     (id, parents)
                 })
                 .collect();
+            for main in 0..5 {
+                let hidden = ancestors(&nodes, main);
+                let range: Vec<_> = nodes
+                    .iter()
+                    .filter(|(id, _)| !hidden[*id])
+                    .cloned()
+                    .rev()
+                    .collect();
+                let actual = proven_bases(&range);
+                for (head, _) in &range {
+                    let reachable = ancestors(&nodes, *head);
+                    let outside: std::collections::HashSet<_> = range
+                        .iter()
+                        .filter(|(id, _)| reachable[*id])
+                        .flat_map(|(_, parents)| parents)
+                        .filter(|id| hidden[**id])
+                        .copied()
+                        .collect();
+                    let expected = match outside.len() {
+                        0 => Some(None),
+                        1 => Some(outside.into_iter().next()),
+                        _ => None,
+                    };
+                    assert_eq!(
+                        actual.get(head).copied(),
+                        expected,
+                        "mask={mask} main={main} head={head}"
+                    );
+                }
+            }
             for head in 0..5 {
                 for base in 0..5 {
                     let reachable = ancestors(&nodes, head);

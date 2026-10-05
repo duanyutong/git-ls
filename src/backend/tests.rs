@@ -1,8 +1,5 @@
+use crate::repo_support::TestRepo;
 use std::collections::HashMap;
-#[path = "../../tests/support/mod.rs"]
-mod repo_support;
-
-use repo_support::TestRepo;
 
 use super::metadata::{
     GIT_SHOW_COMMIT_META_ARG, insert_commit_meta, missing_commit_aliases, parse_shell_commit_meta,
@@ -732,4 +729,228 @@ fn native_ancestry_excludes_old_side_history_and_handles_unrelated_ranges() {
         Vec::<String>::new()
     );
     assert_eq!(backend.ancestry_path(None, &orphan).unwrap(), vec![orphan]);
+}
+
+#[test]
+fn native_selection_proves_unique_and_absent_merge_bases() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let main = repo.commit("main");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let a = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "a"]);
+    let b = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "b"]);
+    let merged = repo.git(&["commit-tree", &tree, "-p", &a, "-p", &b, "-m", "merge"]);
+    let current = repo.git(&["commit-tree", &tree, "-p", &main, "-m", "current"]);
+    let orphan = repo.git(&["commit-tree", &tree, "-m", "orphan"]);
+    let native = GixBackend::discover_from(repo.path()).unwrap();
+    let tips = vec![merged.clone(), current.clone(), orphan.clone()];
+    native.unmerged_tips(&main, &tips).unwrap();
+    assert_eq!(native.merge_base(&main, &merged).unwrap(), Some(root));
+    assert_eq!(
+        native.merge_base(&main, &current).unwrap(),
+        Some(main.clone())
+    );
+    assert_eq!(native.merge_base(&main, &orphan).unwrap(), None);
+    // Directional and unrelated queries cannot consume another selection's proof.
+    assert_eq!(native.merge_base(&current, &main).unwrap(), Some(main));
+    assert_eq!(native.merge_base(&orphan, &merged).unwrap(), None);
+}
+
+#[test]
+fn batched_shell_queries_reject_failed_or_malformed_input() {
+    let empty = MockGit::default();
+    assert!(
+        MockGit::default()
+            .with_error(&["merge-base", "one", "two"])
+            .main_distances("main", &["one".to_string(), "two".to_string()])
+            .is_err()
+    );
+    assert_eq!(
+        empty.independent_heads("main", &[]).unwrap(),
+        Vec::<String>::new()
+    );
+    assert!(
+        empty
+            .independent_heads("main", &["tip".to_string()])
+            .is_err()
+    );
+    assert!(
+        empty
+            .independent_heads("main", &vec!["tip".to_string(); 129])
+            .is_err()
+    );
+    assert!(empty.unmerged_tips("main", &["tip".to_string()]).is_err());
+    assert!(
+        RepositoryCommandStub::failing()
+            .main_distances("main", &["one".to_string(), "two".to_string()])
+            .is_err()
+    );
+    assert!(empty.main_distances("main", &["base".to_string()]).is_err());
+    let invalid_vertex = MockGit::default().with(
+        &["rev-list", "--parents", "main", "--not", "base"],
+        "invalid",
+    );
+    assert!(
+        invalid_vertex
+            .main_distances("main", &["base".to_string()])
+            .is_err()
+    );
+    let invalid_base =
+        MockGit::default().with(&["rev-list", "--parents", "main", "--not", "invalid"], "\n");
+    assert!(
+        invalid_base
+            .main_distances("main", &["invalid".to_string()])
+            .is_err()
+    );
+    let no_common = MockGit::default().with(&["rev-list", "--parents", "main"], "");
+    assert!(
+        no_common
+            .main_distances("main", &["a".to_string(), "b".to_string(), "c".to_string()])
+            .is_err()
+    );
+}
+
+#[test]
+fn multiple_best_merge_bases_preserve_backend_choice_with_directional_reuse() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let a = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "a"]);
+    let b = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "b"]);
+    let main = repo.git(&["commit-tree", &tree, "-p", &a, "-p", &b, "-m", "main"]);
+    let tip = repo.git(&["commit-tree", &tree, "-p", &b, "-p", &a, "-m", "tip"]);
+    let expected = lines(&repo.git(&["merge-base", "--all", &main, &tip]));
+    assert_eq!(expected.len(), 2);
+    let native = GixBackend::discover_from(repo.path()).unwrap();
+    let original = native.merge_base(&main, &tip).unwrap();
+    native
+        .unmerged_tips(&main, std::slice::from_ref(&tip))
+        .unwrap();
+    assert_eq!(native.merge_base(&main, &tip).unwrap(), original);
+    let shell = RepoGit(&repo);
+    for backend in [&native as &dyn GitBackend, &shell as &dyn GitBackend] {
+        let session = Session::new(backend);
+        let selected = session.merge_base(&main, &tip).unwrap().unwrap();
+        assert!(expected.contains(&selected));
+        assert_eq!(session.merge_base(&main, &tip).unwrap(), Some(selected));
+        assert!(expected.contains(&session.merge_base(&tip, &main).unwrap().unwrap()));
+    }
+}
+
+#[test]
+fn batched_shell_adapters_handle_shared_ranges_and_empty_boundaries() {
+    let root = "1".repeat(40);
+    let middle = "2".repeat(40);
+    let main = "3".repeat(40);
+    let orphan = "4".repeat(40);
+    let git = MockGit::default()
+        .with(&["merge-base", &root, &middle], &root)
+        .with(
+            &["rev-list", "--parents", &main],
+            &format!("{main} {middle}\n{middle} {root}\n{root}\n\n"),
+        );
+    let expected = HashMap::from([
+        (root.clone(), Some(2)),
+        (middle.clone(), Some(1)),
+        (main.clone(), Some(0)),
+        (orphan.clone(), None),
+    ]);
+    for bases in [
+        vec![root.clone(), middle.clone(), orphan.clone(), main.clone()],
+        vec![orphan, root, middle, main.clone()],
+    ] {
+        assert_eq!(git.main_distances(&main, &bases).unwrap(), expected);
+    }
+    let tips: Vec<_> = (0..129).map(|i| format!("tip-{i}")).collect();
+    let parents = (1..129)
+        .map(|i| format!("tip-{i} tip-{}", i - 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let git = MockGit::default().with(&["rev-list", "--parents", "--stdin"], &parents);
+    assert_eq!(
+        git.independent_heads("main", &tips).unwrap(),
+        vec!["tip-128"]
+    );
+    assert!(
+        RepositoryCommandStub::failing()
+            .independent_heads("main", &tips)
+            .is_err()
+    );
+}
+
+#[test]
+fn shell_distance_batch_preserves_sha256_repository_support() {
+    let repo = TestRepo::new();
+    std::fs::remove_dir_all(repo.path().join(".git")).unwrap();
+    repo.git(&[
+        "-c",
+        "init.templateDir=",
+        "init",
+        "--initial-branch=main",
+        "--object-format=sha256",
+    ]);
+    repo.git(&["config", "user.name", "Example"]);
+    repo.git(&["config", "user.email", "example@example.invalid"]);
+    repo.git(&["config", "commit.gpgSign", "false"]);
+    let root = repo.commit("root");
+    let middle = repo.commit("middle");
+    let main = repo.commit("main");
+    assert_eq!(main.len(), 64);
+    let shell = RepoGit(&repo);
+    let bases = vec![root.clone(), middle.clone(), main.clone()];
+    assert_eq!(
+        shell.main_distances(&main, &bases).unwrap(),
+        HashMap::from([(root, Some(2)), (middle, Some(1)), (main, Some(0))])
+    );
+}
+
+#[test]
+fn shell_metadata_batch_bounds_command_size() {
+    let ids: Vec<_> = (0..300).map(|i| format!("{i:040x}")).collect();
+    let mut git = MockGit::default();
+    for chunk in ids.chunks(256) {
+        let mut args = vec!["show", "-s", GIT_SHOW_COMMIT_META_ARG, "--no-walk=unsorted"];
+        args.extend(chunk.iter().map(String::as_str));
+        let mut output = String::new();
+        for id in chunk {
+            output.push_str(id);
+            output.push_str("\x001\x00subject\x1e");
+        }
+        git = git.with(&args, &output);
+    }
+    let refs: Vec<_> = ids.iter().map(String::as_str).collect();
+    let mut cache = HashMap::new();
+    git.cache_commit_metas(&refs, &mut cache).unwrap();
+    assert_eq!(cache.len(), 300);
+    assert_eq!(git.calls().len(), 2);
+    assert!(git.calls().iter().all(|args| args.len() <= 260));
+}
+
+#[test]
+fn selection_uses_captured_ids_after_refs_move() {
+    let repo = TestRepo::new();
+    let main = repo.commit("main");
+    repo.git(&["checkout", "-b", "topic"]);
+    let tip = repo.commit("topic");
+    repo.git(&["checkout", "main"]);
+    repo.git(&["branch", "-D", "topic"]);
+    let native = GixBackend::discover_from(repo.path()).unwrap();
+    let shell = RepoGit(&repo);
+    for backend in [&native as &dyn GitBackend, &shell as &dyn GitBackend] {
+        assert_eq!(
+            backend
+                .unmerged_tips(&main, std::slice::from_ref(&tip))
+                .unwrap(),
+            vec![tip.clone()]
+        );
+    }
+}
+
+#[test]
+fn shell_selection_ignores_unlabelled_internal_commits() {
+    let git = MockGit::default().with(&["rev-list", "--stdin"], "tip\ninternal\n");
+    assert_eq!(
+        git.unmerged_tips("main", &["tip".to_string()]).unwrap(),
+        vec!["tip"]
+    );
 }

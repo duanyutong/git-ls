@@ -128,19 +128,22 @@ pub(super) fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
         return Ok(());
     }
 
-    let mut args = vec!["show", "-s", GIT_SHOW_COMMIT_META_ARG, "--no-walk=unsorted"];
-    args.extend(missing.iter().copied());
+    // Bound argument size independently of the number of local branches.
+    for batch in missing.chunks(256) {
+        let mut args = vec!["show", "-s", GIT_SHOW_COMMIT_META_ARG, "--no-walk=unsorted"];
+        args.extend(batch.iter().copied());
 
-    let output = git.run(&args, false)?;
-    let records = git_show_commit_records(&output);
+        let output = git.run(&args, false)?;
+        let records = git_show_commit_records(&output);
 
-    if records.len() != missing.len() {
-        return Err(GitLsError::unexpected_git_show(missing.join(", ")));
-    }
+        if records.len() != batch.len() {
+            return Err(GitLsError::unexpected_git_show(batch.join(", ")));
+        }
 
-    for (alias, record) in missing.into_iter().zip(records) {
-        let meta = parse_shell_commit_meta(alias, record)?;
-        insert_commit_meta(cache, alias, meta);
+        for (alias, record) in batch.iter().copied().zip(records) {
+            let meta = parse_shell_commit_meta(alias, record)?;
+            insert_commit_meta(cache, alias, meta);
+        }
     }
 
     Ok(())

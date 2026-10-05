@@ -62,6 +62,7 @@ fn commit_meta(oid: &str, timestamp: i64, subject: &str) -> CommitMeta {
 struct RecordingWriter {
     bytes: Vec<u8>,
     fail_writes: bool,
+    fail_flush: bool,
 }
 
 impl RecordingWriter {
@@ -69,6 +70,7 @@ impl RecordingWriter {
         Self {
             bytes: Vec::new(),
             fail_writes: true,
+            fail_flush: false,
         }
     }
 
@@ -91,6 +93,9 @@ impl std::io::Write for RecordingWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        if self.fail_flush {
+            return Err(std::io::Error::other("flush failed"));
+        }
         Ok(())
     }
 }
@@ -102,15 +107,7 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
     let main_timestamp = TEST_NOW - 120;
 
     MockGit::default()
-        .with(
-            &[
-                "for-each-ref",
-                "--format=%(objectname)",
-                "--no-merged=main-oid",
-                "refs/heads",
-            ],
-            "feature-oid",
-        )
+        .with(&["rev-list", "--stdin"], "feature-oid")
         .with(
             &["merge-base", "--independent", "feature-oid"],
             "feature-oid",
@@ -465,15 +462,7 @@ fn build_render_plan_uses_plain_git_for_default_selection() {
             &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
             "tip\nfeature/tip",
         )
-        .with(
-            &[
-                "for-each-ref",
-                "--format=%(objectname)",
-                "--no-merged=main-oid",
-                "refs/heads",
-            ],
-            "base\ntip",
-        )
+        .with(&["rev-list", "--stdin"], "base\ntip")
         .with(&["merge-base", "--independent", "base", "tip"], "tip")
         .with(&["merge-base", "main-oid", "tip"], "main-oid")
         .with(
@@ -982,4 +971,34 @@ fn run_renders_empty_selection_as_trunk() {
             ]
         ]
     );
+}
+
+#[test]
+fn execution_propagates_output_and_flush_failures() {
+    let args = runtime_options("draft()", Verbosity::Low);
+    let git = empty_selection_git(TEST_NOW);
+    let environment = RenderEnvironment::new(TEST_NOW, None, false);
+    assert!(execute(&args, &git, &mut RecordingWriter::failing(), environment).is_err());
+    assert!(
+        execute(
+            &args,
+            &git,
+            &mut RecordingWriter {
+                fail_flush: true,
+                ..RecordingWriter::default()
+            },
+            environment
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn analysis_rejects_successful_metadata_queries_without_required_records() {
+    let git = empty_selection_git(TEST_NOW);
+    let git = crate::test_support::OmitMetadata {
+        inner: &git,
+        omitted: "main-oid",
+    };
+    assert!(build_analysis(&runtime_options("draft()", Verbosity::High), &git).is_err());
 }

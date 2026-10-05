@@ -1606,3 +1606,59 @@ fn is_ancestor_for_test(git: &dyn GitBackend, ancestor: &str, descendant: &str) 
             || git.merge_base(ancestor, descendant)?.as_deref() == Some(ancestor),
     )
 }
+
+#[test]
+fn final_group_sort_caches_oldest_timestamp_and_handles_unreachable_bases() {
+    let git = FakeLaneBackend::default()
+        .with_meta("old-base", "old", 1)
+        .with_ancestry_path(Some("old-base"), "main", &[]);
+    let mut cache = HashMap::new();
+    let groups = build_lane_groups(
+        &git,
+        vec![
+            lane("old", Some("old-base"), 10, false),
+            lane("new", None, 20, false),
+        ],
+        "main",
+        Order::Oldest,
+        true,
+        &mut cache,
+    )
+    .unwrap();
+    assert_eq!(groups[0].base_oid.as_deref(), Some("old-base"));
+    assert_eq!(groups[0].main_distance, None);
+}
+
+#[test]
+fn absent_metadata_after_batch_hydration_remains_an_error() {
+    let git = FakeLaneBackend::default()
+        .with_meta("old", "old", 1)
+        .with_meta("replacement", "new", 2)
+        .with_ancestry_path(Some("old"), "main", &["main"]);
+    let refs = vec![RewrittenCommitRef {
+        oid: "old".to_string(),
+        replacement_oid: "replacement".to_string(),
+    }];
+    for omitted in ["old", "replacement"] {
+        let backend = crate::test_support::OmitMetadata {
+            inner: &git,
+            omitted,
+        };
+        assert!(build_rewritten_commits(&backend, &refs, &mut HashMap::new()).is_err());
+    }
+    let backend = crate::test_support::OmitMetadata {
+        inner: &git,
+        omitted: "old",
+    };
+    assert!(
+        build_lane_groups(
+            &backend,
+            vec![lane("head", Some("old"), 1, false)],
+            "main",
+            Order::Newest,
+            false,
+            &mut HashMap::new()
+        )
+        .is_err()
+    );
+}

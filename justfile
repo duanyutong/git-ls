@@ -5,7 +5,7 @@
 
 set script-interpreter := ['bash', '-euo', 'pipefail']
 
-git_ls_unit_ignore_regex := '(^|/)(src/main\.rs|src/app/env\.rs|src/backend/(gix|process)\.rs|src/terminal/detect\.rs|src/test_support\.rs)$'
+git_ls_unit_ignore_regex := '(^|/)(src/main\.rs|src/app/(env|cached)\.rs|src/cache(/.*)?\.rs|src/backend/(gix(/.*)?|process)\.rs|src/terminal/detect\.rs|src/test_support\.rs)$'
 xtask_unit_ignore_regex := '(^|/)xtask/src/(git|main|version)\.rs$'
 
 # Show every recipe with its docstring.
@@ -32,7 +32,9 @@ coverage-package-baseline:
     cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 95
     cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95
 
-# Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
+# Enforce the strict unit boundary; filesystem, compiled-binary, and process
+# adapters are covered by the package gate and integration tests. Pure graph,
+# memoisation, configuration parsing, and rendering remain at 100%.
 coverage-unit-baseline:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --workspace --lib --bins --all-features --locked --no-report

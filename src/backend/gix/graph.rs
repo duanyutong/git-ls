@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::backend::graph::descendant_counts;
+use crate::backend::graph::{descendant_counts, proven_bases};
 use crate::error::{GitLsError, Result};
 
 use super::GixBackend;
@@ -12,6 +12,7 @@ pub(super) struct TipAnalysis {
     pub(super) main: String,
     pub(super) unmerged: Vec<String>,
     pub(super) heads: Vec<String>,
+    pub(super) bases: HashMap<String, Option<String>>,
 }
 
 impl GixBackend {
@@ -55,6 +56,7 @@ impl GixBackend {
         let mut intermediate = HashSet::new();
         let mut vertices = 0;
         let mut edges = 0;
+        let mut retained = Some(Vec::new());
         if !candidates.is_empty() {
             let walk = self
                 .repo
@@ -68,6 +70,14 @@ impl GixBackend {
                 let parents = self.effective_parents(info.id, info.parent_ids.into_vec());
                 edges += parents.len();
                 self.remember_parents(info.id, &parents);
+                if let Some(nodes) = retained.as_mut() {
+                    if nodes.len() < PARENT_CACHE_LIMIT {
+                        nodes.push((info.id, parents.clone()));
+                    } else {
+                        // A partial range cannot prove which edges are boundaries.
+                        retained = None;
+                    }
+                }
                 if candidates.contains(&info.id) {
                     unmerged.insert(info.id);
                 }
@@ -79,6 +89,17 @@ impl GixBackend {
                 );
             }
         }
+        let proven = retained
+            .as_ref()
+            .map_or_else(HashMap::new, |nodes| proven_bases(nodes));
+        let bases = unmerged
+            .difference(&intermediate)
+            .filter_map(|head| {
+                proven
+                    .get(head)
+                    .map(|base| (head.to_string(), base.map(|id| id.to_string())))
+            })
+            .collect();
         let mut heads: Vec<_> = unmerged
             .difference(&intermediate)
             .map(ToString::to_string)
@@ -88,11 +109,13 @@ impl GixBackend {
         unmerged.sort();
         crate::diagnostics::count("selection_vertices", vertices);
         crate::diagnostics::count("selection_edges", edges);
+        crate::diagnostics::maximum("peak_parent_entries", self.parents.borrow().len());
         crate::diagnostics::event(format_args!("selection_strategy=shared_range"));
         Ok(TipAnalysis {
             main: main.to_string(),
             unmerged,
             heads,
+            bases,
         })
     }
 
@@ -134,6 +157,8 @@ impl GixBackend {
                 _ => return self.dag_distances(main, bases, &ids),
             }
         }
+        crate::diagnostics::count("main_vertices", distance + 1);
+        crate::diagnostics::maximum("peak_parent_entries", self.parents.borrow().len());
         crate::diagnostics::event(format_args!(
             "main_distance_strategy=linear visited_commits={}",
             distance + 1

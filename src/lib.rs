@@ -14,6 +14,9 @@ mod error;
 mod lanes;
 mod model;
 mod render;
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod repo_support;
 mod terminal;
 #[cfg(test)]
 mod test_support;

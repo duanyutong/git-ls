@@ -15,23 +15,30 @@ pub(super) fn unmerged(
     if tips.iter().all(|tip| tip == main) {
         return Ok(Vec::new());
     }
-    let output = git.run(
-        &[
-            "for-each-ref",
-            "--format=%(objectname)",
-            &format!("--no-merged={main}"),
-            "refs/heads",
-        ],
-        false,
-    )?;
+    // Query immutable IDs: filtering live refs could associate an answer with
+    // the wrong captured snapshot during a concurrent branch movement.
+    let output = git.run_input(&["rev-list", "--stdin"], &revision_input(main, tips))?;
     let selected: HashSet<_> = tips.iter().map(String::as_str).collect();
-    let mut result: Vec<_> = lines(&output)
-        .into_iter()
-        .filter(|id| selected.contains(id.as_str()))
-        .collect();
+    let mut result = Vec::new();
+    let mut visited = 0;
+    for id in output.lines().filter(|id| !id.is_empty()) {
+        visited += 1;
+        if selected.contains(id) {
+            result.push(id.to_string());
+        }
+    }
+    crate::diagnostics::count("selection_vertices", visited);
     result.sort();
     result.dedup();
     Ok(result)
+}
+
+fn revision_input(main: &str, tips: &[String]) -> String {
+    let mut input = tips.join("\n");
+    input.push_str("\n^");
+    input.push_str(main);
+    input.push('\n');
+    input
 }
 
 pub(super) fn independent(
@@ -49,11 +56,10 @@ pub(super) fn independent(
         lines(&git.run(&args, false)?)
     } else {
         // A shared range walk avoids both argument limits and pairwise chunk reduction.
-        let mut input = tips.join("\n");
-        input.push_str("\n^");
-        input.push_str(main);
-        input.push('\n');
-        let output = git.run_input(&["rev-list", "--parents", "--stdin"], &input)?;
+        let output = git.run_input(
+            &["rev-list", "--parents", "--stdin"],
+            &revision_input(main, tips),
+        )?;
         let candidates: HashSet<_> = tips.iter().map(String::as_str).collect();
         let mut intermediate = HashSet::new();
         for line in output.lines() {
@@ -73,13 +79,27 @@ pub(super) fn independent(
     Ok(heads)
 }
 
+fn full_oid(id: &str) -> Result<&str> {
+    if matches!(id.len(), 40 | 64) && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(id)
+    } else {
+        Err(GitLsError::invalid_object_id(
+            id,
+            "expected a full SHA-1 or SHA-256 object ID",
+        ))
+    }
+}
+
 pub(super) fn distances(
     git: &(impl GitCommand + ?Sized),
     main: &str,
     bases: &[String],
 ) -> Result<HashMap<String, Option<usize>>> {
     let _perf = crate::diagnostics::operation("main_distances");
-    let historical: Vec<_> = bases.iter().filter(|base| base.as_str() != main).collect();
+    let historical: Vec<_> = bases
+        .iter()
+        .filter(|base| !base.eq_ignore_ascii_case(main))
+        .collect();
     if historical.is_empty() {
         return Ok(bases.iter().map(|base| (base.clone(), Some(0))).collect());
     }
@@ -93,26 +113,22 @@ pub(super) fn distances(
     if let Some(boundary) = &boundary {
         args.extend(["--not", boundary]);
     }
-    let output = git.run(&args, false)?;
+    let mut output = git.run(&args, false)?;
+    output.make_ascii_lowercase();
     let mut nodes = Vec::new();
     for line in output.lines() {
         let ids: Vec<_> = line
             .split_whitespace()
-            .map(|id| {
-                id.parse::<gix::ObjectId>()
-                    .map_err(|error| GitLsError::invalid_object_id(id, error))
-            })
+            .map(full_oid)
             .collect::<Result<_>>()?;
         if let Some((id, parents)) = ids.split_first() {
             nodes.push((*id, parents.to_vec()));
         }
     }
-    let ids: Vec<_> = bases
+    let normalised: Vec<_> = bases.iter().map(|base| base.to_ascii_lowercase()).collect();
+    let ids: Vec<_> = normalised
         .iter()
-        .map(|base| {
-            base.parse::<gix::ObjectId>()
-                .map_err(|error| GitLsError::invalid_object_id(base, error))
-        })
+        .map(|base| full_oid(base))
         .collect::<Result<_>>()?;
     crate::diagnostics::count("main_vertices", nodes.len());
     let counts = descendant_counts(&nodes, &ids);
@@ -122,7 +138,7 @@ pub(super) fn distances(
         .map(|(base, count)| {
             (
                 base.clone(),
-                if base == main {
+                if base.eq_ignore_ascii_case(main) {
                     Some(0)
                 } else {
                     (count > 0).then_some(count)

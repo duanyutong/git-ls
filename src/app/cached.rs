@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+use gix::bstr::ByteSlice as _;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{Facts, GitBackend, Inputs, Session};
@@ -44,7 +45,7 @@ impl Snapshot {
 
 /// Eligibility is intentionally conservative. Unusual graph interpretation must
 /// never reuse answers established against the ordinary object graph.
-fn location() -> Option<(PathBuf, String)> {
+fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, String)> {
     for name in [
         "GIT_NAMESPACE",
         "GIT_REPLACE_REF_BASE",
@@ -60,7 +61,7 @@ fn location() -> Option<(PathBuf, String)> {
             return None;
         }
     }
-    let repo = gix::discover_with_environment_overrides(".").ok()?;
+    let repo = gix::discover_with_environment_overrides(directory).ok()?;
     let common = repo.common_dir().canonicalize().ok()?;
     if repo.is_shallow()
         || common.join("info/grafts").exists()
@@ -75,17 +76,28 @@ fn location() -> Option<(PathBuf, String)> {
         return None;
     }
     // Promisor declarations may occur in included configuration files.
-    let config_text = config.plumbing().to_string().to_ascii_lowercase();
-    if config_text.contains("promisor") {
+    if config
+        .plumbing()
+        .sections_by_name("remote")
+        .is_some_and(|mut sections| sections.any(|section| section.contains_value_name("promisor")))
+    {
         return None;
     }
-    for reference in repo.references().ok()?.all().ok()? {
-        let reference = reference.ok()?;
-        if reference.name().as_bstr().starts_with(b"refs/replace/") {
-            return None;
-        }
+    if repo
+        .references()
+        .ok()?
+        .prefixed("refs/replace/")
+        .ok()?
+        .next()
+        .is_some()
+    {
+        return None;
     }
-    Some((common, format!("{:?}", repo.object_hash())))
+    let configured_main = config.string("branchless.core.mainBranch").map_or_else(
+        || "main".to_string(),
+        |value| value.to_str_lossy().into_owned(),
+    );
+    Some((common, format!("{:?}", repo.object_hash()), configured_main))
 }
 
 fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, String)> {
@@ -114,9 +126,9 @@ fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, S
     }
     let context = {
         let _perf = crate::diagnostics::stage("cache_validation");
-        location()
+        location(".")
     };
-    let Some((common, object_format)) = context else {
+    let Some((common, object_format, _)) = context else {
         crate::diagnostics::event(format_args!(
             "cache=bypass reason=unsupported_graph_or_store"
         ));
@@ -193,18 +205,22 @@ pub(super) fn execute_cached<W: Write>(
         let mut complete = args.clone();
         complete.verbosity = Verbosity::High;
         let analysis = build_analysis(&complete, &session)?;
-        (analysis, Some(session.facts()))
+        (analysis, Some(session.into_facts()))
     };
     let plan = render_analysis(args, &analysis, environment);
     write_render_plan(stdout, &plan, environment)?;
     let mut published = false;
-    if let Some(facts) = computed {
+    if let Some(mut facts) = computed {
         let unchanged = {
             let _perf = crate::diagnostics::stage("cache_revalidation");
             Inputs::capture(git).is_ok_and(|current| current == inputs)
-                && location().as_ref() == Some(&(common, object_format))
+                && location(".").as_ref() == Some(&(common, object_format, inputs.configured_main))
         };
         if unchanged {
+            {
+                let _perf = crate::diagnostics::stage("cache_admission");
+                facts.compact(512);
+            }
             store.publish(&facts_name, &facts_key, &facts);
             published = store.publish(
                 &name,
@@ -222,4 +238,33 @@ pub(super) fn execute_cached<W: Write>(
     }
     crate::cache::maintenance::after_render(&store, published, raw.no_cache_maintenance, &name);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo_support::TestRepo;
+
+    #[test]
+    fn revalidation_observes_configuration_changes_after_backend_creation() {
+        let repo = TestRepo::new();
+        repo.commit("root");
+        repo.git(&["config", "branchless.core.mainBranch", "main"]);
+        let backend = gix::discover(repo.path()).unwrap();
+        let before = location(repo.path()).unwrap();
+        repo.git(&["config", "branchless.core.mainBranch", "trunk"]);
+        assert_eq!(
+            backend
+                .config_snapshot()
+                .string("branchless.core.mainBranch")
+                .unwrap()
+                .to_str_lossy(),
+            "main"
+        );
+        let after = location(repo.path()).unwrap();
+        assert_eq!(after.0, before.0);
+        assert_eq!(after.1, before.1);
+        assert_eq!(after.2, "trunk");
+        assert_ne!(before, after);
+    }
 }

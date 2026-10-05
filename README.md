@@ -76,14 +76,9 @@ The graph uses `git-branchless` glyphs for equivalent concepts, preserving a bra
 
 Durations use a monotonic clock and milliseconds. Stage and operation totals are inclusive: nested durations must not be added to their enclosing stages. `observed_total_ms` starts after argument parsing and ends before summary emission; it excludes process launch and earlier terminal detection. Debug output itself can affect elapsed time. Without `--debug`, diagnostic clocks, counters, and report allocations are disabled.
 
-## Development
+The [implementation and evaluation report](docs/performance.md) records the algorithms, cache validity rules, measured costs, and reproducible benchmark commands.
 
-```sh
-just setup
-just check
-```
-
-### Persistent analysis reuse
+## Persistent analysis reuse
 
 By default, ordinary `draft()` selections reuse analysis stored in
 `<git-common-dir>/git-ls/cache/v1/`. In a conventional checkout, this is
@@ -93,7 +88,8 @@ The cache is disposable and is never committed.
 An unchanged reference snapshot reuses neutral topology and commit metadata.
 Changed branches invalidate that snapshot, whilst successful merge-base,
 main-distance, and metadata results remain reusable under their full object-ID
-keys. Branch names and the resolved main configuration participate in validation.
+keys. At publication, each fact category retains up to 512 recently used entries.
+Branch names and the resolved main configuration participate in validation.
 Worktree markers, ages, ordering, verbosity, layout, and colour are applied afresh.
 
 - `--no-cache` bypasses persistent reads and writes.
@@ -117,11 +113,12 @@ to use the optimised uncached algorithms. The native backend retains at most
 65,536 application parent records per invocation; this limit is separate from
 Git's or gix's internal object caches.
 
-### Deferred cache maintenance
+## Deferred cache maintenance
 
 After output has been written and flushed, eligible cache publications contribute
-to a repository-wide maintenance counter. A worker may be scheduled after sixteen
-publications, with at least one hour between attempts. `--no-cache-maintenance`
+to repository-wide maintenance counters. A worker may be scheduled after sixteen
+publications or 4 MiB of admitted snapshot data, with at least one hour between
+attempts. `--no-cache-maintenance`
 suppresses scheduling. `--no-cache` also suppresses all maintenance activity.
 
 The short-lived worker has null standard streams and a separate process group;
@@ -143,6 +140,13 @@ false`, or disable deferred maintenance with `git config git-ls.cacheMaintenance
 false`. An explicit `--refresh-cache` overrides the former setting for that
 invocation. Configuration is retrieved in one Git subprocess, preserving Git's
 include processing and precedence; malformed configuration remains an error.
+
+## Development
+
+```sh
+just setup
+just check
+```
 
 ## Licence
 

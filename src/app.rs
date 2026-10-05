@@ -25,7 +25,7 @@ pub use env::run_from_env;
 
 fn debug_log(enabled: bool, message: std::fmt::Arguments<'_>) {
     if enabled {
-        eprintln!("git-ls debug: {message}");
+        let _ = writeln!(std::io::stderr().lock(), "git-ls debug: {message}");
     }
 }
 
@@ -216,11 +216,16 @@ fn write_render_plan<W: Write>(
     plan: &RenderPlan,
     environment: RenderEnvironment,
 ) -> Result<()> {
-    let _perf = crate::diagnostics::stage("write_output");
+    let mut perf = crate::diagnostics::stage("write_output");
+    perf.detail(format_args!("status=error"));
     for line in plan.lines() {
         write_rendered_line(stdout, line, environment)?;
     }
     stdout.flush()?;
+    perf.detail(format_args!(
+        "status=ok rendered_lines={}",
+        plan.lines.len()
+    ));
     Ok(())
 }
 

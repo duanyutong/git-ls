@@ -34,6 +34,16 @@ pub(crate) fn enabled() -> bool {
     RECORDER.with(|slot| slot.borrow().is_some())
 }
 
+pub(crate) fn maximum(name: &'static str, value: usize) {
+    RECORDER.with_borrow_mut(|slot| {
+        if let Some(recorder) = slot {
+            let parent = recorder.stack.last().copied().unwrap_or("invocation");
+            let maximum = recorder.counters.entry((parent, name)).or_default();
+            *maximum = (*maximum).max(value);
+        }
+    });
+}
+
 pub(crate) struct Span {
     active: Option<(Instant, Key)>,
     detail: Option<String>,
@@ -171,6 +181,37 @@ pub(crate) fn observe<T, E>(enabled: bool, run: impl FnOnce() -> Result<T, E>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escaped_scopes_and_nested_observation_do_not_corrupt_recording() {
+        assert!(!enabled());
+        maximum("disabled", 1);
+        let span = observe(true, || {
+            assert!(enabled());
+            maximum("peak", 2);
+            maximum("peak", 1);
+            Ok::<_, ()>(stage("escaped"))
+        })
+        .unwrap();
+        drop(span);
+        observe(true, || observe(true, || Ok::<_, ()>(()))).unwrap();
+    }
+
+    #[test]
+    fn observation_handles_each_completion_state_without_masking_results() {
+        for mode in 0..4 {
+            let result = observe(mode != 0, || {
+                if mode == 2 {
+                    RECORDER.with_borrow_mut(Option::take);
+                }
+                if mode == 3 { Err(()) } else { Ok(()) }
+            });
+            assert_eq!(result.is_err(), mode == 3);
+        }
+        let mut output = Vec::new();
+        report(Recorder::default(), Duration::ZERO, true, &mut output);
+        assert!(String::from_utf8(output).unwrap().contains("status=ok"));
+    }
 
     #[test]
     fn disabled_diagnostics_have_no_clock_or_recording_state() {

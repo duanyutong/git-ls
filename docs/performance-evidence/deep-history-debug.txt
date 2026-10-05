@@ -1,0 +1,85 @@
+git-ls debug: perf clock=monotonic interval=after_arguments_before_summary
+git-ls debug: perf cache=disabled
+git-ls debug: render plan: backend=Gix revset="draft()" hidden=false order=Newest layout=Inline verbosity=Low
+git-ls debug: selection: using plain Git default
+git-ls debug: plain Git fallback: local branch tips=9
+git-ls debug: plain Git fallback: main branch=main oid=1d9d5defa53117b18558aa9ff416b530387b1f48
+git-ls debug: perf selection_strategy=shared_range
+git-ls debug: plain Git fallback: selected local branches=8
+git-ls debug: plain Git fallback: stack heads=8
+git-ls debug: selection: populated main=1d9d5defa53117b18558aa9ff416b530387b1f48 heads=8 branch_points=8 rewritten_detection=false
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=28a950b3f54afbfe897cbfbb272e721d5f3f7b5b
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.052 head=28a950b3f54afbfe897cbfbb272e721d5f3f7b5b base=682f33834c0df607902bc771bf9a7a23212a6121 returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=461f1da09394c3b7ce400860480ba7f90a122f59
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.022 head=461f1da09394c3b7ce400860480ba7f90a122f59 base=5de647924452dbfbb586bc2b3e321692c896d113 returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=708e7ddbdc3ad3126d8525f1c28a3707a8978796
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.031 head=708e7ddbdc3ad3126d8525f1c28a3707a8978796 base=30b2f294c58aa075274cd0f3ebc04fe8beaf98ed returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=7e4dee1d9c4295ed8fc33d4508a64fe006c4ab19
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.019 head=7e4dee1d9c4295ed8fc33d4508a64fe006c4ab19 base=ae7e3b0308c0e29bdba618668eb897c3f8bf3047 returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=847da0afe2f9638ec17d7c86bf1342a5d6d51950
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.016 head=847da0afe2f9638ec17d7c86bf1342a5d6d51950 base=625b4c4d7910f59ac387087737c6371987aad505 returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=a8bc11877e6d4cbb276818889f96f6e6c3365a99
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.015 head=a8bc11877e6d4cbb276818889f96f6e6c3365a99 base=99fc1b974270f3364e41115277e9ce01d3d778c9 returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=afd3132b9be4260e1e412437f7a12f3924e63a14
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.014 head=afd3132b9be4260e1e412437f7a12f3924e63a14 base=557c8ac2c9cf7a371750572d3059af443a3c9b7d returned_commits=1
+git-ls debug: lane: collecting ancestry path main=1d9d5defa53117b18558aa9ff416b530387b1f48 head=da12c5566a0d51bfc439d9e1df57ec5c91d1e744
+git-ls debug: perf stage=lane_path parent=analysis duration_ms=0.017 head=da12c5566a0d51bfc439d9e1df57ec5c91d1e744 base=8f2a698c398ea048c4397a6f9da1b11e377de4fb returned_commits=1
+git-ls debug: lane groups: building groups for 8 lanes
+git-ls debug: perf main_distance_strategy=linear visited_commits=25001
+git-ls debug: perf main_distance base=8f2a698c398ea048c4397a6f9da1b11e377de4fb commits=6250
+git-ls debug: perf main_distance base=ae7e3b0308c0e29bdba618668eb897c3f8bf3047 commits=25000
+git-ls debug: perf main_distance base=99fc1b974270f3364e41115277e9ce01d3d778c9 commits=3125
+git-ls debug: perf main_distance base=625b4c4d7910f59ac387087737c6371987aad505 commits=18750
+git-ls debug: perf main_distance base=30b2f294c58aa075274cd0f3ebc04fe8beaf98ed commits=12500
+git-ls debug: perf main_distance base=557c8ac2c9cf7a371750572d3059af443a3c9b7d commits=21875
+git-ls debug: perf main_distance base=682f33834c0df607902bc771bf9a7a23212a6121 commits=9375
+git-ls debug: perf main_distance base=5de647924452dbfbb586bc2b3e321692c896d113 commits=15625
+git-ls debug: perf stage=write_output parent=invocation duration_ms=0.030 status=ok rendered_lines=43
+git-ls debug: perf operation=ancestry_path parent=lane_path calls=8 cumulative_ms=0.176 inclusive=true
+git-ls debug: perf operation=main_distances parent=main_distances calls=1 cumulative_ms=55.842 inclusive=true
+git-ls debug: perf operation=merge_base parent=lane_path calls=8 cumulative_ms=0.001 inclusive=true
+git-ls debug: perf operation=metadata parent=groups calls=1 cumulative_ms=0.008 inclusive=true
+git-ls debug: perf operation=metadata parent=metadata_prefetch calls=1 cumulative_ms=0.019 inclusive=true
+git-ls debug: perf operation=select_tips parent=branch_filter calls=1 cumulative_ms=55.598 inclusive=true
+git-ls debug: perf operation=subprocess_config parent=config calls=1 cumulative_ms=24.330 inclusive=true
+git-ls debug: perf stage=analysis parent=invocation calls=1 cumulative_ms=113.527 inclusive=true
+git-ls debug: perf stage=backend_open parent=invocation calls=1 cumulative_ms=0.742 inclusive=true
+git-ls debug: perf stage=branch_filter parent=plain_selection calls=1 cumulative_ms=55.610 inclusive=true
+git-ls debug: perf stage=config parent=invocation calls=1 cumulative_ms=24.335 inclusive=true
+git-ls debug: perf stage=groups parent=analysis calls=1 cumulative_ms=56.048 inclusive=true
+git-ls debug: perf stage=lane_path parent=analysis calls=8 cumulative_ms=0.186 inclusive=true
+git-ls debug: perf stage=layout parent=invocation calls=1 cumulative_ms=0.029 inclusive=true
+git-ls debug: perf stage=main_distances parent=groups calls=1 cumulative_ms=55.852 inclusive=true
+git-ls debug: perf stage=metadata_prefetch parent=analysis calls=1 cumulative_ms=0.023 inclusive=true
+git-ls debug: perf stage=plain_selection parent=selection calls=1 cumulative_ms=56.882 inclusive=true
+git-ls debug: perf stage=repository_snapshot parent=plain_selection calls=1 cumulative_ms=0.605 inclusive=true
+git-ls debug: perf stage=selection parent=analysis calls=1 cumulative_ms=56.889 inclusive=true
+git-ls debug: perf stage=stack_heads parent=plain_selection calls=1 cumulative_ms=0.002 inclusive=true
+git-ls debug: perf stage=write_output parent=invocation calls=1 cumulative_ms=0.030 inclusive=true
+git-ls debug: perf counters parent=analysis lanes=8
+git-ls debug: perf counters parent=analysis metadata_hits=8
+git-ls debug: perf counters parent=analysis metadata_requests=8
+git-ls debug: perf counters parent=branch_filter peak_parent_entries=8
+git-ls debug: perf counters parent=branch_filter selection_edges=8
+git-ls debug: perf counters parent=branch_filter selection_vertices=8
+git-ls debug: perf counters parent=config subprocess_calls=1
+git-ls debug: perf counters parent=groups groups=8
+git-ls debug: perf counters parent=groups historical_bases=8
+git-ls debug: perf counters parent=groups metadata_hits=8
+git-ls debug: perf counters parent=groups metadata_requests=8
+git-ls debug: perf counters parent=groups orphaned_groups=0
+git-ls debug: perf counters parent=lane_path ancestry_edges=8
+git-ls debug: perf counters parent=lane_path ancestry_vertices=8
+git-ls debug: perf counters parent=lane_path merge_base_selection_hits=8
+git-ls debug: perf counters parent=lane_path peak_parent_entries=8
+git-ls debug: perf counters parent=lane_path peak_path_entries=1
+git-ls debug: perf counters parent=lane_path returned_commits=8
+git-ls debug: perf counters parent=main_distances main_vertices=25001
+git-ls debug: perf counters parent=main_distances parent_loads=25000
+git-ls debug: perf counters parent=main_distances peak_parent_entries=25008
+git-ls debug: perf counters parent=plain_selection heads=8
+git-ls debug: perf counters parent=plain_selection local_branches=9
+git-ls debug: perf counters parent=plain_selection local_tips=9
+git-ls debug: perf counters parent=plain_selection selected_branches=8
+git-ls debug: perf counters parent=plain_selection selected_tips=8
+git-ls debug: perf summary status=ok observed_total_ms=139.444 version=0.13.2
