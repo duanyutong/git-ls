@@ -30,6 +30,28 @@ impl GitCommand for ProcessGit {
 
         Ok(normalised_stdout(&output))
     }
+    fn run_input(&self, args: &[&str], input: &str) -> Result<String> {
+        use std::io::{Seek, Write};
+        let _perf = crate::diagnostics::operation("subprocess_rev_list");
+        crate::diagnostics::count("subprocess_calls", 1);
+        let mut spool = tempfile::tempfile().map_err(GitLsError::GitExec)?;
+        spool
+            .write_all(input.as_bytes())
+            .map_err(GitLsError::GitExec)?;
+        spool.rewind().map_err(GitLsError::GitExec)?;
+        let output = Command::new("git")
+            .args(args)
+            .stdin(spool)
+            .output()
+            .map_err(GitLsError::GitExec)?;
+        if !output.status.success() {
+            return Err(GitLsError::git_command(
+                args.join(" "),
+                command_failure_detail(&output),
+            ));
+        }
+        Ok(normalised_stdout(&output))
+    }
 }
 
 fn execute_git(args: &[&str]) -> Result<Output> {

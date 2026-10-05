@@ -13,6 +13,146 @@ use crate::error::{GitLsError, Result};
 use crate::model::{CommitMeta, display_short_oid};
 use crate::test_support::MockGit;
 
+struct RepoGit<'a>(&'a TestRepo);
+
+impl GitCommand for RepoGit<'_> {
+    fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
+        let output = self.0.command("git").args(args).output().unwrap();
+        if !(output.status.success() || allow_failure && output.status.code() == Some(1)) {
+            return Err(GitLsError::git_command(
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
+        Ok(String::from_utf8(output.stdout).unwrap().trim().to_string())
+    }
+    fn run_input(&self, args: &[&str], input: &str) -> Result<String> {
+        let output = self
+            .0
+            .command("git")
+            .args(args)
+            .write_stdin(input)
+            .assert()
+            .success();
+        Ok(String::from_utf8(output.get_output().stdout.clone()).unwrap())
+    }
+}
+
+#[test]
+fn batched_queries_match_git_on_nested_and_incomparable_bases() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let a = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "a"]);
+    let b = repo.git(&["commit-tree", &tree, "-p", &root, "-m", "b"]);
+    let c = repo.git(&["commit-tree", &tree, "-p", &a, "-m", "c"]);
+    let merge = repo.git(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        &c,
+        "-p",
+        &b,
+        "-p",
+        &a,
+        "-m",
+        "merge",
+    ]);
+    let orphan = repo.git(&["commit-tree", &tree, "-m", "orphan"]);
+    let bases = vec![
+        root.clone(),
+        a.clone(),
+        b,
+        c.clone(),
+        merge.clone(),
+        orphan.clone(),
+    ];
+    for (i, id) in bases.iter().enumerate() {
+        repo.git(&["branch", &format!("tip-{i}"), id]);
+    }
+    let native = GixBackend::discover_from(repo.path()).unwrap();
+    let shell = RepoGit(&repo);
+    for backend in [&native as &dyn GitBackend, &shell as &dyn GitBackend] {
+        for requested in [&bases[..5], &bases[..], &[]] {
+            let distances = backend.main_distances(&merge, requested).unwrap();
+            for base in requested {
+                let count: usize = repo
+                    .git(&[
+                        "rev-list",
+                        "--count",
+                        "--ancestry-path",
+                        &format!("{base}..{merge}"),
+                    ])
+                    .parse()
+                    .unwrap();
+                assert_eq!(
+                    distances[base],
+                    if base == &merge {
+                        Some(0)
+                    } else {
+                        (count > 0).then_some(count)
+                    }
+                );
+            }
+        }
+        let unmerged = backend.unmerged_tips(&a, &bases).unwrap();
+        assert!(!unmerged.contains(&root));
+        assert!(!unmerged.contains(&a));
+        let mut expected = vec![merge.clone(), orphan.clone()];
+        expected.sort();
+        assert_eq!(backend.independent_heads(&a, &unmerged).unwrap(), expected);
+        assert_eq!(
+            backend
+                .main_distances(&c, &[root.clone(), a.clone(), c.clone()])
+                .unwrap(),
+            HashMap::from([
+                (root.clone(), Some(2)),
+                (a.clone(), Some(1)),
+                (c.clone(), Some(0))
+            ])
+        );
+    }
+}
+
+#[test]
+fn shell_large_head_selection_uses_one_shared_stdin_walk() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let tree = repo.git(&["show", "-s", "--format=%T", "HEAD"]);
+    let mut tips: Vec<String> = Vec::new();
+    for i in 0..130 {
+        tips.push(repo.git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            tips.last().unwrap_or(&root),
+            "-m",
+            &format!("commit-{i}"),
+        ]));
+    }
+    let shell = RepoGit(&repo);
+    assert_eq!(
+        shell.independent_heads(&root, &tips).unwrap(),
+        vec![tips.last().unwrap().clone()]
+    );
+}
+
+#[test]
+fn native_distance_respects_shallow_roots_even_when_parent_objects_exist() {
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let boundary = repo.commit("boundary");
+    let head = repo.commit("head");
+    std::fs::write(repo.path().join(".git/shallow"), format!("{boundary}\n")).unwrap();
+    let native = GixBackend::discover_from(repo.path()).unwrap();
+    let shell = RepoGit(&repo);
+    let bases = vec![root, boundary];
+    assert_eq!(
+        native.main_distances(&head, &bases).unwrap(),
+        shell.main_distances(&head, &bases).unwrap()
+    );
+}
+
 struct MetadataBackendStub {
     fail: bool,
 }

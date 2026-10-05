@@ -131,6 +131,8 @@ fn build_render_plan(
     git: &dyn GitBackend,
     environment: RenderEnvironment,
 ) -> Result<RenderPlan> {
+    let git = crate::backend::Session::new(git);
+    let git: &dyn GitBackend = &git;
     let _perf = crate::diagnostics::stage("analysis");
     debug_log(
         args.debug,

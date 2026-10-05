@@ -46,6 +46,20 @@ impl<T: GitCommand + ?Sized> RepositoryStateBackend for T {
 }
 
 impl<T: GitCommand + ?Sized> AncestryBackend for T {
+    fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        super::batch::unmerged(self, main, tips)
+    }
+    fn independent_heads(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        super::batch::independent(self, main, tips)
+    }
+    fn main_distances(
+        &self,
+        main: &str,
+        bases: &[String],
+    ) -> Result<HashMap<String, Option<usize>>> {
+        super::batch::distances(self, main, bases)
+    }
+
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         shell_merge_base(self, main_oid, head_oid)
     }

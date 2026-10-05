@@ -1,6 +1,6 @@
 [package]
 name = "git-ls"
-version = "0.11.1"
+version = "0.11.2"
 edition = "2024"
 rust-version = "1.99"
 description = "Graphite-style stack lane renderer for local Git branch stacks"
@@ -23,6 +23,7 @@ gix = { version = "0.88.0", default-features = false, features = [
     "revision",
     "sha1",
 ] }
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 
 [build-dependencies]
@@ -35,7 +36,6 @@ vergen-gitcl = { version = "10.0.3", features = [
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
-tempfile = "3.27.0"
 
 [lints.rust]
 missing_debug_implementations = "warn"

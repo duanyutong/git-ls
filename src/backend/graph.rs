@@ -34,6 +34,74 @@ pub(super) fn descendants<K: Copy + Eq + Hash>(nodes: &[(K, Vec<K>)], base: K) -
     included
 }
 
+/// Counts strict descendants for many bases in a shared graph. A block of 64
+/// bases requires one mask per vertex, independently of the total base count.
+pub(super) fn descendant_counts<K: Copy + Eq + Hash>(
+    nodes: &[(K, Vec<K>)],
+    bases: &[K],
+) -> Vec<usize> {
+    let index: HashMap<K, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
+        .collect();
+    let mut children = vec![Vec::new(); nodes.len()];
+    let mut remaining = vec![0; nodes.len()];
+    for (child, (_, parents)) in nodes.iter().enumerate() {
+        for parent in parents {
+            if let Some(parent) = index.get(parent) {
+                children[*parent].push(child);
+                remaining[child] += 1;
+            }
+        }
+    }
+    let mut ready: VecDeque<_> = remaining
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| (*n == 0).then_some(i))
+        .collect();
+    let mut order = Vec::with_capacity(nodes.len());
+    while let Some(parent) = ready.pop_front() {
+        order.push(parent);
+        for &child in &children[parent] {
+            remaining[child] -= 1;
+            if remaining[child] == 0 {
+                ready.push_back(child);
+            }
+        }
+    }
+    let mut counts = vec![0; bases.len()];
+    for (block, bases) in bases.chunks(64).enumerate() {
+        let seeds: HashMap<K, u64> =
+            bases
+                .iter()
+                .enumerate()
+                .fold(HashMap::new(), |mut seeds, (i, base)| {
+                    *seeds.entry(*base).or_default() |= 1_u64 << i;
+                    seeds
+                });
+        let mut masks = vec![0_u64; nodes.len()];
+        for &vertex in &order {
+            let (id, parents) = &nodes[vertex];
+            for parent in parents {
+                if !index.contains_key(parent) {
+                    masks[vertex] |= seeds.get(parent).copied().unwrap_or(0);
+                }
+            }
+            let mut bits = masks[vertex];
+            while bits != 0 {
+                counts[block * 64 + bits.trailing_zeros() as usize] += 1;
+                bits &= bits - 1;
+            }
+            masks[vertex] |= seeds.get(id).copied().unwrap_or(0);
+            for &child in &children[vertex] {
+                masks[child] |= masks[vertex];
+            }
+        }
+    }
+    counts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +147,10 @@ mod tests {
                         .rev()
                         .collect();
                     let actual = descendants(&candidates, base);
+                    assert_eq!(
+                        descendant_counts(&candidates, &[base])[0],
+                        actual.iter().filter(|included| **included).count()
+                    );
                     for ((id, _), actual) in candidates.iter().zip(actual) {
                         assert_eq!(
                             actual,
@@ -89,6 +161,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn distance_masks_span_blocks_and_do_not_double_count_merges() {
+        let nodes = vec![(3, vec![2, 1]), (2, vec![0]), (1, vec![0])];
+        assert_eq!(descendant_counts(&nodes, &vec![0; 130]), vec![3; 130]);
+        assert_eq!(
+            descendant_counts(&nodes, &[0, 1, 2, 3, 99]),
+            [3, 1, 1, 0, 0]
+        );
     }
 
     #[test]

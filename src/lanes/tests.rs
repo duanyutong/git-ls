@@ -726,16 +726,16 @@ fn plain_git_stack_heads_handles_empty_and_identical_inputs() {
     let git = FakeLaneBackend::default();
     let empty: Vec<String> = Vec::new();
     assert_eq!(
-        plain_git_stack_heads(&git, empty.iter()).unwrap(),
+        plain_git_stack_heads(&git, "main", empty.iter()).unwrap(),
         Vec::<String>::new()
     );
 
     let selected = ["same".to_string()];
     assert_eq!(
-        plain_git_stack_heads(&git, selected.iter()).unwrap(),
+        plain_git_stack_heads(&git, "main", selected.iter()).unwrap(),
         vec!["same".to_string()]
     );
-    assert!(is_ancestor(&git, "same", "same").unwrap());
+    assert!(is_ancestor_for_test(&git, "same", "same").unwrap());
 }
 
 #[test]
@@ -749,7 +749,7 @@ fn plain_git_stack_heads_keeps_independent_heads_and_drops_ancestors() {
         .with_merge_base("tip", "other", None);
     let selected = ["base".to_string(), "tip".to_string(), "other".to_string()];
 
-    let heads = plain_git_stack_heads(&git, selected.iter()).unwrap();
+    let heads = plain_git_stack_heads(&git, "main", selected.iter()).unwrap();
 
     assert_eq!(heads, vec!["other".to_string(), "tip".to_string()]);
 }
@@ -906,39 +906,21 @@ fn orders_lanes_by_head_oid_when_timestamps_match() {
 }
 
 #[test]
-fn groups_lanes_by_base_time_without_current_promotion() {
+fn grouping_preserves_lane_order_and_all_members() {
     let lanes = vec![
         lane("a", Some("base-a"), 30, false),
         lane("b", Some("base-b"), 2, true),
         lane("c", Some("base-a"), 10, false),
     ];
-
-    let groups = grouped_by_base(lanes.clone(), Order::Newest);
-
-    assert_eq!(groups[0].0, Some("base-a".to_string()));
-    assert_eq!(groups[0].1.len(), 2);
-    assert_eq!(groups[1].0, Some("base-b".to_string()));
-    assert_eq!(groups[1].1.len(), 1);
-
-    let groups = grouped_by_base(lanes, Order::Oldest);
-
-    assert_eq!(groups[0].0, Some("base-b".to_string()));
-    assert_eq!(groups[0].1.len(), 1);
-    assert_eq!(groups[1].0, Some("base-a".to_string()));
-    assert_eq!(groups[1].1.len(), 2);
-}
-
-#[test]
-fn groups_lanes_with_base_oid_tie_breaker_when_timestamps_match() {
-    let lanes = vec![
-        lane("b", Some("base-b"), 10, false),
-        lane("a", Some("base-a"), 10, false),
-    ];
-
-    let groups = grouped_by_base(lanes, Order::Newest);
-
-    assert_eq!(groups[0].0, Some("base-a".to_string()));
-    assert_eq!(groups[1].0, Some("base-b".to_string()));
+    let groups: HashMap<_, _> = grouped_by_base(lanes).into_iter().collect();
+    let a = &groups[&Some("base-a".to_string())];
+    assert_eq!(
+        a.iter()
+            .map(|lane| lane.head_oid.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a", "c"]
+    );
+    assert_eq!(groups[&Some("base-b".to_string())].len(), 1);
 }
 
 #[test]
@@ -1616,4 +1598,11 @@ fn build_lanes_skips_head_paths_without_visible_branch_points() {
 
     assert_eq!(lanes.len(), 1);
     assert_eq!(lanes[0].head_oid, "visible");
+}
+
+fn is_ancestor_for_test(git: &dyn GitBackend, ancestor: &str, descendant: &str) -> Result<bool> {
+    Ok(
+        ancestor == descendant
+            || git.merge_base(ancestor, descendant)?.as_deref() == Some(ancestor),
+    )
 }

@@ -102,6 +102,19 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
     let main_timestamp = TEST_NOW - 120;
 
     MockGit::default()
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)",
+                "--no-merged=main-oid",
+                "refs/heads",
+            ],
+            "feature-oid",
+        )
+        .with(
+            &["merge-base", "--independent", "feature-oid"],
+            "feature-oid",
+        )
         .with(&["config", "--get", "git-ls.verbosity"], config_verbosity)
         .with(&["config", "--get", "git-ls.backend"], "")
         .with(&["config", "--get", "git-ls.palette"], "")
@@ -440,10 +453,16 @@ fn build_render_plan_uses_plain_git_for_default_selection() {
             &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
             "tip\nfeature/tip",
         )
-        .with(&["merge-base", "base", "main-oid"], "main-oid")
-        .with(&["merge-base", "tip", "main-oid"], "main-oid")
-        .with(&["merge-base", "base", "tip"], "base")
-        .with(&["merge-base", "tip", "base"], "base")
+        .with(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)",
+                "--no-merged=main-oid",
+                "refs/heads",
+            ],
+            "base\ntip",
+        )
+        .with(&["merge-base", "--independent", "base", "tip"], "tip")
         .with(&["merge-base", "main-oid", "tip"], "main-oid")
         .with(
             &[

@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -241,7 +242,7 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<L
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     crate::diagnostics::count("selected_tips", points_by_oid.len());
     crate::diagnostics::count("selected_branches", branch_names.len());
-    let head_oids = plain_git_stack_heads(git, points_by_oid.keys())?;
+    let head_oids = plain_git_stack_heads(git, &main_oid, points_by_oid.keys())?;
     crate::diagnostics::count("heads", head_oids.len());
     debug_log(
         debug,
@@ -301,9 +302,11 @@ fn plain_git_branch_names(
     main_oid: &str,
 ) -> Result<Vec<String>> {
     let _perf = crate::diagnostics::stage("branch_filter");
+    let tips: Vec<_> = branch_oid_map.keys().cloned().collect();
+    let unmerged: HashSet<_> = git.unmerged_tips(main_oid, &tips)?.into_iter().collect();
     let mut branch_names = Vec::new();
     for (oid, names) in branch_oid_map {
-        if oid == main_oid || is_ancestor(git, oid, main_oid)? {
+        if !unmerged.contains(oid) {
             continue;
         }
 
@@ -321,6 +324,7 @@ fn plain_git_branch_names(
 
 fn plain_git_stack_heads<'a>(
     git: &dyn GitBackend,
+    main_oid: &str,
     selected_oids: impl IntoIterator<Item = &'a String>,
 ) -> Result<Vec<String>> {
     let _perf = crate::diagnostics::stage("stack_heads");
@@ -328,32 +332,10 @@ fn plain_git_stack_heads<'a>(
     oids.sort();
     oids.dedup();
 
-    let mut heads = Vec::new();
-    for oid in &oids {
-        let mut is_intermediate = false;
-        for other in oids.iter().filter(|other| *other != oid) {
-            if is_ancestor(git, oid, other)? {
-                is_intermediate = true;
-                break;
-            }
-        }
-        if !is_intermediate {
-            heads.push(oid.clone());
-        }
-    }
-
+    let mut heads = git.independent_heads(main_oid, &oids)?;
+    heads.sort();
+    heads.dedup();
     Ok(heads)
-}
-
-fn is_ancestor(git: &dyn GitBackend, ancestor_oid: &str, descendant_oid: &str) -> Result<bool> {
-    if ancestor_oid == descendant_oid {
-        return Ok(true);
-    }
-
-    Ok(
-        AncestryBackend::merge_base(git, ancestor_oid, descendant_oid)?.as_deref()
-            == Some(ancestor_oid),
-    )
 }
 
 fn prefetch_lane_metadata(
@@ -466,6 +448,15 @@ fn build_rewritten_commits(
     rewritten_refs: &[RewrittenCommitRef],
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Vec<RewrittenCommit>> {
+    let mut oids: Vec<_> = rewritten_refs
+        .iter()
+        .flat_map(|commit| [commit.oid.as_str(), commit.replacement_oid.as_str()])
+        .collect();
+    oids.sort_unstable();
+    oids.dedup();
+    if !oids.is_empty() {
+        git.cache_commit_metas(&oids, meta_cache)?;
+    }
     rewritten_refs
         .iter()
         .rev()
@@ -538,7 +529,11 @@ fn build_lane_from_path(
     } else {
         Vec::new()
     };
-    let branch_points = branch_points_for_path(lane_path, points_by_oid, &rewritten_refs);
+    let branch_points = if rewritten_refs.is_empty() {
+        branch_points
+    } else {
+        branch_points_for_path(lane_path, points_by_oid, &rewritten_refs)
+    };
     let branch_points = branch_points
         .iter()
         .map(|point| build_branch_point(git, point, context.verbosity, meta_cache))
@@ -653,22 +648,13 @@ pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
     lanes
 }
 
-fn grouped_by_base(lanes: Vec<Lane>, order: Order) -> Vec<(Option<String>, Vec<Lane>)> {
+fn grouped_by_base(lanes: Vec<Lane>) -> Vec<(Option<String>, Vec<Lane>)> {
     let mut groups: HashMap<Option<String>, Vec<Lane>> = HashMap::new();
     for lane in lanes {
         groups.entry(lane.base_oid.clone()).or_default().push(lane);
     }
 
-    let mut groups: Vec<_> = groups.into_iter().collect();
-    groups.sort_by(|lhs, rhs| {
-        lane_group_timestamp_order(&lhs.1, &rhs.1, order).then_with(|| {
-            lhs.0
-                .as_deref()
-                .unwrap_or("")
-                .cmp(rhs.0.as_deref().unwrap_or(""))
-        })
-    });
-    groups
+    groups.into_iter().collect()
 }
 
 pub(crate) fn build_lane_groups(
@@ -684,37 +670,38 @@ pub(crate) fn build_lane_groups(
         debug,
         format_args!("lane groups: building groups for {} lanes", lanes.len()),
     );
+    let grouped = grouped_by_base(lanes);
+    let bases: Vec<_> = grouped
+        .iter()
+        .filter_map(|(base, _)| base.clone())
+        .collect();
+    let metadata: Vec<_> = bases
+        .iter()
+        .filter(|base| base.as_str() != main_oid)
+        .map(String::as_str)
+        .collect();
+    git.cache_commit_metas(&metadata, meta_cache)?;
+    let distances = {
+        let _perf = crate::diagnostics::stage("main_distances");
+        git.main_distances(main_oid, &bases)?
+    };
     let mut groups = Vec::new();
-    for (base_oid, lanes) in grouped_by_base(lanes, order) {
+    for (base_oid, lanes) in grouped {
         let base_meta = match base_oid.as_deref() {
             Some(base_oid) if base_oid != main_oid => {
                 Some(get_commit_meta(git, base_oid, meta_cache)?)
             }
             _ => None,
         };
-        let main_distance = match base_oid.as_deref() {
-            Some(base_oid) if base_oid == main_oid => Some(0),
-            Some(base_oid) => {
-                debug_log(
-                    debug,
-                    format_args!(
-                        "lane groups: measuring main distance base={base_oid} main={main_oid}"
-                    ),
-                );
-                let mut perf = crate::diagnostics::stage("main_distance");
-                let path = AncestryBackend::ancestry_path(git, Some(base_oid), main_oid)?;
-                perf.detail(format_args!(
-                    "base={base_oid} returned_commits={}",
-                    path.len()
-                ));
-                if path.is_empty() {
-                    None
-                } else {
-                    Some(path.len())
-                }
-            }
-            None => None,
-        };
+        let main_distance = base_oid
+            .as_ref()
+            .and_then(|base| distances.get(base).copied().flatten());
+        if debug && let Some(base) = base_oid.as_deref() {
+            crate::diagnostics::event(format_args!(
+                "main_distance base={base} commits={}",
+                main_distance.map_or_else(|| "unreachable".to_string(), |n| n.to_string())
+            ));
+        }
 
         groups.push(LaneGroup::new(base_oid, base_meta, main_distance, lanes));
     }
@@ -731,19 +718,27 @@ pub(crate) fn build_lane_groups(
         "orphaned_groups",
         groups.iter().filter(|g| g.main_distance.is_none()).count(),
     );
-    groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, order));
+    groups.sort_by_cached_key(|group| lane_group_key(group, order));
     Ok(groups)
 }
 
+fn lane_group_key(group: &LaneGroup, order: Order) -> (bool, usize, i128, String) {
+    let timestamp = i128::from(lane_group_timestamp(&group.lanes, order));
+    (
+        group.main_distance.is_none(),
+        group.main_distance.unwrap_or(0),
+        if order == Order::Newest {
+            -timestamp
+        } else {
+            timestamp
+        },
+        group.base_oid.clone().unwrap_or_default(),
+    )
+}
+
+#[cfg(test)]
 fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
-    match (lhs.main_distance, rhs.main_distance) {
-        (Some(lhs_distance), Some(rhs_distance)) => lhs_distance
-            .cmp(&rhs_distance)
-            .then_with(|| lane_group_fallback_order(lhs, rhs, order)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => lane_group_fallback_order(lhs, rhs, order),
-    }
+    lane_group_key(lhs, order).cmp(&lane_group_key(rhs, order))
 }
 
 fn lane_group_timestamp(lanes: &[Lane], order: Order) -> i64 {
@@ -759,24 +754,6 @@ fn lane_group_timestamp(lanes: &[Lane], order: Order) -> i64 {
             .min()
             .unwrap_or(i64::MAX),
     }
-}
-
-fn lane_group_timestamp_order(lhs: &[Lane], rhs: &[Lane], order: Order) -> Ordering {
-    let lhs_timestamp = lane_group_timestamp(lhs, order);
-    let rhs_timestamp = lane_group_timestamp(rhs, order);
-    match order {
-        Order::Newest => rhs_timestamp.cmp(&lhs_timestamp),
-        Order::Oldest => lhs_timestamp.cmp(&rhs_timestamp),
-    }
-}
-
-fn lane_group_fallback_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
-    lane_group_timestamp_order(&lhs.lanes, &rhs.lanes, order).then_with(|| {
-        lhs.base_oid
-            .as_deref()
-            .unwrap_or("")
-            .cmp(rhs.base_oid.as_deref().unwrap_or(""))
-    })
 }
 
 #[cfg(test)]

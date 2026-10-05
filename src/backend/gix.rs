@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+
+mod graph;
 
 use gix::bstr::ByteSlice as _;
 
@@ -17,6 +20,9 @@ use super::traits::{
 pub(crate) struct GixBackend {
     repo: gix::Repository,
     command: ProcessGit,
+    parents: RefCell<HashMap<gix::ObjectId, Vec<gix::ObjectId>>>,
+    selection: RefCell<Option<graph::TipAnalysis>>,
+    shallow: HashSet<gix::ObjectId>,
 }
 
 impl GixBackend {
@@ -28,9 +34,16 @@ impl GixBackend {
         let mut repo = gix::discover_with_environment_overrides(directory)
             .map_err(|source| GitLsError::gix("discover repository", source))?;
         repo.object_cache_size_if_unset(4 * 1024 * 1024);
+        let shallow = repo
+            .shallow_commits()
+            .map_err(|error| GitLsError::gix("read shallow boundary", error))?
+            .map_or_else(HashSet::new, |ids| ids.iter().copied().collect());
         Ok(Self {
             repo,
+            shallow,
             command: ProcessGit,
+            parents: RefCell::default(),
+            selection: RefCell::default(),
         })
     }
 
@@ -133,6 +146,34 @@ impl RepositoryStateBackend for GixBackend {
 }
 
 impl AncestryBackend for GixBackend {
+    fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        let analysis = self.analyse_tips(main, tips)?;
+        let result = analysis.unmerged.clone();
+        *self.selection.borrow_mut() = Some(analysis);
+        Ok(result)
+    }
+
+    fn independent_heads(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        let mut sorted = tips.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        if let Some(analysis) = self.selection.borrow().as_ref()
+            && analysis.main == main
+            && analysis.unmerged == sorted
+        {
+            return Ok(analysis.heads.clone());
+        }
+        Ok(self.analyse_tips(main, &sorted)?.heads)
+    }
+
+    fn main_distances(
+        &self,
+        main: &str,
+        bases: &[String],
+    ) -> Result<HashMap<String, Option<usize>>> {
+        self.distances(main, bases)
+    }
+
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         let _perf = crate::diagnostics::operation("merge_base");
         let main_oid = Self::object_id(main_oid)?;
@@ -165,7 +206,9 @@ impl AncestryBackend for GixBackend {
         {
             let info =
                 info.map_err(|source| GitLsError::gix("read revision walk entry", source))?;
-            nodes.push((info.id, info.parent_ids.into_vec()));
+            let parents = self.effective_parents(info.id, info.parent_ids.into_vec());
+            self.remember_parents(info.id, &parents);
+            nodes.push((info.id, parents));
         }
         crate::diagnostics::count("ancestry_vertices", nodes.len());
         crate::diagnostics::count(
