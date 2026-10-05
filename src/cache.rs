@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+pub(crate) mod maintenance;
+
 pub(crate) const SLOTS: u64 = 32;
 pub(crate) const ENTRY_LIMIT: u64 = 1024 * 1024;
 const SEMANTICS: &str = "analysis-1";
@@ -130,12 +132,22 @@ impl Store {
 
     pub(crate) fn publish<T: Serialize>(&self, name: &str, key: &str, value: &T) -> bool {
         let _perf = crate::diagnostics::stage("cache_write");
-        let Some(_lock) = self.lock("publication.lock") else {
+        let Some(lock) = self.lock("publication.lock") else {
             crate::diagnostics::event(format_args!(
                 "cache_publication=skipped reason=busy_or_unavailable"
             ));
             return false;
         };
+        self.publish_locked(&lock, name, key, value)
+    }
+
+    fn publish_locked<T: Serialize>(
+        &self,
+        _lock: &CacheLock,
+        name: &str,
+        key: &str,
+        value: &T,
+    ) -> bool {
         let Some(payload) = encode(value).and_then(|bytes| String::from_utf8(bytes).ok()) else {
             return false;
         };
@@ -185,7 +197,13 @@ impl Store {
         for slot in 0..SLOTS {
             remove(self.root.join(format!("snapshot-{slot:02}.json")));
         }
-        for name in ["facts-gix.json", "facts-shell.json", "publication.tmp"] {
+        for name in [
+            "facts-gix.json",
+            "facts-shell.json",
+            "publication.tmp",
+            "maintenance-state.json",
+            "maintenance-report.json",
+        ] {
             remove(self.root.join(name));
         }
         complete

@@ -220,6 +220,7 @@ fn write_render_plan<W: Write>(
     for line in plan.lines() {
         write_rendered_line(stdout, line, environment)?;
     }
+    stdout.flush()?;
     Ok(())
 }
 
@@ -234,7 +235,6 @@ where
 {
     let plan = build_render_plan(args, git, environment)?;
     write_render_plan(stdout, &plan, environment)?;
-    stdout.flush()?;
     Ok(())
 }
 

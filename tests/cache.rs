@@ -157,3 +157,72 @@ fn simultaneous_publishers_produce_complete_readable_entries() {
     assert!(debug.contains("cache=hit"));
     assert_eq!(cached, run(&repo, &["--no-cache"]).0);
 }
+
+#[cfg(unix)]
+#[test]
+fn maintenance_cannot_hold_output_pipes_open_and_reservations_coalesce() {
+    use std::hash::{Hash, Hasher};
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let repo = fixture();
+    run(&repo, &[]);
+    let state_path = repo
+        .path()
+        .join(".git/git-ls/cache/v1/maintenance-state.json");
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).expect("state")).expect("envelope");
+    let payload = r#"{"publications":16,"last_attempt":0}"#;
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    payload.hash(&mut hash);
+    envelope["payload"] = serde_json::json!(payload);
+    envelope["checksum"] = serde_json::json!(hash.finish());
+    std::fs::write(&state_path, serde_json::to_vec(&envelope).expect("encode"))
+        .expect("seed due state");
+    let helper = tempfile::tempdir().expect("helper");
+    let signal = helper.path().join("release");
+    let started = helper.path().join("started");
+    let done = helper.path().join("done");
+    let script = helper.path().join("nice");
+    std::fs::write(&script, format!(
+        "#!/bin/sh\necho started > '{}'\ni=0\nwhile [ ! -f '{}' ] && [ \"$i\" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done\necho worker-output-must-be-silent\necho done > '{}'\nshift 2\nexec \"$@\"\n", started.display(), signal.display(), done.display())).expect("script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    let path = std::env::join_paths(std::iter::once(helper.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").expect("PATH")),
+    ))
+    .expect("PATH");
+    let output = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .env("PATH", &path)
+        .args(["--debug", "--color", "never"])
+        .timeout(Duration::from_secs(5))
+        .assert()
+        .success();
+    assert!(String::from_utf8_lossy(&output.get_output().stderr).contains("maintenance=scheduled"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(started.exists());
+    assert!(
+        !done.exists(),
+        "foreground and pipe readers must finish while the worker is blocked"
+    );
+    let (_, debug) = run(&repo, &[]);
+    assert!(debug.contains("maintenance=not_due"));
+    std::fs::write(&signal, "release").expect("unblock worker");
+    let report = repo
+        .path()
+        .join(".git/git-ls/cache/v1/maintenance-report.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !report.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(report.exists());
+    assert!(!String::from_utf8_lossy(&output.get_output().stdout).contains("worker-output"));
+    assert!(run(&repo, &[]).1.contains("maintenance_previous"));
+    assert!(
+        run(&repo, &["--no-cache-maintenance"])
+            .1
+            .contains("maintenance=disabled")
+    );
+}

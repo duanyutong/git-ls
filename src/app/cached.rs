@@ -19,6 +19,29 @@ struct Snapshot {
     main_meta: Option<CommitMeta>,
 }
 
+impl Snapshot {
+    fn live(mut self, args: &RuntimeOptions, repository: RepositorySnapshot) -> Analysis {
+        for group in &mut self.groups {
+            group.lanes = ordered_lanes(std::mem::take(&mut group.lanes), args.order);
+            for lane in &mut group.lanes {
+                lane.contains_current = lane.branch_points.iter().any(|point| {
+                    repository
+                        .current_branch
+                        .as_ref()
+                        .is_some_and(|branch| point.names.contains(branch))
+                        || repository.head.as_ref() == Some(&point.oid)
+                });
+            }
+        }
+        sort_lane_groups(&mut self.groups, args.order);
+        Analysis {
+            groups: self.groups,
+            main_meta: self.main_meta,
+            repository,
+        }
+    }
+}
+
 /// Eligibility is intentionally conservative. Unusual graph interpretation must
 /// never reuse answers established against the ordinary object graph.
 fn location() -> Option<(PathBuf, String)> {
@@ -144,29 +167,9 @@ pub(super) fn execute_cached<W: Write>(
     };
     let (head, current_branch) = git.current_head_and_branch()?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
-    let (analysis, computed) = if let Some(mut snapshot) = snapshot {
+    let (analysis, computed) = if let Some(snapshot) = snapshot {
         crate::diagnostics::event(format_args!("cache=hit"));
-        for group in &mut snapshot.groups {
-            group.lanes = ordered_lanes(std::mem::take(&mut group.lanes), args.order);
-            for lane in &mut group.lanes {
-                lane.contains_current = lane.branch_points.iter().any(|point| {
-                    repository
-                        .current_branch
-                        .as_ref()
-                        .is_some_and(|branch| point.names.contains(branch))
-                        || repository.head.as_ref() == Some(&point.oid)
-                });
-            }
-        }
-        sort_lane_groups(&mut snapshot.groups, args.order);
-        (
-            Analysis {
-                groups: snapshot.groups,
-                main_meta: snapshot.main_meta,
-                repository,
-            },
-            None,
-        )
+        (snapshot.live(args, repository), None)
     } else {
         crate::diagnostics::event(format_args!(
             "cache={} reason={}",
@@ -194,7 +197,7 @@ pub(super) fn execute_cached<W: Write>(
     };
     let plan = render_analysis(args, &analysis, environment);
     write_render_plan(stdout, &plan, environment)?;
-    stdout.flush()?;
+    let mut published = false;
     if let Some(facts) = computed {
         let unchanged = {
             let _perf = crate::diagnostics::stage("cache_revalidation");
@@ -203,7 +206,7 @@ pub(super) fn execute_cached<W: Write>(
         };
         if unchanged {
             store.publish(&facts_name, &facts_key, &facts);
-            store.publish(
+            published = store.publish(
                 &name,
                 &key,
                 &Snapshot {
@@ -217,5 +220,6 @@ pub(super) fn execute_cached<W: Write>(
             ));
         }
     }
+    crate::cache::maintenance::after_render(&store, published, raw.no_cache_maintenance, &name);
     Ok(())
 }

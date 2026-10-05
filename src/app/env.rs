@@ -12,6 +12,16 @@ use super::parse_args_from;
 /// Executes the command-line entry point with process arguments and detected
 /// terminal capabilities.
 pub fn run_from_env() -> Result<()> {
+    if env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(
+            crate::cache::maintenance::PRIVATE_MODE,
+        ))
+    {
+        if let (Some(path), Some(retain)) = (env::args_os().nth(2), env::args().nth(3)) {
+            crate::cache::maintenance::run(std::path::Path::new(&path), &retain);
+        }
+        return Ok(());
+    }
     let mut stdout = io::stdout().lock();
     let environment = RenderEnvironment::detect();
     let args = parse_args_from(env::args().skip(1))?;

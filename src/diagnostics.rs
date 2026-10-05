@@ -30,6 +30,10 @@ struct Timing {
     elapsed: Duration,
 }
 
+pub(crate) fn enabled() -> bool {
+    RECORDER.with(|slot| slot.borrow().is_some())
+}
+
 pub(crate) struct Span {
     active: Option<(Instant, Key)>,
     detail: Option<String>,

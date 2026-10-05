@@ -117,6 +117,27 @@ to use the optimised uncached algorithms. The native backend retains at most
 65,536 application parent records per invocation; this limit is separate from
 Git's or gix's internal object caches.
 
+### Deferred cache maintenance
+
+After output has been written and flushed, eligible cache publications contribute
+to a repository-wide maintenance counter. A worker may be scheduled after sixteen
+publications, with at least one hour between attempts. `--no-cache-maintenance`
+suppresses scheduling. `--no-cache` also suppresses all maintenance activity.
+
+The short-lived worker has null standard streams and a separate process group;
+on Unix it requests reduced priority through `nice`. It acquires non-blocking
+locks, examines at most 32 snapshot slots, and applies a 100 ms cooperative time
+budget and an 8 MiB reclamation budget. Filesystem calls themselves cannot be
+interrupted by that time budget. It preferentially retains eight recent snapshots
+and the triggering snapshot; entries older than seven days are eligible for
+removal. Reusable fact files remain bounded independently. This mechanism never
+runs `git gc`, traverses repository history, or accesses the network.
+
+`--debug` distinguishes a scheduled attempt from the previous worker's completed
+report. Failed spawning, contention, interruption, or disabled maintenance leaves
+the foreground result valid. The fixed-slot storage limit remains effective in
+all these cases; maintenance adds only bounded state and report records.
+
 ## Licence
 
 This project is licensed under the GNU Affero General Public License, version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
