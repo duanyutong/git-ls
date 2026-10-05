@@ -2,6 +2,8 @@
 
 `git-ls` renders local Git branch stacks as compact coloured lanes for use as `git ls`.
 
+![Example `git ls` output showing generic branch stacks](docs/assets/git-ls-example.svg)
+
 ## Prerequisites
 
 - Git.

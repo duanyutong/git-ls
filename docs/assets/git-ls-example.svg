@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1111" height="580" viewBox="0 0 1111 580" role="img" aria-labelledby="title description">
+  <title id="title">git ls — six example branch stacks</title>
+  <desc id="description">Terminal output for the fictional acme/launchpad repository. Six coloured stacks contain eleven branches covering billing, search, reports, imports, documentation, and caching. The upper group contains four stacks with three, two, one, and one branches respectively; the lower group contains two stacks with two branches each. Eight branches contain one commit, two contain two commits, and one contains three commits. The payment-retries branch is checked out. Green main-history nodes connect the stacks across one collapsed history segment. All names, commit subjects, and hashes originate from a synthetic demonstration repository.</desc>
+  <!-- Captured from git-ls with the classic palette, columns layout, verbosity 2, and a 84-column terminal. -->
+  <rect width="1111" height="580" rx="8" fill="#171c22"/>
+  <g font-family="Menlo, Consolas, Liberation Mono, monospace" font-size="21" fill="#bcbcbc" xml:space="preserve">
+    <text x="24.00" y="45" fill="#00d75f" textLength="177.10" lengthAdjust="spacingAndGlyphs" font-weight="700">acme/launchpad</text>
+    <text x="213.75" y="45" fill="#00d75f" textLength="63.25" lengthAdjust="spacingAndGlyphs">git:(</text>
+    <text x="277.00" y="45" fill="#ff5f5f" textLength="240.35" lengthAdjust="spacingAndGlyphs">fix/payment-retries</text>
+    <text x="517.35" y="45" fill="#00d75f" textLength="37.95" lengthAdjust="spacingAndGlyphs">) ▶</text>
+    <text x="567.95" y="45" fill="#bcbcbc" textLength="75.90" lengthAdjust="spacingAndGlyphs">git ls</text>
+    <text x="24.00" y="101" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">1h</text>
+    <text x="61.95" y="101" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs" font-weight="700">▶</text>
+    <text x="112.55" y="101" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">●</text>
+    <text x="213.75" y="101" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="101" fill="#ff5f5f" textLength="240.35" lengthAdjust="spacingAndGlyphs" font-weight="700" text-decoration="underline">fix/payment-retries</text>
+    <text x="492.05" y="101" fill="#c6c6c6" textLength="442.75" lengthAdjust="spacingAndGlyphs">fix(billing): retry failed payments</text>
+    <text x="998.05" y="101" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">794f3ee</text>
+    <text x="24.00" y="129" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">1h</text>
+    <text x="112.55" y="129" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="129" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">3</text>
+    <text x="239.05" y="129" fill="#ff5f5f" textLength="164.45" lengthAdjust="spacingAndGlyphs">feat/invoices</text>
+    <text x="416.15" y="129" fill="#c6c6c6" textLength="379.50" lengthAdjust="spacingAndGlyphs">feat(billing): record invoices</text>
+    <text x="998.05" y="129" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">f754c49</text>
+    <text x="24.00" y="157" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">2h</text>
+    <text x="112.55" y="157" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="157" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="157" fill="#ff5f5f" textLength="164.45" lengthAdjust="spacingAndGlyphs">feat/checkout</text>
+    <text x="416.15" y="157" fill="#c6c6c6" textLength="417.45" lengthAdjust="spacingAndGlyphs">feat(billing): introduce checkout</text>
+    <text x="998.05" y="157" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">0a03de1</text>
+    <text x="24.00" y="185" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">3h</text>
+    <text x="112.55" y="185" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="137.85" y="185" fill="#00afff" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="185" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="185" fill="#00afff" textLength="240.35" lengthAdjust="spacingAndGlyphs">perf/search-ranking</text>
+    <text x="492.05" y="185" fill="#c6c6c6" textLength="379.50" lengthAdjust="spacingAndGlyphs">perf(search): speed up ranking</text>
+    <text x="998.05" y="185" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">a9eac76</text>
+    <text x="24.00" y="213" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">4h</text>
+    <text x="112.55" y="213" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="137.85" y="213" fill="#00afff" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="213" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="213" fill="#00afff" textLength="265.65" lengthAdjust="spacingAndGlyphs">refactor/search-index</text>
+    <text x="517.35" y="213" fill="#c6c6c6" textLength="442.75" lengthAdjust="spacingAndGlyphs">refactor(search): simplify indexing</text>
+    <text x="998.05" y="213" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">370c9db</text>
+    <text x="24.00" y="241" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">5h</text>
+    <text x="112.55" y="241" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="137.85" y="241" fill="#00afff" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="241" fill="#ffd700" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="241" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">2</text>
+    <text x="239.05" y="241" fill="#ffd700" textLength="227.70" lengthAdjust="spacingAndGlyphs">test/report-export</text>
+    <text x="479.40" y="241" fill="#c6c6c6" textLength="468.05" lengthAdjust="spacingAndGlyphs">test(reports): cover filtered exports</text>
+    <text x="998.05" y="241" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">18ca4dd</text>
+    <text x="24.00" y="269" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">8h</text>
+    <text x="87.25" y="269" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">⁝</text>
+    <text x="112.55" y="269" fill="#ff5f5f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="137.85" y="269" fill="#00afff" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="269" fill="#ffd700" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="188.45" y="269" fill="#d787ff" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="269" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="269" fill="#d787ff" textLength="202.40" lengthAdjust="spacingAndGlyphs">ci/import-checks</text>
+    <text x="454.10" y="269" fill="#c6c6c6" textLength="455.40" lengthAdjust="spacingAndGlyphs">ci(import): validate stream fixtures</text>
+    <text x="998.05" y="269" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">0ff837f</text>
+    <text x="24.00" y="297" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">1d</text>
+    <text x="87.25" y="297" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">◇</text>
+    <text x="99.90" y="297" fill="#ff5f5f" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┴</text>
+    <text x="125.20" y="297" fill="#00afff" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┴</text>
+    <text x="150.50" y="297" fill="#ffd700" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┴</text>
+    <text x="175.80" y="297" fill="#d787ff" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┘</text>
+    <text x="213.75" y="297" fill="#c6c6c6" textLength="12.65" lengthAdjust="spacingAndGlyphs">-</text>
+    <text x="239.05" y="297" fill="#00d75f" textLength="50.60" lengthAdjust="spacingAndGlyphs">main</text>
+    <text x="998.05" y="297" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">9317fb9</text>
+    <text x="87.25" y="325" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="87.25" y="353" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">⁝</text>
+    <text x="112.55" y="353" fill="#bcbcbc" textLength="253.00" lengthAdjust="spacingAndGlyphs" opacity="0.65">(16 commits on main)</text>
+    <text x="87.25" y="381" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="24.00" y="409" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">2d</text>
+    <text x="87.25" y="409" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="409" fill="#0087ff" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="409" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">2</text>
+    <text x="239.05" y="409" fill="#0087ff" textLength="227.70" lengthAdjust="spacingAndGlyphs">docs/configuration</text>
+    <text x="479.40" y="409" fill="#c6c6c6" textLength="404.80" lengthAdjust="spacingAndGlyphs">docs: explain workspace settings</text>
+    <text x="998.05" y="409" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">7f40a4c</text>
+    <text x="24.00" y="437" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">2d</text>
+    <text x="87.25" y="437" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="437" fill="#0087ff" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="437" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="437" fill="#0087ff" textLength="189.75" lengthAdjust="spacingAndGlyphs">docs/quickstart</text>
+    <text x="441.45" y="437" fill="#c6c6c6" textLength="354.20" lengthAdjust="spacingAndGlyphs">docs: add a quickstart guide</text>
+    <text x="998.05" y="437" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">001c684</text>
+    <text x="24.00" y="465" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">2d</text>
+    <text x="87.25" y="465" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="465" fill="#0087ff" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="188.45" y="465" fill="#ffaf00" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="465" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="465" fill="#ffaf00" textLength="202.40" lengthAdjust="spacingAndGlyphs">fix/cache-expiry</text>
+    <text x="454.10" y="465" fill="#c6c6c6" textLength="430.10" lengthAdjust="spacingAndGlyphs">fix(cache): honour entry lifetimes</text>
+    <text x="998.05" y="465" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">93b2e3c</text>
+    <text x="24.00" y="493" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">2d</text>
+    <text x="87.25" y="493" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="163.15" y="493" fill="#0087ff" textLength="12.65" lengthAdjust="spacingAndGlyphs">│</text>
+    <text x="188.45" y="493" fill="#ffaf00" textLength="12.65" lengthAdjust="spacingAndGlyphs">◯</text>
+    <text x="213.75" y="493" fill="#eeeeee" textLength="12.65" lengthAdjust="spacingAndGlyphs">1</text>
+    <text x="239.05" y="493" fill="#ffaf00" textLength="202.40" lengthAdjust="spacingAndGlyphs">chore/cache-keys</text>
+    <text x="454.10" y="493" fill="#c6c6c6" textLength="468.05" lengthAdjust="spacingAndGlyphs">chore(cache): centralise key prefixes</text>
+    <text x="998.05" y="493" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">7b4382f</text>
+    <text x="24.00" y="521" fill="#c6c6c6" textLength="25.30" lengthAdjust="spacingAndGlyphs">3d</text>
+    <text x="87.25" y="521" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">◇</text>
+    <text x="99.90" y="521" fill="#0087ff" textLength="25.30" lengthAdjust="spacingAndGlyphs">──</text>
+    <text x="125.20" y="521" fill="#0087ff" textLength="25.30" lengthAdjust="spacingAndGlyphs">──</text>
+    <text x="150.50" y="521" fill="#0087ff" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┴</text>
+    <text x="175.80" y="521" fill="#ffaf00" textLength="25.30" lengthAdjust="spacingAndGlyphs">─┘</text>
+    <text x="213.75" y="521" fill="#c6c6c6" textLength="12.65" lengthAdjust="spacingAndGlyphs">-</text>
+    <text x="239.05" y="521" fill="#c6c6c6" textLength="455.40" lengthAdjust="spacingAndGlyphs">chore(release): prepare next version</text>
+    <text x="998.05" y="521" fill="#c6c6c6" textLength="88.55" lengthAdjust="spacingAndGlyphs">396e320</text>
+    <text x="87.25" y="549" fill="#00d75f" textLength="12.65" lengthAdjust="spacingAndGlyphs">⁝</text>
+  </g>
+</svg>
