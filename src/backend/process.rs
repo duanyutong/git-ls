@@ -21,7 +21,7 @@ impl GitCommand for ProcessGit {
         crate::diagnostics::count("subprocess_calls", 1);
         let output = execute_git(args)?;
 
-        if !output.status.success() && !allow_failure {
+        if !output.status.success() && (!allow_failure || output.status.code() != Some(1)) {
             return Err(GitLsError::git_command(
                 args.join(" "),
                 command_failure_detail(&output),

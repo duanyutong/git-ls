@@ -18,6 +18,8 @@ const VERSION: &str = concat!(
     ")"
 );
 
+// Independent command-line switches are represented directly by clap.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
 #[command(
     name = "git ls",
@@ -33,6 +35,22 @@ pub(crate) struct Args {
 
     #[arg(long)]
     pub(crate) debug: bool,
+
+    /// Bypass all persistent cache reads, writes, and maintenance.
+    #[arg(long, conflicts_with = "refresh_cache")]
+    pub(crate) no_cache: bool,
+
+    /// Recompute the analysis and replace eligible cached results.
+    #[arg(long)]
+    pub(crate) refresh_cache: bool,
+
+    /// Remove this repository's git-ls cache before rendering without caching.
+    #[arg(long, conflicts_with = "refresh_cache")]
+    pub(crate) clear_cache: bool,
+
+    /// Suppress background maintenance of the application cache.
+    #[arg(long)]
+    pub(crate) no_cache_maintenance: bool,
 
     #[arg(short, long, action = ArgAction::Count)]
     pub(crate) verbose: u8,

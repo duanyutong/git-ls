@@ -1,6 +1,6 @@
 const DISPLAY_OID_LEN: usize = 7;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CommitMeta {
     pub(crate) oid: String,
     pub(crate) short_oid: String,
@@ -20,7 +20,7 @@ impl CommitMeta {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct BranchPoint {
     pub(crate) oid: String,
     pub(crate) names: Vec<String>,
@@ -45,7 +45,7 @@ impl BranchPoint {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct BranchAnnotation {
     pub(crate) meta: CommitMeta,
     pub(crate) commit_count: usize,
@@ -57,7 +57,7 @@ impl BranchAnnotation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct BranchPointRef {
     pub(crate) oid: String,
     pub(crate) names: Vec<String>,
@@ -80,7 +80,7 @@ pub(crate) fn display_short_oid(oid: &str) -> String {
     oid.chars().take(DISPLAY_OID_LEN).collect()
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RewrittenCommit {
     pub(crate) meta: CommitMeta,
     pub(crate) replacement: CommitMeta,
@@ -92,13 +92,14 @@ impl RewrittenCommit {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Lane {
     pub(crate) head_oid: String,
     pub(crate) base_oid: Option<String>,
     pub(crate) branch_points: Vec<BranchPoint>,
     pub(crate) rewritten_commits: Vec<RewrittenCommit>,
     pub(crate) head_timestamp: i64,
+    #[serde(skip)]
     pub(crate) contains_current: bool,
 }
 
@@ -140,7 +141,7 @@ impl Lane {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LaneGroup {
     pub(crate) base_oid: Option<String>,
     pub(crate) base_meta: Option<CommitMeta>,
@@ -164,7 +165,7 @@ impl LaneGroup {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RepositorySnapshot {
     pub(crate) current_branch: Option<String>,
     pub(crate) head: Option<String>,
@@ -185,7 +186,7 @@ impl RepositorySnapshot {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum BuiltLanes {
     Empty {
         main_oid: String,

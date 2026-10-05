@@ -259,7 +259,7 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<L
     })
 }
 
-fn plain_git_main_branch(
+pub(crate) fn plain_git_main_branch(
     branch_oid_map: &HashMap<String, Vec<String>>,
     configured_main_name: &str,
 ) -> Result<(String, String)> {
@@ -718,8 +718,12 @@ pub(crate) fn build_lane_groups(
         "orphaned_groups",
         groups.iter().filter(|g| g.main_distance.is_none()).count(),
     );
-    groups.sort_by_cached_key(|group| lane_group_key(group, order));
+    sort_lane_groups(&mut groups, order);
     Ok(groups)
+}
+
+pub(crate) fn sort_lane_groups(groups: &mut [LaneGroup], order: Order) {
+    groups.sort_by_cached_key(|group| lane_group_key(group, order));
 }
 
 fn lane_group_key(group: &LaneGroup, order: Order) -> (bool, usize, i128, String) {

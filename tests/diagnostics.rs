@@ -19,7 +19,7 @@ fn diagnostics_preserve_output_and_report_startup_and_graph_work() {
     assert_eq!(ordinary.get_output().stderr, Vec::<u8>::new());
     let debug = repo
         .command(binary)
-        .args(["--debug", "--color", "never"])
+        .args(["--debug", "--color", "never", "--no-cache"])
         .assert()
         .success();
     assert_eq!(ordinary.get_output().stdout, debug.get_output().stdout);

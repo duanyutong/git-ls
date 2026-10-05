@@ -19,6 +19,7 @@ use crate::render::{
 };
 use crate::terminal::{RenderEnvironment, write_rendered_line};
 
+mod cached;
 mod env;
 pub use env::run_from_env;
 
@@ -126,70 +127,88 @@ fn render_populated_selection(groups: &[LaneGroup], session: &RenderSession<'_>)
     RenderPlan::new(render_lane_groups(groups, &context))
 }
 
+struct Analysis {
+    groups: Vec<LaneGroup>,
+    repository: RepositorySnapshot,
+    main_meta: Option<CommitMeta>,
+}
+
+fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysis> {
+    let _perf = crate::diagnostics::stage("analysis");
+    debug_log(
+        args.debug,
+        format_args!(
+            "render plan: backend={:?} revset={:?} hidden={} order={:?} layout={:?} verbosity={:?}",
+            args.backend, args.revset, args.hidden, args.order, args.layout, args.verbosity
+        ),
+    );
+    let mut meta_cache = HashMap::new();
+    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
+        BuiltLanes::Empty {
+            main_oid,
+            repository,
+        } => (Vec::new(), main_oid, repository),
+        BuiltLanes::Populated {
+            lanes,
+            main_oid,
+            repository,
+        } => (lanes, main_oid, repository),
+    };
+    let lanes = ordered_lanes(lanes, args.order);
+    if args.verbosity.includes_metadata() {
+        let mut ids: Vec<_> = lanes
+            .iter()
+            .filter_map(|lane| lane.base_oid.as_deref())
+            .collect();
+        ids.push(&main_oid);
+        ids.sort_unstable();
+        ids.dedup();
+        git.cache_commit_metas(&ids, &mut meta_cache)?;
+    }
+    let groups = build_lane_groups(
+        git,
+        lanes,
+        &main_oid,
+        args.order,
+        args.debug,
+        &mut meta_cache,
+    )?;
+    let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;
+    Ok(Analysis {
+        groups,
+        repository,
+        main_meta,
+    })
+}
+
+fn render_analysis(
+    args: &RuntimeOptions,
+    analysis: &Analysis,
+    environment: RenderEnvironment,
+) -> RenderPlan {
+    let colours = Colours::new(environment.colour_enabled(args.colour_mode), args.palette);
+    let session = RenderSession::new(
+        args,
+        &analysis.repository,
+        analysis.main_meta.as_ref(),
+        environment,
+        &colours,
+    );
+    if analysis.groups.is_empty() {
+        render_empty_selection(&session)
+    } else {
+        render_populated_selection(&analysis.groups, &session)
+    }
+}
+
 fn build_render_plan(
     args: &RuntimeOptions,
     git: &dyn GitBackend,
     environment: RenderEnvironment,
 ) -> Result<RenderPlan> {
     let git = crate::backend::Session::new(git);
-    let git: &dyn GitBackend = &git;
-    let _perf = crate::diagnostics::stage("analysis");
-    debug_log(
-        args.debug,
-        format_args!(
-            "render plan: backend={:?} revset={:?} hidden={} order={:?} layout={:?}",
-            args.backend, args.revset, args.hidden, args.order, args.layout
-        ),
-    );
-    let colours = Colours::new(environment.colour_enabled(args.colour_mode), args.palette);
-
-    let mut meta_cache = HashMap::new();
-    match build_lanes(git, args, &mut meta_cache)? {
-        BuiltLanes::Empty {
-            main_oid,
-            repository,
-        } => {
-            debug_log(
-                args.debug,
-                format_args!(
-                    "render plan: empty selection main={} main_branch={}",
-                    main_oid, repository.main_name
-                ),
-            );
-            let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;
-            let session =
-                RenderSession::new(args, &repository, main_meta.as_ref(), environment, &colours);
-            Ok(render_empty_selection(&session))
-        }
-        BuiltLanes::Populated {
-            lanes,
-            main_oid,
-            repository,
-        } => {
-            debug_log(
-                args.debug,
-                format_args!(
-                    "render plan: populated selection lanes={} main={} main_branch={}",
-                    lanes.len(),
-                    main_oid,
-                    repository.main_name
-                ),
-            );
-            let lanes = ordered_lanes(lanes, args.order);
-            let groups = build_lane_groups(
-                git,
-                lanes,
-                &main_oid,
-                args.order,
-                args.debug,
-                &mut meta_cache,
-            )?;
-            let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;
-            let session =
-                RenderSession::new(args, &repository, main_meta.as_ref(), environment, &colours);
-            Ok(render_populated_selection(&groups, &session))
-        }
-    }
+    let analysis = build_analysis(args, &git)?;
+    Ok(render_analysis(args, &analysis, environment))
 }
 
 fn write_render_plan<W: Write>(

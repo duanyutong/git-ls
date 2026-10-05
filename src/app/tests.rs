@@ -201,6 +201,10 @@ fn parses_default_arguments() {
     assert_eq!(
         parse_args_from(Vec::<String>::new()).unwrap(),
         Args {
+            no_cache: false,
+            refresh_cache: false,
+            clear_cache: false,
+            no_cache_maintenance: false,
             revset: "draft()".to_string(),
             hidden: false,
             debug: false,
@@ -233,6 +237,10 @@ fn parses_flags_and_revset() {
         ])
         .unwrap(),
         Args {
+            no_cache: false,
+            refresh_cache: false,
+            clear_cache: false,
+            no_cache_maintenance: false,
             revset: "draft() & branches(feature/)".to_string(),
             hidden: true,
             debug: true,
@@ -300,6 +308,10 @@ fn parses_dash_prefixed_revset_after_separator() {
     assert_eq!(
         parse_args_from(["--", "-synthetic-revset"]).unwrap(),
         Args {
+            no_cache: false,
+            refresh_cache: false,
+            clear_cache: false,
+            no_cache_maintenance: false,
             revset: "-synthetic-revset".to_string(),
             hidden: false,
             debug: false,

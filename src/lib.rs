@@ -7,6 +7,7 @@
 
 mod app;
 mod backend;
+mod cache;
 mod cli;
 mod diagnostics;
 mod error;

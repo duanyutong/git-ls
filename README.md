@@ -83,6 +83,40 @@ just setup
 just check
 ```
 
+### Persistent analysis reuse
+
+By default, ordinary `draft()` selections reuse analysis stored in
+`<git-common-dir>/git-ls/cache/v1/`. In a conventional checkout, this is
+`.git/git-ls/cache/v1/`; linked worktrees share the common repository cache.
+The cache is disposable and is never committed.
+
+An unchanged reference snapshot reuses neutral topology and commit metadata.
+Changed branches invalidate that snapshot, whilst successful merge-base,
+main-distance, and metadata results remain reusable under their full object-ID
+keys. Branch names and the resolved main configuration participate in validation.
+Worktree markers, ages, ordering, verbosity, layout, and colour are applied afresh.
+
+- `--no-cache` bypasses persistent reads and writes.
+- `--refresh-cache` recomputes the analysis and publishes a successful replacement.
+- `--clear-cache` removes this version's application cache and renders uncached.
+- `--debug` reports eligibility, hits, validation, loading, publication, and reuse
+  counters. Cache hits do not report earlier computation timings as current work.
+
+Storage uses 32 snapshot slots, two backend-specific fact files, and one temporary
+publication, each limited to 1 MiB. Consequently, admitted data occupies at most
+35 MiB, independently of maintenance. Slot collisions cause replacement or a
+cache miss; the complete stored key is always validated. Atomic publication and
+non-blocking locks permit concurrent worktrees. Corrupt, incompatible, oversized,
+busy, or unavailable entries fall back to computation. Configuration or references
+which change during computation prevent publication.
+
+Persistent reuse is bypassed for branchless selections, hidden selections,
+shallow repositories, replacements, grafts, alternate object stores, partial
+clones, and unsupported graph-related environment overrides. These modes continue
+to use the optimised uncached algorithms. The native backend retains at most
+65,536 application parent records per invocation; this limit is separate from
+Git's or gix's internal object caches.
+
 ## Licence
 
 This project is licensed under the GNU Affero General Public License, version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
