@@ -69,6 +69,17 @@ impl<T: GitCommand + ?Sized> AncestryBackend for T {
     }
 }
 
+pub(super) fn parse_config_records(output: &str) -> HashMap<String, String> {
+    output
+        .split('\0')
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            let (key, value) = record.split_once('\n').unwrap_or((record, "true"));
+            (key.to_ascii_lowercase(), value.to_string())
+        })
+        .collect()
+}
+
 pub(super) fn shell_query_revset<G: GitCommand + ?Sized>(
     git: &G,
     revset: &str,

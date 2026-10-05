@@ -8,6 +8,11 @@ use super::traits::GitCommand;
 pub(crate) struct ProcessGit;
 
 impl GitCommand for ProcessGit {
+    fn config_values(&self, _keys: &[&str]) -> Result<std::collections::HashMap<String, String>> {
+        let output = self.run(&["config", "--null", "--get-regexp", "^git-ls\\."], true)?;
+        Ok(super::shell::parse_config_records(&output))
+    }
+
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
         let family = match args.first().copied() {
             Some("config") => "subprocess_config",

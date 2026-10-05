@@ -1,6 +1,6 @@
 use clap::ValueEnum;
 
-use crate::backend::{GitCommand, non_empty};
+use crate::backend::GitCommand;
 use crate::error::{GitLsError, Result};
 
 use super::values::{Backend, Layout, Palette, Verbosity};
@@ -11,6 +11,8 @@ pub(crate) struct GitLsConfig {
     pub(crate) backend: Option<Backend>,
     pub(crate) palette: Option<Palette>,
     pub(crate) layout: Option<Layout>,
+    pub(crate) cache: Option<bool>,
+    pub(crate) cache_maintenance: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,10 +21,19 @@ enum ConfigKey {
     Backend,
     Palette,
     Layout,
+    Cache,
+    CacheMaintenance,
 }
 
 impl ConfigKey {
-    const LOOKUP_ORDER: [Self; 4] = [Self::Verbosity, Self::Backend, Self::Palette, Self::Layout];
+    const LOOKUP_ORDER: [Self; 6] = [
+        Self::Verbosity,
+        Self::Backend,
+        Self::Palette,
+        Self::Layout,
+        Self::Cache,
+        Self::CacheMaintenance,
+    ];
 
     fn name(self) -> &'static str {
         match self {
@@ -30,6 +41,8 @@ impl ConfigKey {
             Self::Backend => "git-ls.backend",
             Self::Palette => "git-ls.palette",
             Self::Layout => "git-ls.layout",
+            Self::Cache => "git-ls.cache",
+            Self::CacheMaintenance => "git-ls.cachemaintenance",
         }
     }
 
@@ -41,12 +54,20 @@ impl ConfigKey {
                 "okabe, tableau, dark2, set1, set2, paired, bold, vivid, tol, or classic"
             }
             Self::Layout => "columns or inline",
+            Self::Cache | Self::CacheMaintenance => "true or false",
         }
     }
 }
 
-fn git_config_value(git: &dyn GitCommand, key: ConfigKey) -> Result<Option<String>> {
-    Ok(non_empty(&git.run(&["config", "--get", key.name()], true)?))
+fn parse_boolean(key: ConfigKey, value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Ok(true),
+        "false" | "no" | "off" | "" => Ok(false),
+        number => number
+            .parse::<i64>()
+            .map(|n| n != 0)
+            .map_err(|_| invalid_git_config(key, value)),
+    }
 }
 
 fn invalid_git_config(key: ConfigKey, value: &str) -> GitLsError {
@@ -81,6 +102,10 @@ impl GitLsConfig {
             ConfigKey::Backend => self.backend = Some(parse_backend_config(key, value)?),
             ConfigKey::Palette => self.palette = Some(parse_palette_config(key, value)?),
             ConfigKey::Layout => self.layout = Some(parse_layout_config(key, value)?),
+            ConfigKey::Cache => self.cache = Some(parse_boolean(key, value)?),
+            ConfigKey::CacheMaintenance => {
+                self.cache_maintenance = Some(parse_boolean(key, value)?);
+            }
         }
         Ok(())
     }
@@ -88,9 +113,14 @@ impl GitLsConfig {
 
 pub(crate) fn read_git_ls_config(git: &dyn GitCommand) -> Result<GitLsConfig> {
     let mut config = GitLsConfig::default();
+    let keys = ConfigKey::LOOKUP_ORDER.map(ConfigKey::name);
+    let values = git.config_values(&keys)?;
     for key in ConfigKey::LOOKUP_ORDER {
-        if let Some(value) = git_config_value(git, key)? {
-            config.set_from_git_config(key, &value)?;
+        if let Some(value) = values.get(key.name())
+            && (matches!(key, ConfigKey::Cache | ConfigKey::CacheMaintenance)
+                || !value.trim().is_empty())
+        {
+            config.set_from_git_config(key, value)?;
         }
     }
     Ok(config)
@@ -167,6 +197,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_cache_boolean_configuration_and_rejects_invalid_values() {
+        for (value, expected) in [
+            ("true", true),
+            ("YES", true),
+            ("on", true),
+            ("1", true),
+            ("-2", true),
+            ("false", false),
+            ("no", false),
+            ("off", false),
+            ("0", false),
+            ("", false),
+        ] {
+            assert_eq!(parse_boolean(ConfigKey::Cache, value).unwrap(), expected);
+        }
+        assert!(parse_boolean(ConfigKey::Cache, "unknown").is_err());
+        let git = ConfigGit::default()
+            .with(&["config", "--get", "git-ls.cache"], "false")
+            .with(&["config", "--get", "git-ls.cachemaintenance"], "true");
+        let config = read_git_ls_config(&git).unwrap();
+        assert_eq!(config.cache, Some(false));
+        assert_eq!(config.cache_maintenance, Some(true));
+        for key in [ConfigKey::Cache, ConfigKey::CacheMaintenance] {
+            assert!(
+                read_git_ls_config(
+                    &ConfigGit::default().with(&["config", "--get", key.name()], "invalid")
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn parses_integer_verbosity_config_only() {
         assert_eq!(
             parse_verbosity_config(ConfigKey::Verbosity, "0").unwrap(),
@@ -204,10 +267,10 @@ mod tests {
     fn reads_empty_git_config_values_as_absent() {
         let git = ConfigGit::default().with(&["config", "--get", ConfigKey::Backend.name()], " \n");
 
-        assert_eq!(git_config_value(&git, ConfigKey::Backend).unwrap(), None);
+        assert_eq!(read_git_ls_config(&git).unwrap(), GitLsConfig::default());
         assert_eq!(
-            git_config_value(&ConfigGit::default(), ConfigKey::Palette).unwrap(),
-            None
+            read_git_ls_config(&ConfigGit::default()).unwrap(),
+            GitLsConfig::default()
         );
     }
 

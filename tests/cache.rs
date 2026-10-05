@@ -226,3 +226,30 @@ fn maintenance_cannot_hold_output_pipes_open_and_reservations_coalesce() {
             .contains("maintenance=disabled")
     );
 }
+
+#[test]
+fn configuration_controls_cache_and_only_one_startup_query_is_needed() {
+    let repo = fixture();
+    repo.git(&["config", "git-ls.cache", "false"]);
+    let (_, debug) = run(&repo, &[]);
+    assert!(debug.contains("cache=disabled"));
+    assert!(
+        debug.contains("operation=subprocess_config parent=config calls=1"),
+        "{debug}"
+    );
+    assert!(
+        run(&repo, &["--refresh-cache"])
+            .1
+            .contains("reason=refresh")
+    );
+    repo.git(&["config", "git-ls.cache", "true"]);
+    repo.git(&["config", "git-ls.cacheMaintenance", "false"]);
+    let (_, debug) = run(&repo, &[]);
+    assert!(debug.contains("cache=hit"));
+    assert!(debug.contains("maintenance=disabled"));
+    repo.git(&["config", "git-ls.cache", "invalid"]);
+    repo.command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("invalid git config git-ls.cache"));
+}

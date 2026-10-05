@@ -138,6 +138,12 @@ report. Failed spawning, contention, interruption, or disabled maintenance leave
 the foreground result valid. The fixed-slot storage limit remains effective in
 all these cases; maintenance adds only bounded state and report records.
 
+Repository or user configuration may disable reuse with `git config git-ls.cache
+false`, or disable deferred maintenance with `git config git-ls.cacheMaintenance
+false`. An explicit `--refresh-cache` overrides the former setting for that
+invocation. Configuration is retrieved in one Git subprocess, preserving Git's
+include processing and precedence; malformed configuration remains an error.
+
 ## Licence
 
 This project is licensed under the GNU Affero General Public License, version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).

@@ -4,6 +4,17 @@ use crate::error::Result;
 use crate::model::CommitMeta;
 
 pub(crate) trait GitCommand {
+    fn config_values(&self, keys: &[&str]) -> Result<HashMap<String, String>> {
+        let mut values = HashMap::new();
+        for key in keys {
+            let value = self.run(&["config", "--get", key], true)?;
+            if !value.trim().is_empty() {
+                values.insert((*key).to_string(), value);
+            }
+        }
+        Ok(values)
+    }
+
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String>;
     fn run_input(&self, args: &[&str], _input: &str) -> Result<String> {
         Err(crate::error::GitLsError::git_command(

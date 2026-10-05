@@ -955,6 +955,8 @@ fn run_renders_empty_selection_as_trunk() {
                 "--get".to_string(),
                 "git-ls.layout".to_string()
             ],
+            owned_args(&["config", "--get", "git-ls.cache"]),
+            owned_args(&["config", "--get", "git-ls.cachemaintenance"]),
             vec![
                 "for-each-ref".to_string(),
                 "--format=%(objectname)%00%(refname:short)".to_string(),

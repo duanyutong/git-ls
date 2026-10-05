@@ -112,6 +112,8 @@ mod tests {
             backend: Some(Backend::Shell),
             palette: Some(Palette::Okabe),
             layout: Some(Layout::Columns),
+            cache: None,
+            cache_maintenance: None,
         };
 
         let args = default_args().resolve(&config);
@@ -131,6 +133,8 @@ mod tests {
             backend: Some(Backend::Shell),
             palette: Some(Palette::Okabe),
             layout: Some(Layout::Columns),
+            cache: None,
+            cache_maintenance: None,
         };
         let args = args_with(
             1,

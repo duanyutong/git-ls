@@ -34,7 +34,9 @@ pub fn run_from_env() -> Result<()> {
             let _span = crate::diagnostics::stage("config");
             read_git_ls_config(&config_git)?
         };
-        let raw = args;
+        let mut raw = args;
+        raw.no_cache |= config.cache == Some(false) && !raw.refresh_cache;
+        raw.no_cache_maintenance |= config.cache_maintenance == Some(false);
         let args = raw.resolve(&config);
         match args.backend {
             Backend::Gix => {
