@@ -1,0 +1,228 @@
+//! Invocation-scoped, opt-in performance diagnostics.
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::io::Write;
+use std::time::{Duration, Instant};
+
+thread_local! {
+    static RECORDER: RefCell<Option<Recorder>> = const { RefCell::new(None) };
+}
+
+#[derive(Default)]
+struct Recorder {
+    stack: Vec<&'static str>,
+    timings: BTreeMap<Key, Timing>,
+    counters: BTreeMap<(&'static str, &'static str), usize>,
+}
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+struct Key {
+    kind: &'static str,
+    name: &'static str,
+    parent: &'static str,
+}
+
+#[derive(Default)]
+struct Timing {
+    calls: usize,
+    elapsed: Duration,
+}
+
+pub(crate) struct Span {
+    active: Option<(Instant, Key)>,
+    detail: Option<String>,
+}
+
+impl Span {
+    pub(crate) fn detail(&mut self, fields: fmt::Arguments<'_>) {
+        if self.active.is_some() {
+            self.detail = Some(fields.to_string());
+        }
+    }
+}
+
+fn begin(kind: &'static str, name: &'static str) -> Span {
+    let active = RECORDER.with_borrow_mut(|slot| {
+        let recorder = slot.as_mut()?;
+        let key = Key {
+            kind,
+            name,
+            parent: recorder.stack.last().copied().unwrap_or("invocation"),
+        };
+        if kind == "stage" {
+            recorder.stack.push(name);
+        }
+        Some((Instant::now(), key))
+    });
+    Span {
+        active,
+        detail: None,
+    }
+}
+
+pub(crate) fn stage(name: &'static str) -> Span {
+    begin("stage", name)
+}
+
+pub(crate) fn operation(name: &'static str) -> Span {
+    begin("operation", name)
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        let Some((started, key)) = self.active else {
+            return;
+        };
+        let elapsed = started.elapsed();
+        RECORDER.with_borrow_mut(|slot| {
+            if let Some(recorder) = slot {
+                if key.kind == "stage" {
+                    recorder.stack.pop();
+                }
+                let timing = recorder.timings.entry(key).or_default();
+                timing.calls += 1;
+                timing.elapsed += elapsed;
+            }
+        });
+        if let Some(detail) = &self.detail {
+            emit(format_args!(
+                "{}={} parent={} duration_ms={:.3} {detail}",
+                key.kind,
+                key.name,
+                key.parent,
+                elapsed.as_secs_f64() * 1000.0
+            ));
+        }
+    }
+}
+
+pub(crate) fn count(name: &'static str, amount: usize) {
+    RECORDER.with_borrow_mut(|slot| {
+        if let Some(recorder) = slot {
+            let parent = recorder.stack.last().copied().unwrap_or("invocation");
+            *recorder.counters.entry((parent, name)).or_default() += amount;
+        }
+    });
+}
+
+pub(crate) fn event(fields: fmt::Arguments<'_>) {
+    if RECORDER.with_borrow(Option::is_some) {
+        emit(fields);
+    }
+}
+
+fn emit(fields: fmt::Arguments<'_>) {
+    // Diagnostics must not replace a primary error if stderr is unavailable.
+    let _ = writeln!(std::io::stderr().lock(), "git-ls debug: perf {fields}");
+}
+
+fn report(recorder: Recorder, elapsed: Duration, success: bool, output: &mut impl Write) {
+    for (key, timing) in recorder.timings {
+        let _ = writeln!(
+            output,
+            "git-ls debug: perf {}={} parent={} calls={} cumulative_ms={:.3} inclusive=true",
+            key.kind,
+            key.name,
+            key.parent,
+            timing.calls,
+            timing.elapsed.as_secs_f64() * 1000.0
+        );
+    }
+    for ((parent, name), value) in recorder.counters {
+        let _ = writeln!(
+            output,
+            "git-ls debug: perf counters parent={parent} {name}={value}"
+        );
+    }
+    let status = if success { "ok" } else { "error" };
+    let _ = writeln!(
+        output,
+        "git-ls debug: perf summary status={status} observed_total_ms={:.3} version={}",
+        elapsed.as_secs_f64() * 1000.0,
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+pub(crate) fn observe<T, E>(enabled: bool, run: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+    if !enabled {
+        return run();
+    }
+    let started = Instant::now();
+    RECORDER.with_borrow_mut(|slot| *slot = Some(Recorder::default()));
+    let result = run();
+    let elapsed = started.elapsed();
+    if let Some(recorder) = RECORDER.with_borrow_mut(Option::take) {
+        report(
+            recorder,
+            elapsed,
+            result.is_ok(),
+            &mut std::io::stderr().lock(),
+        );
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_diagnostics_have_no_clock_or_recording_state() {
+        observe(false, || {
+            let mut span = stage("unused");
+            span.detail(format_args!("ignored=true"));
+            count("unused", 10);
+            event(format_args!("ignored=true"));
+            assert!(span.active.is_none());
+            assert!(span.detail.is_none());
+            RECORDER.with_borrow(|slot| assert!(slot.is_none()));
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn nested_scopes_attribute_calls_and_counters_without_double_counting() {
+        RECORDER.with_borrow_mut(|slot| *slot = Some(Recorder::default()));
+        {
+            let _outer = stage("selection");
+            let _inner = stage("heads");
+            count("tips", 3);
+            for _ in 0..2 {
+                let _operation = operation("merge_base");
+            }
+        }
+        let recorder = RECORDER.with_borrow_mut(Option::take).unwrap();
+        assert_eq!(recorder.counters[&("heads", "tips")], 3);
+        assert_eq!(
+            recorder.timings[&Key {
+                kind: "operation",
+                name: "merge_base",
+                parent: "heads"
+            }]
+                .calls,
+            2
+        );
+        let mut output = Vec::new();
+        report(recorder, Duration::from_millis(12), false, &mut output);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("stage=heads parent=selection"));
+        assert!(output.contains("status=error observed_total_ms=12.000"));
+        assert!(output.contains("inclusive=true"));
+    }
+
+    #[test]
+    fn observation_preserves_results_and_cleans_up_after_errors() {
+        let result = observe(true, || {
+            let mut span = stage("failing");
+            span.detail(format_args!("head=example"));
+            event(format_args!("state=test"));
+            Err::<(), _>("failure")
+        });
+        assert_eq!(result, Err("failure"));
+        RECORDER.with_borrow(|slot| assert!(slot.is_none()));
+        assert_eq!(observe(true, || Ok::<_, ()>(42)), Ok(42));
+    }
+}

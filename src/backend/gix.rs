@@ -98,6 +98,7 @@ impl GixBackend {
                 });
                 cache.insert(pending.oid, descendant);
             } else {
+                crate::diagnostics::count("parent_loads", 1);
                 let commit_object = self
                     .repo
                     .find_commit(pending.oid)
@@ -153,6 +154,7 @@ impl CommitMetadataBackend for GixBackend {
         oids: &[&str],
         cache: &mut HashMap<String, CommitMeta>,
     ) -> Result<()> {
+        let _perf = crate::diagnostics::operation("metadata");
         for alias in missing_commit_aliases(oids, cache) {
             let meta = self.commit_meta(alias)?;
             insert_commit_meta(cache, alias, meta);
@@ -210,6 +212,7 @@ impl RepositoryStateBackend for GixBackend {
 
 impl AncestryBackend for GixBackend {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
+        let _perf = crate::diagnostics::operation("merge_base");
         let main_oid = Self::object_id(main_oid)?;
         let head_oid = Self::object_id(head_oid)?;
         let bases = self
@@ -220,6 +223,7 @@ impl AncestryBackend for GixBackend {
     }
 
     fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>> {
+        let _perf = crate::diagnostics::operation("ancestry_path");
         let head_oid = Self::object_id(head_oid)?;
         let mut walk =
             self.repo
@@ -249,6 +253,7 @@ impl AncestryBackend for GixBackend {
                 path.push(oid.to_string());
             }
         }
+        crate::diagnostics::count("returned_commits", path.len());
         path.reverse();
         Ok(path)
     }

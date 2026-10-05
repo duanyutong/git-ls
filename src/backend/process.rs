@@ -9,6 +9,16 @@ pub(crate) struct ProcessGit;
 
 impl GitCommand for ProcessGit {
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
+        let family = match args.first().copied() {
+            Some("config") => "subprocess_config",
+            Some("merge-base") => "subprocess_merge_base",
+            Some("rev-list") => "subprocess_rev_list",
+            Some("show") => "subprocess_metadata",
+            Some("branchless") => "subprocess_branchless",
+            _ => "subprocess_repository",
+        };
+        let _perf = crate::diagnostics::operation(family);
+        crate::diagnostics::count("subprocess_calls", 1);
         let output = execute_git(args)?;
 
         if !output.status.success() && !allow_failure {

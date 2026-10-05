@@ -115,11 +115,13 @@ fn main_metadata(
 }
 
 fn render_empty_selection(session: &RenderSession<'_>) -> RenderPlan {
+    let _perf = crate::diagnostics::stage("layout");
     let context = session.context(&[]);
     RenderPlan::new(render_empty_lines(&context))
 }
 
 fn render_populated_selection(groups: &[LaneGroup], session: &RenderSession<'_>) -> RenderPlan {
+    let _perf = crate::diagnostics::stage("layout");
     let context = session.context(groups);
     RenderPlan::new(render_lane_groups(groups, &context))
 }
@@ -129,6 +131,7 @@ fn build_render_plan(
     git: &dyn GitBackend,
     environment: RenderEnvironment,
 ) -> Result<RenderPlan> {
+    let _perf = crate::diagnostics::stage("analysis");
     debug_log(
         args.debug,
         format_args!(
@@ -192,6 +195,7 @@ fn write_render_plan<W: Write>(
     plan: &RenderPlan,
     environment: RenderEnvironment,
 ) -> Result<()> {
+    let _perf = crate::diagnostics::stage("write_output");
     for line in plan.lines() {
         write_rendered_line(stdout, line, environment)?;
     }
@@ -208,7 +212,9 @@ where
     W: Write,
 {
     let plan = build_render_plan(args, git, environment)?;
-    write_render_plan(stdout, &plan, environment)
+    write_render_plan(stdout, &plan, environment)?;
+    stdout.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]

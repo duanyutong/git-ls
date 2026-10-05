@@ -85,6 +85,7 @@ fn query_lane_selection(
     hidden: bool,
     debug: bool,
 ) -> Result<LaneSelection> {
+    let _perf = crate::diagnostics::stage("selection");
     if uses_plain_git_fallback(user_revset) && !hidden {
         debug_log(debug, format_args!("selection: using plain Git default"));
         return query_plain_git_lane_selection(git, debug);
@@ -112,6 +113,7 @@ fn query_branchless_lane_selection(
     hidden: bool,
     debug: bool,
 ) -> Result<Option<LaneSelection>> {
+    let _perf = crate::diagnostics::stage("branchless_selection");
     let revset = branch_revset(user_revset);
     let main_oids = match BranchlessQueries::query_revset(git, "main()", hidden) {
         Ok(main_oids) => main_oids,
@@ -195,7 +197,16 @@ fn query_branchless_lane_selection(
 }
 
 fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<LaneSelection> {
-    let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
+    let _perf = crate::diagnostics::stage("plain_selection");
+    let branch_oid_map = {
+        let _perf = crate::diagnostics::stage("repository_snapshot");
+        RepositoryStateBackend::local_branches_by_oid(git)?
+    };
+    crate::diagnostics::count("local_tips", branch_oid_map.len());
+    crate::diagnostics::count(
+        "local_branches",
+        branch_oid_map.values().map(Vec::len).sum(),
+    );
     debug_log(
         debug,
         format_args!(
@@ -228,7 +239,10 @@ fn query_plain_git_lane_selection(git: &dyn GitBackend, debug: bool) -> Result<L
     }
 
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
+    crate::diagnostics::count("selected_tips", points_by_oid.len());
+    crate::diagnostics::count("selected_branches", branch_names.len());
     let head_oids = plain_git_stack_heads(git, points_by_oid.keys())?;
+    crate::diagnostics::count("heads", head_oids.len());
     debug_log(
         debug,
         format_args!("plain Git fallback: stack heads={}", head_oids.len()),
@@ -286,6 +300,7 @@ fn plain_git_branch_names(
     main_name: &str,
     main_oid: &str,
 ) -> Result<Vec<String>> {
+    let _perf = crate::diagnostics::stage("branch_filter");
     let mut branch_names = Vec::new();
     for (oid, names) in branch_oid_map {
         if oid == main_oid || is_ancestor(git, oid, main_oid)? {
@@ -308,6 +323,7 @@ fn plain_git_stack_heads<'a>(
     git: &dyn GitBackend,
     selected_oids: impl IntoIterator<Item = &'a String>,
 ) -> Result<Vec<String>> {
+    let _perf = crate::diagnostics::stage("stack_heads");
     let mut oids: Vec<String> = selected_oids.into_iter().cloned().collect();
     oids.sort();
     oids.dedup();
@@ -347,6 +363,7 @@ fn prefetch_lane_metadata(
     verbosity: Verbosity,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<()> {
+    let _perf = crate::diagnostics::stage("metadata_prefetch");
     let mut meta_refs: Vec<&str> = head_oids.iter().map(String::as_str).collect();
     if verbosity.includes_metadata() {
         meta_refs.extend(points_by_oid.keys().map(String::as_str));
@@ -357,8 +374,14 @@ fn prefetch_lane_metadata(
 }
 
 fn collect_lane_path(git: &dyn GitBackend, main_oid: &str, head_oid: &str) -> Result<LanePath> {
+    let mut perf = crate::diagnostics::stage("lane_path");
     let base_oid = AncestryBackend::merge_base(git, main_oid, head_oid)?;
     let ancestry_path = AncestryBackend::ancestry_path(git, base_oid.as_deref(), head_oid)?;
+    perf.detail(format_args!(
+        "head={head_oid} base={} returned_commits={}",
+        base_oid.as_deref().unwrap_or("none"),
+        ancestry_path.len()
+    ));
     Ok(LanePath {
         head_oid: head_oid.to_string(),
         base_oid,
@@ -371,6 +394,7 @@ fn rewritten_commits_for_path(
     lane_path: &LanePath,
     points_by_oid: &HashMap<String, BranchPointRef>,
 ) -> Result<Vec<RewrittenCommitRef>> {
+    let _perf = crate::diagnostics::stage("rewrites");
     let mut rewritten_commits = Vec::new();
     for oid in &lane_path.ancestry_path {
         if points_by_oid.contains_key(oid) {
@@ -655,6 +679,7 @@ pub(crate) fn build_lane_groups(
     debug: bool,
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<Vec<LaneGroup>> {
+    let _perf = crate::diagnostics::stage("groups");
     debug_log(
         debug,
         format_args!("lane groups: building groups for {} lanes", lanes.len()),
@@ -676,7 +701,12 @@ pub(crate) fn build_lane_groups(
                         "lane groups: measuring main distance base={base_oid} main={main_oid}"
                     ),
                 );
+                let mut perf = crate::diagnostics::stage("main_distance");
                 let path = AncestryBackend::ancestry_path(git, Some(base_oid), main_oid)?;
+                perf.detail(format_args!(
+                    "base={base_oid} returned_commits={}",
+                    path.len()
+                ));
                 if path.is_empty() {
                     None
                 } else {
@@ -689,6 +719,18 @@ pub(crate) fn build_lane_groups(
         groups.push(LaneGroup::new(base_oid, base_meta, main_distance, lanes));
     }
 
+    crate::diagnostics::count("groups", groups.len());
+    crate::diagnostics::count(
+        "historical_bases",
+        groups
+            .iter()
+            .filter(|g| g.main_distance.is_some_and(|n| n > 0))
+            .count(),
+    );
+    crate::diagnostics::count(
+        "orphaned_groups",
+        groups.iter().filter(|g| g.main_distance.is_none()).count(),
+    );
     groups.sort_by(|lhs, rhs| lane_group_order(lhs, rhs, order));
     Ok(groups)
 }

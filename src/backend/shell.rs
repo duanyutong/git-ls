@@ -60,6 +60,7 @@ pub(super) fn shell_query_revset<G: GitCommand + ?Sized>(
     revset: &str,
     hidden: bool,
 ) -> Result<Vec<String>> {
+    let _perf = crate::diagnostics::operation("branchless_revset");
     let mut args = vec!["branchless", "query", "-r"];
     if hidden {
         args.push("--hidden");
@@ -73,6 +74,7 @@ pub(super) fn shell_query_branch_names<G: GitCommand + ?Sized>(
     revset: &str,
     hidden: bool,
 ) -> Result<Vec<String>> {
+    let _perf = crate::diagnostics::operation("branchless_branches");
     let mut args = vec!["branchless", "query", "-b"];
     if hidden {
         args.push("--hidden");
@@ -95,6 +97,7 @@ pub(super) fn shell_cache_commit_metas<G: GitCommand + ?Sized>(
     oids: &[&str],
     cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<()> {
+    let _perf = crate::diagnostics::operation("metadata");
     let missing = missing_commit_aliases(oids, cache);
     if missing.is_empty() {
         return Ok(());
@@ -171,6 +174,7 @@ fn shell_merge_base<G: GitCommand + ?Sized>(
     main_oid: &str,
     head_oid: &str,
 ) -> Result<Option<String>> {
+    let _perf = crate::diagnostics::operation("merge_base");
     let output = git.run(&["merge-base", main_oid, head_oid], true)?;
     Ok(non_empty(&output))
 }
@@ -180,6 +184,7 @@ fn shell_ancestry_path<G: GitCommand + ?Sized>(
     base_oid: Option<&str>,
     head_oid: &str,
 ) -> Result<Vec<String>> {
+    let _perf = crate::diagnostics::operation("ancestry_path");
     let output = match base_oid {
         Some(base_oid) => git.run(
             &[

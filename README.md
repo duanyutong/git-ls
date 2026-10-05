@@ -70,6 +70,12 @@ The graph uses `git-branchless` glyphs for equivalent concepts, preserving a bra
 | `─┴` | Intermediate connection from main into a stack lane. |
 | `─┘` | Final connection from main into a stack lane. |
 
+## Performance Diagnostics
+
+`git ls --debug` reports contextual progress and performance records on standard error, leaving the rendered graph on standard output unchanged. Records include configuration and repository discovery, selection, lane and main-history traversal, formatting, output, and observable backend-operation counts.
+
+Durations use a monotonic clock and milliseconds. Stage and operation totals are inclusive: nested durations must not be added to their enclosing stages. `observed_total_ms` starts after argument parsing and ends before summary emission; it excludes process launch and earlier terminal detection. Debug output itself can affect elapsed time. Without `--debug`, diagnostic clocks, counters, and report allocations are disabled.
+
 ## Development
 
 ```sh

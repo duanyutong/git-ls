@@ -12,10 +12,13 @@ pub(crate) fn get_commit_meta<G: CommitMetadataBackend + ?Sized>(
     oid: &str,
     cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<CommitMeta> {
+    crate::diagnostics::count("metadata_requests", 1);
     if let Some(meta) = cache.get(oid) {
+        crate::diagnostics::count("metadata_hits", 1);
         return Ok(meta.clone());
     }
 
+    crate::diagnostics::count("metadata_misses", 1);
     git.cache_commit_metas(&[oid], cache)?;
     cache
         .get(oid)

@@ -8,6 +8,7 @@
 mod app;
 mod backend;
 mod cli;
+mod diagnostics;
 mod error;
 mod lanes;
 mod model;

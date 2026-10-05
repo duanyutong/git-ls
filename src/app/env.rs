@@ -14,17 +14,28 @@ pub fn run_from_env() -> Result<()> {
     let mut stdout = io::stdout().lock();
     let environment = RenderEnvironment::detect();
     let args = parse_args_from(env::args().skip(1))?;
-    let config_git = ProcessGit;
-    let config = read_git_ls_config(&config_git)?;
-    let args = args.resolve(&config);
-    match args.backend {
-        Backend::Gix => {
-            let git = GixBackend::discover()?;
-            execute(&args, &git, &mut stdout, environment)
+    crate::diagnostics::observe(args.debug, || {
+        crate::diagnostics::event(format_args!(
+            "clock=monotonic interval=after_arguments_before_summary"
+        ));
+        let config_git = ProcessGit;
+        let config = {
+            let _span = crate::diagnostics::stage("config");
+            read_git_ls_config(&config_git)?
+        };
+        let args = args.resolve(&config);
+        match args.backend {
+            Backend::Gix => {
+                let git = {
+                    let _span = crate::diagnostics::stage("backend_open");
+                    GixBackend::discover()?
+                };
+                execute(&args, &git, &mut stdout, environment)
+            }
+            Backend::Shell => {
+                let git = ProcessGit;
+                execute(&args, &git, &mut stdout, environment)
+            }
         }
-        Backend::Shell => {
-            let git = ProcessGit;
-            execute(&args, &git, &mut stdout, environment)
-        }
-    }
+    })
 }
