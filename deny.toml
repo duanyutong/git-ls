@@ -17,7 +17,8 @@ multiple-versions = "deny"
 wildcards = "deny"
 skip = [
     { name = "hashbrown", version = "0.16.1" },
-    { name = "wit-bindgen", version = "0.46.0" },
+    # gix-macros requires syn 2; the remaining derive macros use syn 3.
+    { name = "syn", version = "2.0.119" },
 ]
 
 [sources]

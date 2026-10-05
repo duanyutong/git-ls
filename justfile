@@ -29,8 +29,8 @@ coverage:
 coverage-package-baseline:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --workspace --all-targets --all-features --locked --no-report
-    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 90
-    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 40
+    cargo llvm-cov report -p git-ls --summary-only --fail-under-lines 95
+    cargo llvm-cov report -p xtask --summary-only --fail-under-lines 95
 
 # Enforce the strict unit boundary; compiled-binary and process adapters are out of scope.
 coverage-unit-baseline:
@@ -72,11 +72,13 @@ install-hooks:
 # Install the current development tools used by validation recipes.
 install-tools:
     cargo binstall --no-confirm \
-        cargo-deny@0.19.8 \
-        cargo-edit@0.13.11 \
-        cargo-llvm-cov@0.8.7 \
+        cargo-binstall@1.25.1 \
+        cargo-deny@0.20.2 \
+        cargo-edit@0.13.13 \
+        cargo-llvm-cov@0.9.1 \
         cargo-machete@0.9.2 \
-        cargo-sort@2.1.4 \
-        just@1.51.0 \
-        prek@0.4.3 \
-        typos-cli@1.46.3
+        just@1.58.0 \
+        prek@0.5.4 \
+        typos-cli@1.50.3
+    # The upstream 2.1.4 release asset reports 2.1.3; use the published crate.
+    cargo install cargo-sort --version 2.1.4 --locked

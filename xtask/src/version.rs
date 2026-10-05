@@ -61,15 +61,14 @@ pub(crate) fn tag_range(base: &str, head: &str) -> Result<()> {
         let tag = format!("v{version}");
 
         if let Some(tagged_commit) = existing.get(&tag) {
-            if tagged_commit == &commit {
-                continue;
+            if tagged_commit != &commit {
+                return Err(
+                    format!("tag {tag} already points at {tagged_commit}, not {commit}").into(),
+                );
             }
-            return Err(
-                format!("tag {tag} already points at {tagged_commit}, not {commit}").into(),
-            );
+        } else {
+            run_git(["tag", "-a", &tag, &commit, "-m", tag.as_str()])?;
         }
-
-        run_git(["tag", "-a", &tag, &commit, "-m", tag.as_str()])?;
         tags_to_push.push(tag);
     }
 

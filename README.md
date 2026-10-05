@@ -8,7 +8,7 @@
 
 - Git.
 - `git-branchless` is optional. The default `git ls` command uses plain Git, selecting unmerged local branches and inferring stack heads from ancestry. Custom branchless revsets, and default selections made with `--hidden`, require `git-branchless`.
-- Rust. This repository includes `rust-toolchain.toml` for the standard formatting and linting components.
+- Rust 1.99.0. The repository pins the compiler and required formatting, linting, and coverage components in `rust-toolchain.toml`.
 
 ## Build & Install
 
@@ -16,10 +16,10 @@ One-line commands to build and install:
 
 ```sh
 # release build
-rustup run stable cargo install --path . --locked
+cargo install --path . --locked
 
 # development build
-rustup run stable cargo install --path . --locked --debug
+cargo install --path . --locked --debug
 ```
 
 Cargo installs the local crate with the release profile by default, placing the binary in its configured binary directory, commonly `~/.cargo/bin`.

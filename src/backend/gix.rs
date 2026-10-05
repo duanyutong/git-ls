@@ -212,11 +212,11 @@ impl AncestryBackend for GixBackend {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>> {
         let main_oid = Self::object_id(main_oid)?;
         let head_oid = Self::object_id(head_oid)?;
-        match self.repo.merge_base(main_oid, head_oid) {
-            Ok(base) => Ok(Some(base.detach().to_string())),
-            Err(gix::repository::merge_base::Error::NotFound { .. }) => Ok(None),
-            Err(source) => Err(GitLsError::gix("find merge base", source)),
-        }
+        let bases = self
+            .repo
+            .merge_bases_many(main_oid, &[head_oid])
+            .map_err(|source| GitLsError::gix("find merge base", source))?;
+        Ok(bases.first().map(ToString::to_string))
     }
 
     fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>> {

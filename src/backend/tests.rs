@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::path::Path;
-use std::process::Command as TestCommand;
+#[path = "../../tests/support/mod.rs"]
+mod repo_support;
 
-use tempfile::TempDir;
+use repo_support::TestRepo;
 
 use super::metadata::{
     GIT_SHOW_COMMIT_META_ARG, insert_commit_meta, missing_commit_aliases, parse_shell_commit_meta,
@@ -281,56 +281,6 @@ fn shell_metadata_parser_rejects_invalid_timestamps() {
     ));
 }
 
-fn run_git(repo: &Path, args: &[&str]) -> String {
-    let output = TestCommand::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {} failed\nstdout:\n{}\nstderr:\n{}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .trim_end_matches('\n')
-        .to_string()
-}
-
-struct TestRepo {
-    temp: TempDir,
-}
-
-impl TestRepo {
-    fn init() -> Self {
-        let temp = tempfile::tempdir().unwrap();
-        let repo = Self { temp };
-        repo.git(&["init", "--initial-branch", "main"]);
-        repo.git(&["config", "user.name", "git-ls tests"]);
-        repo.git(&["config", "user.email", "git-ls@example.invalid"]);
-        repo
-    }
-
-    fn path(&self) -> &Path {
-        self.temp.path()
-    }
-
-    fn git(&self, args: &[&str]) -> String {
-        run_git(self.path(), args)
-    }
-
-    fn commit_file(&self, path: &str, content: &str, message: &str) -> String {
-        std::fs::write(self.path().join(path), content).unwrap();
-        self.git(&["add", path]);
-        self.git(&["commit", "-m", message]);
-        self.git(&["rev-parse", "HEAD"])
-    }
-}
-
 struct AncestryParityFixture {
     repo: TestRepo,
     base_oid: String,
@@ -339,16 +289,16 @@ struct AncestryParityFixture {
 }
 
 fn ancestry_parity_fixture() -> AncestryParityFixture {
-    let repo = TestRepo::init();
+    let repo = TestRepo::new();
 
-    repo.commit_file("root.txt", "root\n", "root");
+    repo.commit("root");
     repo.git(&["checkout", "-b", "side"]);
-    let side_oid = repo.commit_file("side.txt", "side\n", "side before base");
+    let side_oid = repo.commit("side before base");
 
     repo.git(&["checkout", "main"]);
-    let base_oid = repo.commit_file("base.txt", "base\n", "base");
+    let base_oid = repo.commit("base");
     repo.git(&["checkout", "-b", "topic"]);
-    repo.commit_file("topic.txt", "topic\n", "topic");
+    repo.commit("topic");
     repo.git(&["merge", "--no-ff", "side", "-m", "merge side"]);
     let head_oid = repo.git(&["rev-parse", "HEAD"]);
 
@@ -510,10 +460,10 @@ fn gix_backend_matches_git_ancestry_path() {
 
 #[test]
 fn gix_backend_reads_repository_snapshot_and_commit_metadata() {
-    let repo = TestRepo::init();
-    repo.commit_file("root.txt", "root\n", "root");
+    let repo = TestRepo::new();
+    repo.commit("root");
     repo.git(&["checkout", "-b", "topic"]);
-    let head_oid = repo.commit_file("topic.txt", "topic\n", "topic");
+    let head_oid = repo.commit("topic");
     repo.git(&["config", "branchless.core.mainBranch", "trunk"]);
 
     let backend = GixBackend::discover_from(repo.path()).unwrap();
@@ -549,7 +499,7 @@ fn gix_metadata_hydration_rejects_malformed_oid() {
 
 #[test]
 fn gix_metadata_hydration_reports_missing_commits() {
-    let repo = TestRepo::init();
+    let repo = TestRepo::new();
     let backend = GixBackend::discover_from(repo.path()).unwrap();
     let mut cache = HashMap::new();
 
