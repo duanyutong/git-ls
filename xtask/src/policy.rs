@@ -22,6 +22,7 @@ pub(crate) fn policy_from_message(message: &str) -> Result<CommitPolicy> {
         .find(|line| !line.is_empty() && !line.starts_with('#'))
         .ok_or("commit message is empty")?
         .to_string();
+    let kind = conventional_type(&subject).ok_or("a Conventional Commit title is required")?;
 
     let has_breaking_footer = message.lines().any(|line| {
         let line = line.trim_start();
@@ -35,7 +36,7 @@ pub(crate) fn policy_from_message(message: &str) -> Result<CommitPolicy> {
         });
     }
 
-    if conventional_type(&subject).is_some_and(|kind| kind == "feat") {
+    if kind == "feat" {
         return Ok(CommitPolicy {
             subject,
             bump: Bump::Minor,
@@ -52,7 +53,10 @@ fn conventional_type(subject: &str) -> Option<&str> {
     let (header, _) = subject.split_once(": ")?;
     let header = header.strip_suffix('!').unwrap_or(header);
     let kind = if let Some((kind, scope)) = header.split_once('(') {
-        if scope.ends_with(')') {
+        if scope
+            .strip_suffix(')')
+            .is_some_and(|scope| !scope.is_empty() && !scope.contains(['(', ')']))
+        {
             kind
         } else {
             return None;
@@ -61,7 +65,20 @@ fn conventional_type(subject: &str) -> Option<&str> {
         header
     };
 
-    if kind.chars().all(|ch| ch.is_ascii_lowercase() || ch == '-') && !kind.is_empty() {
+    if matches!(
+        kind,
+        "feat"
+            | "fix"
+            | "docs"
+            | "style"
+            | "refactor"
+            | "perf"
+            | "test"
+            | "build"
+            | "ci"
+            | "chore"
+            | "revert"
+    ) {
         Some(kind)
     } else {
         None
@@ -74,25 +91,25 @@ fn header_is_breaking(subject: &str) -> bool {
         .is_some_and(|(header, _)| header.ends_with('!') || header.contains(")!"))
 }
 
-pub(crate) fn bumped(version: &Version, bump: Bump) -> Version {
+pub(crate) fn bumped(version: &Version, bump: Bump) -> Result<Version> {
     let mut next = version.clone();
     match bump {
         Bump::Patch => {
-            next.patch += 1;
+            next.patch = next.patch.checked_add(1).ok_or("patch version overflow")?;
         }
         Bump::Minor => {
-            next.minor += 1;
+            next.minor = next.minor.checked_add(1).ok_or("minor version overflow")?;
             next.patch = 0;
         }
         Bump::Major => {
-            next.major += 1;
+            next.major = next.major.checked_add(1).ok_or("major version overflow")?;
             next.minor = 0;
             next.patch = 0;
         }
     }
     next.pre = semver::Prerelease::EMPTY;
     next.build = semver::BuildMetadata::EMPTY;
-    next
+    Ok(next)
 }
 
 #[cfg(test)]
@@ -108,24 +125,25 @@ mod tests {
     }
 
     #[test]
-    fn treats_non_conventional_commits_as_patch() {
-        let policy = policy_from_message("update hooks").expect("policy parses");
-
-        assert_eq!(policy.bump, Bump::Patch);
+    fn rejects_non_conventional_commits() {
+        assert!(policy_from_message("update hooks").is_err());
     }
 
     #[test]
-    fn treats_malformed_conventional_scopes_as_patch() {
-        let policy = policy_from_message("feat(cli: add json output").expect("policy parses");
-
-        assert_eq!(policy.bump, Bump::Patch);
+    fn rejects_malformed_conventional_scopes() {
+        for message in [
+            "feat(cli: add output",
+            "feat(): add output",
+            "feat(a(b)): add output",
+            "fix: ",
+        ] {
+            assert!(policy_from_message(message).is_err());
+        }
     }
 
     #[test]
-    fn treats_non_lowercase_conventional_types_as_patch() {
-        let policy = policy_from_message("Feat(cli): add json output").expect("policy parses");
-
-        assert_eq!(policy.bump, Bump::Patch);
+    fn rejects_non_lowercase_conventional_types() {
+        assert!(policy_from_message("Feat(cli): add json output").is_err());
     }
 
     #[test]
@@ -171,8 +189,16 @@ mod tests {
     fn bumps_versions_by_policy() {
         let version = Version::parse("0.2.1").expect("valid version");
 
-        assert_eq!(bumped(&version, Bump::Patch).to_string(), "0.2.2");
-        assert_eq!(bumped(&version, Bump::Minor).to_string(), "0.3.0");
-        assert_eq!(bumped(&version, Bump::Major).to_string(), "1.0.0");
+        assert_eq!(bumped(&version, Bump::Patch).unwrap().to_string(), "0.2.2");
+        assert_eq!(bumped(&version, Bump::Minor).unwrap().to_string(), "0.3.0");
+        assert_eq!(bumped(&version, Bump::Major).unwrap().to_string(), "1.0.0");
+    }
+
+    #[test]
+    fn rejects_version_overflow() {
+        let version = Version::new(u64::MAX, u64::MAX, u64::MAX);
+        for bump in [Bump::Patch, Bump::Minor, Bump::Major] {
+            assert!(bumped(&version, bump).is_err());
+        }
     }
 }

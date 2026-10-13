@@ -1,15 +1,16 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """Measure debug output transport and cache-maintenance interference.
 
 All cache mutations are confined to a disposable synthetic repository created
 under --directory. A drained pseudo-terminal measures transport costs, not a
 terminal emulator's rendering latency. Requires Unix wait4 and pseudo-terminals.
 """
+
 import argparse
 import errno
 import json
 import os
-from pathlib import Path
+import pathlib
 import platform
 import pty
 import random
@@ -18,9 +19,10 @@ import statistics
 import subprocess
 import threading
 import time
+from typing import Any
 
 
-def wait_usage(child):
+def wait_usage(child: subprocess.Popen[bytes]) -> dict[str, float]:
     _, status, usage = os.wait4(child.pid, 0)
     child.returncode = os.waitstatus_to_exitcode(status)
     if child.returncode:
@@ -31,13 +33,17 @@ def wait_usage(child):
     }
 
 
-def foreground(binary, repo, env, terminal=False):
+def foreground(
+    binary: pathlib.Path, repo: pathlib.Path, env: dict[str, str], terminal: bool = False
+) -> dict[str, Any]:
     command = [str(binary), "--debug", "--color", "never", "--no-cache-maintenance"]
     started = time.perf_counter()
     render = None
     if terminal:
         master, slave = pty.openpty()
-        child = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=slave)
+        child = subprocess.Popen(
+            command, cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=slave
+        )
         os.close(slave)
         try:
             while True:
@@ -51,26 +57,39 @@ def foreground(binary, repo, env, terminal=False):
         finally:
             os.close(master)
     else:
-        child = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        child = subprocess.Popen(
+            command, cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        )
+        assert child.stderr is not None
         for line in child.stderr:
             if b"stage=write_output " in line and b"status=ok" in line:
                 render = (time.perf_counter() - started) * 1000
         child.stderr.close()
-    result = wait_usage(child)
-    result.update(elapsed_ms=(time.perf_counter() - started) * 1000, render_record_received_ms=render)
+    result: dict[str, Any] = dict(wait_usage(child))
+    result.update(
+        elapsed_ms=(time.perf_counter() - started) * 1000, render_record_received_ms=render
+    )
     return result
 
 
-def main():
+def collect_worker(
+    child: subprocess.Popen[bytes], result: dict[str, float], started: float
+) -> None:
+    """Collect usage for the explicitly supplied worker rather than loop state."""
+    result.update(wait_usage(child))
+    result["elapsed_ms"] = (time.perf_counter() - started) * 1000
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--candidate", type=pathlib.Path, required=True)
+    parser.add_argument("--directory", type=pathlib.Path, required=True)
     parser.add_argument("--repeats", type=int, default=9)
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be positive")
     args.directory.mkdir(parents=True, exist_ok=True)
-    library = runpy.run_path(str(Path(__file__).with_name("benchmark-performance.py")))
+    library = runpy.run_path(str(pathlib.Path(__file__).with_name("benchmark-performance.py")))
     env = library["ENV"]
     binary = args.candidate.resolve()
     repo = library["fixture"](args.directory.resolve(), 10000, 32, "distributed")
@@ -93,28 +112,52 @@ def main():
                 before = sum(path.stat().st_size for path in root.iterdir() if path.is_file())
                 started = time.perf_counter()
                 worker = subprocess.Popen(
-                    ["nice", "-n", "10", str(binary), "--internal-cache-maintenance", str(root), retain.name],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True, env=env,
+                    [
+                        "nice",
+                        "-n",
+                        "10",
+                        str(binary),
+                        "--internal-cache-maintenance",
+                        str(root),
+                        retain.name,
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                    env=env,
                 )
-                worker_result = {}
-                def collect_worker():
-                    worker_result.update(wait_usage(worker))
-                    worker_result["elapsed_ms"] = (time.perf_counter() - started) * 1000
-                collector = threading.Thread(target=collect_worker)
+                worker_result: dict[str, float] = {}
+
+                collector = threading.Thread(
+                    target=collect_worker, args=(worker, worker_result, started)
+                )
                 collector.start()
                 foreground_offset = (time.perf_counter() - started) * 1000
                 sample = foreground(binary, repo, env)
                 collector.join()
-                report = json.loads(json.loads((root / "maintenance-report.json").read_text())["payload"])
-                sample.update(worker=worker_result, worker_report=report, cache_bytes_before=before,
-                              worker_overlapped_foreground=worker_result["elapsed_ms"] > foreground_offset)
+                report = json.loads(
+                    json.loads((root / "maintenance-report.json").read_text())["payload"]
+                )
+                sample.update(
+                    worker=worker_result,
+                    worker_report=report,
+                    cache_bytes_before=before,
+                    worker_overlapped_foreground=worker_result["elapsed_ms"] > foreground_offset,
+                )
             else:
                 sample = foreground(binary, repo, env, terminal=mode == "pty_debug")
             results[mode].append(sample)
-    report = {"platform": platform.platform(), "version": subprocess.check_output([str(binary), "--version"], text=True).strip(),
-              "repeats": args.repeats, "samples": results,
-              "median_ms": {name: statistics.median(s["elapsed_ms"] for s in samples) for name, samples in results.items()}}
+    report = {
+        "platform": platform.platform(),
+        "version": subprocess.check_output([str(binary), "--version"], text=True).strip(),
+        "repeats": args.repeats,
+        "samples": results,
+        "median_ms": {
+            name: statistics.median(s["elapsed_ms"] for s in samples)
+            for name, samples in results.items()
+        },
+    }
     (args.directory / "runtime-results.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report["median_ms"], indent=2))
 

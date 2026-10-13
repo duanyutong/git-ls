@@ -36,6 +36,8 @@ impl RenderLine {
 
     pub(crate) fn with_trailing_fixed_suffix(text: String, suffix: String) -> Self {
         let marker = format!(" {suffix}");
+        // The fallback moves text whilst the matching arm borrows it.
+        #[allow(clippy::option_if_let_else)]
         if let Some(prefix) = text.strip_suffix(&marker) {
             Self::with_fixed_suffix(prefix.to_string(), suffix)
         } else {

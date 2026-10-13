@@ -12,7 +12,7 @@ pub(crate) struct Colours {
 }
 
 impl Colours {
-    pub(crate) fn new(enabled: bool, palette: Palette) -> Self {
+    pub(crate) const fn new(enabled: bool, palette: Palette) -> Self {
         Self {
             enabled,
             palette: palette.ansi_colours(),

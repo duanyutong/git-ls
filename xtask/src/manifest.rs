@@ -136,9 +136,9 @@ mod tests {
     #[test]
     fn rejects_missing_cargo_lock_package_table() {
         let error = cargo_lock_version(
-            r#"
+            r"
                 version = 3
-            "#,
+            ",
         )
         .unwrap_err();
 

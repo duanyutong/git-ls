@@ -40,7 +40,7 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    pub(crate) fn with_layout(mut self, layout: Layout) -> Self {
+    pub(crate) const fn with_layout(mut self, layout: Layout) -> Self {
         self.layout = layout;
         self
     }

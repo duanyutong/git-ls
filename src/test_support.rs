@@ -83,6 +83,21 @@ impl crate::backend::RepositoryStateBackend for OmitMetadata<'_> {
     }
 }
 impl crate::backend::AncestryBackend for OmitMetadata<'_> {
+    fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        self.inner.unmerged_tips(main, tips)
+    }
+
+    fn independent_heads(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        self.inner.independent_heads(main, tips)
+    }
+    fn main_distances(
+        &self,
+        main: &str,
+        bases: &[String],
+    ) -> Result<HashMap<String, Option<usize>>> {
+        self.inner.main_distances(main, bases)
+    }
+
     fn merge_base(&self, main: &str, head: &str) -> Result<Option<String>> {
         self.inner.merge_base(main, head)
     }
@@ -103,4 +118,59 @@ impl crate::backend::CommitMetadataBackend for OmitMetadata<'_> {
             .collect();
         self.inner.cache_commit_metas(&included, cache)
     }
+}
+
+pub(crate) fn reference_unmerged(
+    git: &dyn crate::backend::AncestryBackend,
+    main: &str,
+    tips: &[String],
+) -> Result<Vec<String>> {
+    tips.iter()
+        .filter(|tip| tip.as_str() != main)
+        .filter_map(|tip| match git.merge_base(tip, main) {
+            Ok(base) if base.as_ref() == Some(tip) => None,
+            Ok(_) => Some(Ok(tip.clone())),
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
+}
+
+pub(crate) fn reference_heads(
+    git: &dyn crate::backend::AncestryBackend,
+    _main: &str,
+    tips: &[String],
+) -> Result<Vec<String>> {
+    let mut heads = Vec::new();
+    for tip in tips {
+        let mut intermediate = false;
+        for other in tips.iter().filter(|other| *other != tip) {
+            if git.merge_base(tip, other)?.as_ref() == Some(tip) {
+                intermediate = true;
+                break;
+            }
+        }
+        if !intermediate {
+            heads.push(tip.clone());
+        }
+    }
+    Ok(heads)
+}
+
+pub(crate) fn reference_distances(
+    git: &dyn crate::backend::AncestryBackend,
+    main: &str,
+    bases: &[String],
+) -> Result<HashMap<String, Option<usize>>> {
+    bases
+        .iter()
+        .map(|base| {
+            let distance = if base == main {
+                Some(0)
+            } else {
+                let length = git.ancestry_path(Some(base), main)?.len();
+                (length > 0).then_some(length)
+            };
+            Ok((base.clone(), distance))
+        })
+        .collect()
 }

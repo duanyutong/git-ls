@@ -20,8 +20,9 @@ impl RenderEnvironment {
 }
 
 fn current_unix_timestamp() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
-        Err(_) => 0,
-    }
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        })
 }

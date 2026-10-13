@@ -61,14 +61,14 @@ pub(super) fn format_metadata_prefix(
     let count = colours.metadata_count(&format!("{count:>count_width$}"));
     let open = colours.metadata_punctuation("(");
     let close = colours.metadata_punctuation(")");
-    match short_oid {
-        Some(short_oid) => {
+    short_oid.map_or_else(
+        || format!("{age} {open}{count}{close}"),
+        |short_oid| {
             let short_oid = colours.metadata_oid(short_oid);
             let comma = colours.metadata_punctuation(", ");
             format!("{age} {open}{count}{comma}{short_oid}{close}")
-        }
-        None => format!("{age} {open}{count}{close}"),
-    }
+        },
+    )
 }
 
 /// Render the fixed-width age gutter that the columns layout places ahead of the

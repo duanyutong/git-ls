@@ -52,7 +52,7 @@ pub(crate) struct BranchAnnotation {
 }
 
 impl BranchAnnotation {
-    pub(crate) fn new(meta: CommitMeta, commit_count: usize) -> Self {
+    pub(crate) const fn new(meta: CommitMeta, commit_count: usize) -> Self {
         Self { meta, commit_count }
     }
 }
@@ -87,7 +87,7 @@ pub(crate) struct RewrittenCommit {
 }
 
 impl RewrittenCommit {
-    pub(crate) fn new(meta: CommitMeta, replacement: CommitMeta) -> Self {
+    pub(crate) const fn new(meta: CommitMeta, replacement: CommitMeta) -> Self {
         Self { meta, replacement }
     }
 }
@@ -150,7 +150,7 @@ pub(crate) struct LaneGroup {
 }
 
 impl LaneGroup {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         base_oid: Option<String>,
         base_meta: Option<CommitMeta>,
         main_distance: Option<usize>,

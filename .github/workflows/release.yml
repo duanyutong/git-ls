@@ -2,38 +2,40 @@ name: Release
 
 on:
   workflow_run:
-    workflows:
-      - CI
-    branches:
-      - main
-    types:
-      - completed
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-tags
+  cancel-in-progress: false
+
 jobs:
   tag:
-    name: Tag Versions
-    runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    name: Tag validated versions
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Install Rust toolchain
+      - name: Install compiler
         run: rustup toolchain install 1.99.0 --profile minimal
-
-      - name: Configure Git author
+      - name: Configure tag identity
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Create version tags
-        run: cargo run --locked -p xtask -- version tag-range "0000000000000000000000000000000000000000" "${{ github.event.workflow_run.head_sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Verify and publish annotated tags
+        env:
+          VALIDATED_HEAD: ${{ github.event.workflow_run.head_sha }}
+        run: cargo run --locked -p xtask -- version tag-range 0000000000000000000000000000000000000000 "$VALIDATED_HEAD"

@@ -15,6 +15,12 @@ pub(crate) enum Commands {
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 pub(crate) enum VersionCommand {
+    /// Amend the current commit while retaining its version baseline.
+    Amend {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
+
     /// Check the pending commit message and generate an unstaged version bump if required.
     CommitMsg { message_file: String },
 
@@ -33,6 +39,17 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn parses_amend_arguments() {
+        let cli = Cli::try_parse_from(["xtask", "version", "amend", "--no-edit"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Commands::Version(VersionCommand::Amend {
+                args: vec!["--no-edit".into()]
+            })
+        );
+    }
 
     #[test]
     fn parses_commit_msg_command() {

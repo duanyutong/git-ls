@@ -134,7 +134,11 @@ impl GixBackend {
         if wanted.is_empty() {
             return Ok(HashMap::new());
         }
-        if self.repo.is_shallow() {
+        if self
+            .repo
+            .is_shallow()
+            .map_err(|source| GitLsError::gix("read shallow boundary", source))?
+        {
             return self.dag_distances(main, bases, &ids);
         }
         let mut found = HashMap::new();

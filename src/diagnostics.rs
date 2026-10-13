@@ -178,9 +178,110 @@ pub(crate) fn observe<T, E>(enabled: bool, run: impl FnOnce() -> Result<T, E>) -
     result
 }
 
+/// Boundary adapter for analysis notifications. Disabled observers retain no
+/// stages; the analysis modules never access clocks or standard streams.
+pub(crate) struct AnalysisDiagnostics {
+    debug: bool,
+    stages: RefCell<Vec<Span>>,
+}
+
+impl AnalysisDiagnostics {
+    pub(crate) fn new(debug: bool) -> Self {
+        Self {
+            debug,
+            stages: RefCell::default(),
+        }
+    }
+}
+
+impl crate::lanes::AnalysisObserver for AnalysisDiagnostics {
+    fn begin_stage(&self, name: &'static str) {
+        if self.debug {
+            self.stages.borrow_mut().push(stage(name));
+        }
+    }
+    fn end_stage(&self) {
+        if self.debug {
+            self.stages.borrow_mut().pop();
+        }
+    }
+    fn detail(&self, fields: fmt::Arguments<'_>) {
+        if self.debug
+            && let Some(span) = self.stages.borrow_mut().last_mut()
+        {
+            span.detail(fields);
+        }
+    }
+    fn progress(&self, message: fmt::Arguments<'_>) {
+        if self.debug {
+            let _ = writeln!(std::io::stderr().lock(), "git-ls debug: {message}");
+        }
+    }
+    fn event(&self, fields: fmt::Arguments<'_>) {
+        if self.debug {
+            event(fields);
+        }
+    }
+    fn count(&self, name: &'static str, amount: usize) {
+        if self.debug {
+            count(name, amount);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_adapter_preserves_attribution_and_disabled_recording() {
+        use crate::lanes::AnalysisObserver;
+        use crate::lanes::AnalysisStage;
+        let observer = AnalysisDiagnostics::new(false);
+        {
+            let span = AnalysisStage::new(&observer, "disabled_analysis");
+            span.detail(format_args!("ignored=true"));
+            observer.progress(format_args!("ignored=true"));
+            observer.event(format_args!("ignored=true"));
+            observer.count("ignored", 1);
+        }
+        assert_eq!(observer.stages.borrow().len(), 0);
+        observe(true, || {
+            let muted = AnalysisDiagnostics::new(false);
+            {
+                let stage = AnalysisStage::new(&muted, "muted");
+                stage.detail(format_args!("ignored=true"));
+                muted.progress(format_args!("ignored=true"));
+                muted.event(format_args!("ignored=true"));
+                muted.count("ignored", 1);
+            }
+            RECORDER.with_borrow(|slot| {
+                let recorder = slot.as_ref().unwrap();
+                assert_eq!(recorder.counters.len(), 0);
+                assert_eq!(recorder.timings.len(), 0);
+            });
+            let observer = AnalysisDiagnostics::new(true);
+            observer.detail(format_args!("no_stage=true"));
+            {
+                let stage = AnalysisStage::new(&observer, "analysis_outer");
+                observer.progress(format_args!("analysis test"));
+                observer.event(format_args!("test_event=true"));
+                {
+                    let _inner = AnalysisStage::new(&observer, "analysis_inner");
+                    observer.count("vertices", 3);
+                }
+                stage.detail(format_args!("completed=true"));
+            }
+            assert_eq!(observer.stages.borrow().len(), 0);
+            RECORDER.with_borrow(|slot| {
+                let recorder = slot.as_ref().unwrap();
+                assert_eq!(recorder.counters[&("analysis_inner", "vertices")], 3);
+                assert_eq!(recorder.stack.len(), 0);
+            });
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    }
 
     #[test]
     fn escaped_scopes_and_nested_observation_do_not_corrupt_recording() {

@@ -8,11 +8,18 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod compatibility;
+mod facts;
 pub(crate) mod maintenance;
+mod policy;
+
+use compatibility::ANALYSIS_SEMANTICS as SEMANTICS;
+
+pub(crate) use compatibility::{BackendSemantics, FactsKey};
+pub(crate) use facts::Facts;
 
 pub(crate) const SLOTS: u64 = 32;
 pub(crate) const ENTRY_LIMIT: u64 = 1024 * 1024;
-const SEMANTICS: &str = "analysis-1";
 
 #[derive(Clone, Debug)]
 pub(crate) struct Store {

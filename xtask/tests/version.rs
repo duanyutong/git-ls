@@ -1,9 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use std::fs;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-#[path = "../../tests/support/mod.rs"]
 mod support;
 
 use support::TestRepo;
@@ -82,7 +83,7 @@ fn commit_hook_rejects_an_incorrect_staged_bump_without_rewriting_it() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("requires 1.2.4 from 1.2.3"));
-    assert!(repo.git(&["diff"]).is_empty());
+    assert_eq!(repo.git(&["diff"]), "");
 }
 
 #[test]
@@ -207,4 +208,135 @@ fn refuses_to_replace_a_conflicting_release_tag() {
         .failure()
         .stderr(predicate::str::contains("tag v1.2.4 already points at"));
     assert_eq!(repo.git(&["rev-parse", "v1.2.4"]), base);
+}
+
+#[test]
+fn accepts_the_initial_version_and_checks_its_lockfile() {
+    let repo = TestRepo::new();
+    write_versions(&repo, "0.1.0", "0.1.0");
+    repo.git(&["add", "."]);
+    let message = repo.path().join(".git/COMMIT_EDITMSG");
+    fs::write(&message, "feat: initialise repository\n").unwrap();
+    xtask(&repo)
+        .arg("commit-msg")
+        .arg(&message)
+        .assert()
+        .success();
+    repo.commit("feat: initialise repository");
+    xtask(&repo)
+        .args(["verify-range", ZERO_OID, "HEAD"])
+        .assert()
+        .success();
+    write_versions(&repo, "0.1.0", "0.0.0");
+    repo.git(&["add", "."]);
+    xtask(&repo)
+        .arg("commit-msg")
+        .arg(&message)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("versions differ"));
+}
+
+#[test]
+fn preserves_unstaged_manifest_changes() {
+    let repo = repository();
+    let manifest = repo.path().join("Cargo.toml");
+    let original = fs::read_to_string(&manifest).unwrap() + "description = \"uncommitted\"\n";
+    fs::write(&manifest, &original).unwrap();
+    let message = repo.path().join(".git/COMMIT_EDITMSG");
+    fs::write(&message, "fix: change behaviour\n").unwrap();
+    xtask(&repo)
+        .arg("commit-msg")
+        .arg(&message)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("stage or restore"));
+    assert_eq!(fs::read_to_string(manifest).unwrap(), original);
+}
+
+#[test]
+fn reads_prek_revision_environment_instead_of_empty_standard_input() {
+    let repo = repository();
+    let base = repo.git(&["rev-parse", "HEAD"]);
+    let head = repo.commit("fix: missing version bump");
+    xtask(&repo)
+        .arg("pre-push")
+        .env("PRE_COMMIT_FROM_REF", base)
+        .env("PRE_COMMIT_TO_REF", &head)
+        .assert()
+        .failure();
+    xtask(&repo)
+        .arg("pre-push")
+        .env("PRE_COMMIT_TO_REF", head)
+        .assert()
+        .failure();
+}
+
+#[cfg(unix)]
+fn install_commit_hook(repo: &TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+    let hooks = repo.path().join("hooks");
+    fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("commit-msg");
+    let binary = assert_cmd::cargo::cargo_bin!("xtask")
+        .to_str()
+        .unwrap()
+        .replace('\'', "'\\''");
+    fs::write(
+        &hook,
+        format!("#!/bin/sh\nexec '{binary}' version commit-msg \"$1\"\n"),
+    )
+    .unwrap();
+    fs::set_permissions(hook, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
+}
+
+#[test]
+#[cfg(unix)]
+fn amends_root_and_later_commits_without_a_second_version_increment() {
+    let repo = repository();
+    install_commit_hook(&repo);
+    xtask(&repo).args(["amend", "--no-edit"]).assert().success();
+    assert!(repo.git(&["show", "HEAD:Cargo.toml"]).contains("1.2.3"));
+    write_versions(&repo, "1.2.4", "1.2.4");
+    repo.commit("fix: adjust behaviour");
+    xtask(&repo).args(["amend", "--no-edit"]).assert().success();
+    xtask(&repo)
+        .args(["verify-range", "HEAD^", "HEAD"])
+        .assert()
+        .success();
+    xtask(&repo)
+        .args(["amend", "-m", "feat: requires a minor bump"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn validates_the_entire_release_range_before_creating_any_tag() {
+    let repo = repository();
+    write_versions(&repo, "1.2.4", "1.2.4");
+    repo.commit("fix: valid bump");
+    repo.commit("fix: missing bump");
+    xtask(&repo)
+        .args(["tag-range", "v1.2.3", "HEAD"])
+        .assert()
+        .failure();
+    assert_eq!(repo.git(&["tag", "--list"]), "v1.2.3");
+}
+
+#[test]
+fn rejects_merge_commits() {
+    let repo = repository();
+    repo.git(&["checkout", "-b", "side"]);
+    fs::write(repo.path().join("side"), "side").unwrap();
+    repo.commit("fix: side change");
+    repo.git(&["checkout", "main"]);
+    fs::write(repo.path().join("main"), "main").unwrap();
+    repo.commit("fix: main change");
+    repo.git(&["merge", "--no-ff", "side", "-m", "fix: merge change"]);
+    xtask(&repo)
+        .args(["verify-range", "HEAD^", "HEAD"])
+        .assert()
+        .failure();
+    xtask(&repo).args(["amend", "--no-edit"]).assert().failure();
 }

@@ -35,7 +35,7 @@ impl ConfigKey {
         Self::CacheMaintenance,
     ];
 
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         match self {
             Self::Verbosity => "git-ls.verbosity",
             Self::Backend => "git-ls.backend",
@@ -46,7 +46,7 @@ impl ConfigKey {
         }
     }
 
-    fn expected(self) -> &'static str {
+    const fn expected(self) -> &'static str {
         match self {
             Self::Verbosity => "0, 1, or 2",
             Self::Backend => "gix or shell",
@@ -60,14 +60,7 @@ impl ConfigKey {
 }
 
 fn parse_boolean(key: ConfigKey, value: &str) -> Result<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" => Ok(true),
-        "false" | "no" | "off" | "" => Ok(false),
-        number => number
-            .parse::<i64>()
-            .map(|n| n != 0)
-            .map_err(|_| invalid_git_config(key, value)),
-    }
+    value.parse().map_err(|_| invalid_git_config(key, value))
 }
 
 fn invalid_git_config(key: ConfigKey, value: &str) -> GitLsError {
@@ -120,7 +113,13 @@ pub(crate) fn read_git_ls_config(git: &dyn GitCommand) -> Result<GitLsConfig> {
             && (matches!(key, ConfigKey::Cache | ConfigKey::CacheMaintenance)
                 || !value.trim().is_empty())
         {
-            config.set_from_git_config(key, value)?;
+            if matches!(key, ConfigKey::Cache | ConfigKey::CacheMaintenance) {
+                // Git converts the effective value, including valueless keys and integer forms.
+                let canonical = git.run(&["config", "--type=bool", "--get", key.name()], false)?;
+                config.set_from_git_config(key, &canonical)?;
+            } else {
+                config.set_from_git_config(key, value)?;
+            }
         }
     }
     Ok(config)
@@ -198,24 +197,18 @@ mod tests {
 
     #[test]
     fn parses_cache_boolean_configuration_and_rejects_invalid_values() {
-        for (value, expected) in [
-            ("true", true),
-            ("YES", true),
-            ("on", true),
-            ("1", true),
-            ("-2", true),
-            ("false", false),
-            ("no", false),
-            ("off", false),
-            ("0", false),
-            ("", false),
-        ] {
+        for (value, expected) in [("true", true), ("false", false)] {
             assert_eq!(parse_boolean(ConfigKey::Cache, value).unwrap(), expected);
         }
         assert!(parse_boolean(ConfigKey::Cache, "unknown").is_err());
         let git = ConfigGit::default()
             .with(&["config", "--get", "git-ls.cache"], "false")
-            .with(&["config", "--get", "git-ls.cachemaintenance"], "true");
+            .with(&["config", "--get", "git-ls.cachemaintenance"], "true")
+            .with(&["config", "--type=bool", "--get", "git-ls.cache"], "false")
+            .with(
+                &["config", "--type=bool", "--get", "git-ls.cachemaintenance"],
+                "true",
+            );
         let config = read_git_ls_config(&git).unwrap();
         assert_eq!(config.cache, Some(false));
         assert_eq!(config.cache_maintenance, Some(true));
@@ -227,6 +220,25 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn boolean_conversion_errors_are_preserved() {
+        struct UnavailableBooleans;
+        impl GitCommand for UnavailableBooleans {
+            fn config_values(&self, _keys: &[&str]) -> Result<HashMap<String, String>> {
+                Ok(HashMap::from([("git-ls.cache".into(), "invalid".into())]))
+            }
+
+            fn run(&self, _args: &[&str], _allow_failure: bool) -> Result<String> {
+                Err(GitLsError::TestFixture(
+                    "Git rejected the Boolean value".into(),
+                ))
+            }
+        }
+
+        let error = read_git_ls_config(&UnavailableBooleans).unwrap_err();
+        assert_eq!(error.to_string(), "Git rejected the Boolean value");
     }
 
     #[test]

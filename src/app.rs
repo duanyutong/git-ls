@@ -70,7 +70,7 @@ struct RenderSession<'a> {
 }
 
 impl<'a> RenderSession<'a> {
-    fn new(
+    const fn new(
         args: &RuntimeOptions,
         repository: &'a RepositorySnapshot,
         main_meta: Option<&'a CommitMeta>,
@@ -142,8 +142,9 @@ fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysi
             args.backend, args.revset, args.hidden, args.order, args.layout, args.verbosity
         ),
     );
+    let observer = crate::diagnostics::AnalysisDiagnostics::new(args.debug);
     let mut meta_cache = HashMap::new();
-    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache)? {
+    let (lanes, main_oid, repository) = match build_lanes(git, args, &mut meta_cache, &observer)? {
         BuiltLanes::Empty {
             main_oid,
             repository,
@@ -170,7 +171,7 @@ fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysi
         lanes,
         &main_oid,
         args.order,
-        args.debug,
+        &observer,
         &mut meta_cache,
     )?;
     let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;

@@ -9,21 +9,12 @@ pub(crate) const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 pub(crate) fn commits_in_range(base: &str, head: &str) -> Result<Vec<String>> {
     let base = if base == ZERO_OID {
         latest_reachable_version_tag(head)?
-            .ok_or_else(|| format!("no reachable v* tag found for {head}"))?
     } else {
-        base.to_string()
+        Some(base.to_string())
     };
 
-    if base == head {
-        return Ok(Vec::new());
-    }
-
-    let output = git_output([
-        "rev-list",
-        "--reverse",
-        "--ancestry-path",
-        &format!("{base}..{head}"),
-    ])?;
+    let range = base.map_or_else(|| head.to_string(), |base| format!("{base}..{head}"));
+    let output = git_output(["rev-list", "--reverse", &range])?;
     Ok(output
         .lines()
         .map(str::trim)
@@ -83,7 +74,7 @@ where
     git_output_allow_failure(args)?.ok_or_else(|| "git command failed".into())
 }
 
-fn git_output_allow_failure<I, S>(args: I) -> Result<Option<String>>
+pub(crate) fn git_output_allow_failure<I, S>(args: I) -> Result<Option<String>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

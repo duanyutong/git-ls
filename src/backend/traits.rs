@@ -47,52 +47,18 @@ pub(crate) trait AncestryBackend {
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>>;
     fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>>;
 
-    fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
-        tips.iter()
-            .filter(|tip| tip.as_str() != main)
-            .filter_map(|tip| match self.merge_base(tip, main) {
-                Ok(base) if base.as_ref() == Some(tip) => None,
-                Ok(_) => Some(Ok(tip.clone())),
-                Err(error) => Some(Err(error)),
-            })
-            .collect()
-    }
+    /// Select all supplied tips outside main in a collective query.
+    fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>>;
 
-    fn independent_heads(&self, _main: &str, tips: &[String]) -> Result<Vec<String>> {
-        let mut heads = Vec::new();
-        for tip in tips {
-            let mut intermediate = false;
-            for other in tips.iter().filter(|other| *other != tip) {
-                if self.merge_base(tip, other)?.as_ref() == Some(tip) {
-                    intermediate = true;
-                    break;
-                }
-            }
-            if !intermediate {
-                heads.push(tip.clone());
-            }
-        }
-        Ok(heads)
-    }
+    /// Compute independent heads collectively, without pairwise searches.
+    fn independent_heads(&self, main: &str, tips: &[String]) -> Result<Vec<String>>;
 
+    /// Count all requested main-history ranges through shared analysis.
     fn main_distances(
         &self,
         main: &str,
         bases: &[String],
-    ) -> Result<HashMap<String, Option<usize>>> {
-        bases
-            .iter()
-            .map(|base| {
-                let distance = if base == main {
-                    Some(0)
-                } else {
-                    let length = self.ancestry_path(Some(base), main)?.len();
-                    (length > 0).then_some(length)
-                };
-                Ok((base.clone(), distance))
-            })
-            .collect()
-    }
+    ) -> Result<HashMap<String, Option<usize>>>;
 }
 
 pub(crate) trait GitBackend:

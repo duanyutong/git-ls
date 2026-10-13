@@ -21,7 +21,7 @@ pub(crate) enum Verbosity {
 }
 
 impl Verbosity {
-    pub(crate) fn from_count(count: u8) -> Self {
+    pub(crate) const fn from_count(count: u8) -> Self {
         match count {
             0 => Self::Low,
             1 => Self::Medium,
@@ -29,22 +29,22 @@ impl Verbosity {
         }
     }
 
-    pub(crate) fn try_from_config(value: u8) -> Option<Self> {
+    pub(crate) const fn try_from_config(value: u8) -> Option<Self> {
         match value {
             0..=2 => Some(Self::from_count(value)),
             _ => None,
         }
     }
 
-    pub(crate) fn includes_metadata(self) -> bool {
+    pub(crate) const fn includes_metadata(self) -> bool {
         !matches!(self, Self::Low)
     }
 
-    pub(crate) fn includes_oid(self) -> bool {
+    pub(crate) const fn includes_oid(self) -> bool {
         matches!(self, Self::High)
     }
 
-    pub(crate) fn includes_title(self) -> bool {
+    pub(crate) const fn includes_title(self) -> bool {
         matches!(self, Self::High)
     }
 }
@@ -73,7 +73,7 @@ pub(crate) enum Palette {
 }
 
 impl Palette {
-    pub(crate) fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Okabe => "okabe",
             Self::Tableau => "tableau",
@@ -88,7 +88,7 @@ impl Palette {
         }
     }
 
-    pub(crate) fn ansi_colours(self) -> &'static [u8] {
+    pub(crate) const fn ansi_colours(self) -> &'static [u8] {
         match self {
             Self::Okabe => &OKABE_PALETTE,
             Self::Tableau => &TABLEAU_PALETTE,
@@ -118,7 +118,7 @@ pub(crate) enum Layout {
 }
 
 impl Layout {
-    pub(crate) fn is_columns(self) -> bool {
+    pub(crate) const fn is_columns(self) -> bool {
         matches!(self, Self::Columns)
     }
 }

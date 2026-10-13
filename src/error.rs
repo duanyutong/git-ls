@@ -103,7 +103,7 @@ impl GitLsError {
         }
     }
 
-    pub(crate) fn ambiguous_main_revset(count: usize) -> Self {
+    pub(crate) const fn ambiguous_main_revset(count: usize) -> Self {
         Self::AmbiguousMainRevset { count }
     }
 

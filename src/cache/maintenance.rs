@@ -2,28 +2,18 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::{ENTRY_LIMIT, SLOTS, Store, regular};
+use super::policy::{
+    MaintenanceState as State, PASS_TIME, should_evict, within_reclamation_budget,
+};
+use super::{SLOTS, Store, regular};
 
 pub(crate) const PRIVATE_MODE: &str = "--internal-cache-maintenance";
 const STATE: &str = "maintenance-state.json";
 const REPORT: &str = "maintenance-report.json";
-const INTERVAL: u64 = 3600;
-const MAX_AGE: Duration = Duration::from_hours(168);
-const PASS_TIME: Duration = Duration::from_millis(100);
-const PASS_BYTES: u64 = 8 * ENTRY_LIMIT;
-
-#[derive(Default, Serialize, Deserialize)]
-struct State {
-    publications: u64,
-    last_attempt: u64,
-    #[serde(default)]
-    bytes_published: u64,
-}
-
 #[derive(Default, Serialize, Deserialize)]
 struct Report {
     completed_at: u64,
@@ -63,16 +53,14 @@ pub(crate) fn after_render(store: &Store, published: bool, disabled: bool, retai
         return;
     };
     let mut state: State = store.read(STATE, STATE).unwrap_or_default();
-    state.publications = state.publications.saturating_add(u64::from(published));
-    if published {
-        state.bytes_published = state.bytes_published.saturating_add(
-            fs::metadata(store.root.join(retain)).map_or(0, |metadata| metadata.len()),
-        );
-    }
+    let bytes = if published {
+        fs::metadata(store.root.join(retain)).map_or(0, |metadata| metadata.len())
+    } else {
+        0
+    };
+    state.record(published, bytes);
     let current = now();
-    if (state.publications < 16 && state.bytes_published < 4 * ENTRY_LIMIT)
-        || current.saturating_sub(state.last_attempt) < INTERVAL
-    {
+    if !state.due(current) {
         if published {
             store.publish_locked(&lock, STATE, STATE, &state);
         }
@@ -84,8 +72,7 @@ pub(crate) fn after_render(store: &Store, published: bool, disabled: bool, retai
     }
     // Reserving the attempt under the publication lock coalesces worktrees.
     // An abandoned reservation becomes eligible after the minimum interval.
-    state.last_attempt = current;
-    state.publications = 16;
+    state.reserve(current);
     if !store.publish_locked(&lock, STATE, STATE, &state) {
         crate::diagnostics::event(format_args!(
             "maintenance=deferred reason=reservation_failed"
@@ -162,6 +149,7 @@ pub(crate) fn run(root: &Path, retain: &str) {
     };
     let started = Instant::now();
     let mut report = Report::default();
+    let current = now();
     let mut entries = Vec::new();
     for slot in 0..SLOTS {
         if started.elapsed() >= PASS_TIME {
@@ -181,15 +169,15 @@ pub(crate) fn run(root: &Path, retain: &str) {
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (index, (modified, name, bytes)) in entries.into_iter().enumerate() {
         if started.elapsed() >= PASS_TIME
-            || report.bytes_reclaimed.saturating_add(bytes) > PASS_BYTES
+            || !within_reclamation_budget(report.bytes_reclaimed, bytes)
         {
             break;
         }
-        if name == retain {
-            continue;
-        }
-        let expired = modified.elapsed().is_ok_and(|age| age >= MAX_AGE);
-        if (expired || index >= 8 || bytes > ENTRY_LIMIT)
+        let modified = modified
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if should_evict(index, modified, bytes, name == retain, current)
             && fs::remove_file(store.root.join(name)).is_ok()
         {
             report.entries_removed += 1;
@@ -201,21 +189,14 @@ pub(crate) fn run(root: &Path, retain: &str) {
     report.duration_ms = started.elapsed().as_secs_f64() * 1000.0;
     report.completed_at = now();
     store.publish_locked(&lock, REPORT, REPORT, &report);
-    store.publish_locked(
-        &lock,
-        STATE,
-        STATE,
-        &State {
-            publications: 0,
-            last_attempt: report.completed_at,
-            bytes_published: 0,
-        },
-    );
+    store.publish_locked(&lock, STATE, STATE, &State::completed(report.completed_at));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::ENTRY_LIMIT;
+    use crate::cache::policy::PASS_BYTES;
 
     #[test]
     fn worker_obeys_locks_retention_and_byte_budget() {

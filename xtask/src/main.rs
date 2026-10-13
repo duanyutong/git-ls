@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+
 use clap::Parser;
 
 mod cli;
@@ -12,6 +14,9 @@ fn main() -> Result<()> {
     let cli = cli::Cli::parse();
 
     match cli.command {
+        cli::Commands::Version(cli::VersionCommand::Amend { args }) => {
+            version::amend(&args)?;
+        }
         cli::Commands::Version(cli::VersionCommand::CommitMsg { message_file }) => {
             version::commit_msg(std::path::Path::new(&message_file))?;
         }

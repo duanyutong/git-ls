@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use gix::bstr::ByteSlice as _;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{Facts, GitBackend, Inputs, Session};
-use crate::cache::Store;
+use crate::backend::{GitBackend, Inputs, Session};
+use crate::cache::{BackendSemantics, Facts, FactsKey, Store};
 use crate::cli::{Args, Backend, DEFAULT_REVSET, RuntimeOptions, Verbosity};
 use crate::error::Result;
 use crate::lanes::{ordered_lanes, plain_git_main_branch, sort_lane_groups};
@@ -63,7 +63,7 @@ fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, 
     }
     let repo = gix::discover_with_environment_overrides(directory).ok()?;
     let common = repo.common_dir().canonicalize().ok()?;
-    if repo.is_shallow()
+    if repo.is_shallow().ok()?
         || common.join("info/grafts").exists()
         || common.join("objects/info/alternates").exists()
     {
@@ -97,7 +97,7 @@ fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, 
         || "main".to_string(),
         |value| value.to_str_lossy().into_owned(),
     );
-    Some((common, format!("{:?}", repo.object_hash()), configured_main))
+    Some((common, repo.object_hash().to_string(), configured_main))
 }
 
 fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, String)> {
@@ -162,16 +162,19 @@ pub(super) fn execute_cached<W: Write>(
         &inputs.configured_main,
     )?;
     let backend = match args.backend {
-        Backend::Gix => "gix",
-        Backend::Shell => "shell",
+        Backend::Gix => BackendSemantics::Gix,
+        Backend::Shell => BackendSemantics::Shell,
     };
-    let facts_key = format!(
-        "analysis-1:{backend}:gix-0.88.0:{object_format}:{}",
-        common.display()
-    );
-    let key = format!("{facts_key}:{inputs:?}");
+    let compatibility = FactsKey::new(backend, &common, &object_format);
+    let Some((facts_key, key)) = compatibility.encode().zip(compatibility.snapshot(&inputs)) else {
+        crate::diagnostics::event(format_args!("cache=bypass reason=unrepresentable_key"));
+        return execute(args, git, stdout, environment);
+    };
     let name = Store::snapshot_name(&key);
-    let facts_name = format!("facts-{backend}.json");
+    let facts_name = match args.backend {
+        Backend::Gix => "facts-gix.json",
+        Backend::Shell => "facts-shell.json",
+    };
     let snapshot: Option<Snapshot> = if raw.refresh_cache {
         None
     } else {
@@ -199,7 +202,7 @@ pub(super) fn execute_cached<W: Write>(
         let facts: Facts = if raw.refresh_cache {
             Facts::default()
         } else {
-            store.read(&facts_name, &facts_key).unwrap_or_default()
+            store.read(facts_name, &facts_key).unwrap_or_default()
         };
         let session = Session::with_facts(git, inputs.clone(), facts);
         let mut complete = args.clone();
@@ -221,7 +224,7 @@ pub(super) fn execute_cached<W: Write>(
                 let _perf = crate::diagnostics::stage("cache_admission");
                 facts.compact(512);
             }
-            store.publish(&facts_name, &facts_key, &facts);
+            store.publish(facts_name, &facts_key, &facts);
             published = store.publish(
                 &name,
                 &key,

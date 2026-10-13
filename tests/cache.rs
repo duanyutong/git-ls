@@ -34,6 +34,19 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
             cold.contains("cache=miss") || cold.contains("cache=invalid"),
             "{cold}"
         );
+        let facts = repo
+            .path()
+            .join(".git/git-ls/cache/v1")
+            .join(format!("facts-{backend}.json"));
+        let entry: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(facts).expect("published facts"))
+                .expect("cache envelope");
+        let compatibility: serde_json::Value =
+            serde_json::from_str(entry["key"].as_str().expect("structured key"))
+                .expect("JSON compatibility key");
+        assert_eq!(compatibility["analysis"], "analysis-2");
+        assert_eq!(compatibility["backend"], backend);
+        assert_eq!(compatibility["object_format"], "sha1");
         for order in ["newest", "oldest"] {
             for verbosity in ["0", "1", "2"] {
                 for layout in ["inline", "columns"] {
@@ -116,6 +129,26 @@ fn corrupt_entries_refresh_clear_and_unsupported_graphs_are_safe() {
     std::fs::write(repo.path().join(".git/shallow"), format!("{boundary}\n")).expect("shallow");
     let (_, debug) = run(&repo, &[]);
     assert!(debug.contains("cache=bypass reason=unsupported_graph_or_store"));
+}
+
+#[test]
+fn malformed_shallow_metadata_cannot_reuse_cached_analysis() {
+    let repo = fixture();
+    run(&repo, &["--backend", "shell"]);
+    assert!(run(&repo, &["--backend", "shell"]).1.contains("cache=hit"));
+    std::fs::write(
+        repo.path().join(".git/shallow"),
+        "invalid shallow boundary\n",
+    )
+    .expect("malformed shallow metadata");
+    let output = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .args(["--backend", "shell", "--debug", "--color", "never"])
+        .assert()
+        .failure();
+    let diagnostics = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(!diagnostics.contains("cache=hit"), "{diagnostics}");
+    assert!(diagnostics.contains("shallow"), "{diagnostics}");
 }
 
 #[test]
@@ -231,13 +264,13 @@ fn maintenance_cannot_hold_output_pipes_open_and_reservations_coalesce() {
 }
 
 #[test]
-fn configuration_controls_cache_and_only_one_startup_query_is_needed() {
+fn configuration_controls_cache_with_git_boolean_conversion() {
     let repo = fixture();
     repo.git(&["config", "git-ls.cache", "false"]);
     let (_, debug) = run(&repo, &[]);
     assert!(debug.contains("cache=disabled"));
     assert!(
-        debug.contains("operation=subprocess_config parent=config calls=1"),
+        debug.contains("operation=subprocess_config parent=config calls=2"),
         "{debug}"
     );
     assert!(
@@ -254,7 +287,9 @@ fn configuration_controls_cache_and_only_one_startup_query_is_needed() {
     repo.command(assert_cmd::cargo::cargo_bin!("git-ls"))
         .assert()
         .failure()
-        .stderr(predicates::str::contains("invalid git config git-ls.cache"));
+        .stderr(predicates::str::contains(
+            "bad boolean config value 'invalid' for 'git-ls.cache'",
+        ));
 }
 
 #[test]
@@ -298,4 +333,68 @@ fn unavailable_cache_storage_does_not_prevent_rendering() {
     let (actual, debug) = run(&repo, &[]);
     assert!(debug.contains("cache=bypass reason=unavailable"));
     assert_eq!(actual, run(&repo, &["--no-cache"]).0);
+}
+
+#[test]
+fn git_boolean_forms_and_scope_precedence_control_cache() {
+    use std::io::Write;
+
+    let repo = fixture();
+    let included = repo.path().join("included-config");
+    std::fs::write(&included, "[git-ls]\ncache = off\n").unwrap();
+    let global = repo.path().join("user-config");
+    std::fs::write(
+        &global,
+        format!("[include]\npath = {}\n", included.display()),
+    )
+    .unwrap();
+    for (value, enabled) in [
+        ("YES", true),
+        ("on", true),
+        ("1k", true),
+        ("-2", true),
+        ("false", false),
+        ("OFF", false),
+        ("0", false),
+        ("", false),
+    ] {
+        repo.git(&["config", "GIT-LS.CACHE", value]);
+        let output = repo
+            .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .args(["--debug", "--no-cache-maintenance"])
+            .assert()
+            .success();
+        let debug = String::from_utf8_lossy(&output.get_output().stderr);
+        assert_eq!(
+            debug.contains("cache=disabled"),
+            !enabled,
+            "{value}: {debug}"
+        );
+    }
+    repo.git(&["config", "--unset", "git-ls.cache"]);
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(repo.path().join(".git/config"))
+        .unwrap();
+    writeln!(config, "[git-ls]\ncache").unwrap();
+    assert!(!run(&repo, &[]).1.contains("cache=disabled"));
+    let output = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "git-ls.cache")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .args(["--debug", "--no-cache-maintenance"])
+        .assert()
+        .success();
+    assert!(String::from_utf8_lossy(&output.get_output().stderr).contains("cache=disabled"));
+}
+
+#[test]
+fn default_configuration_still_uses_one_startup_query() {
+    let (_, debug) = run(&fixture(), &[]);
+    assert!(
+        debug.contains("operation=subprocess_config parent=config calls=1"),
+        "{debug}"
+    );
 }

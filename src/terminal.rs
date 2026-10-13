@@ -11,7 +11,7 @@ const TRUNCATION_TAIL: &str = "...";
 
 mod detect;
 
-fn truncation_tail(width: usize) -> &'static str {
+const fn truncation_tail(width: usize) -> &'static str {
     match width {
         0 => "",
         1 => ".",
@@ -40,15 +40,15 @@ impl RenderEnvironment {
         }
     }
 
-    pub(crate) fn now_timestamp(self) -> i64 {
+    pub(crate) const fn now_timestamp(self) -> i64 {
         self.now_timestamp
     }
 
-    fn terminal_width(self) -> Option<usize> {
+    const fn terminal_width(self) -> Option<usize> {
         self.terminal_width
     }
 
-    pub(crate) fn colour_enabled(self, mode: ColourMode) -> bool {
+    pub(crate) const fn colour_enabled(self, mode: ColourMode) -> bool {
         match mode {
             ColourMode::Auto => self.stdout_is_terminal,
             ColourMode::Always => true,

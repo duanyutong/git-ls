@@ -67,3 +67,30 @@ fn configuration_failure_has_a_partial_performance_report() {
     assert!(diagnostics.contains("invalid git config"));
     assert_eq!(result.get_output().stdout, Vec::<u8>::new());
 }
+
+#[test]
+fn analysis_failure_closes_observer_scopes_and_preserves_the_primary_error() {
+    let repo = TestRepo::new();
+    repo.commit("main");
+    repo.git(&["checkout", "-b", "topic"]);
+    let tip = repo.commit("topic");
+    let object = repo
+        .path()
+        .join(".git/objects")
+        .join(&tip[..2])
+        .join(&tip[2..]);
+    std::fs::remove_file(object).expect("remove disposable commit object");
+    let result = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .args(["--debug", "--no-cache", "--color", "never"])
+        .assert()
+        .failure();
+    let diagnostics = String::from_utf8_lossy(&result.get_output().stderr);
+    assert!(diagnostics.contains("stage=selection"), "{diagnostics}");
+    assert!(diagnostics.contains("stage=analysis"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("status=error observed_total_ms="),
+        "{diagnostics}"
+    );
+    assert_eq!(result.get_output().stdout, Vec::<u8>::new());
+}

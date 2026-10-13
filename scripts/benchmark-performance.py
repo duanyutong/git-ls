@@ -1,18 +1,19 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
 """Reproduce Git graph and cache benchmarks using disposable synthetic repositories.
 
 Example:
-  python3 scripts/benchmark-performance.py --candidate target/release/git-ls \
+  uv run scripts/benchmark-performance.py --candidate target/release/git-ls \
     --baseline /tmp/old-git-ls --directory /tmp/git-ls-bench --repeats 9
 
 Results retain every sample. Repositories and Git configuration are isolated;
 normal filesystem caches remain warm. Timing order is reproducibly shuffled.
 """
+
 import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+import pathlib
 import platform
 import random
 import statistics
@@ -21,14 +22,18 @@ import tempfile
 import time
 
 
-def git(repo, *args, data=None):
+def git(repo: pathlib.Path, *args: str, data: str | None = None) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args], input=data, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV, check=True,
+        ["git", "-C", str(repo), *args],
+        input=data,
+        text=True,
+        capture_output=True,
+        env=ENV,
+        check=True,
     ).stdout.strip()
 
 
-def fixture(directory, depth, branches, mode):
+def fixture(directory: pathlib.Path, depth: int, branches: int, mode: str) -> pathlib.Path:
     repo = directory / f"n{depth}-b{branches}-{mode}"
     if repo.exists():
         return repo
@@ -54,11 +59,15 @@ def fixture(directory, depth, branches, mode):
     return repo
 
 
-def measure(binary, repo, flags):
+def measure(
+    binary: pathlib.Path, repo: pathlib.Path, flags: list[str]
+) -> tuple[dict[str, float | None], str]:
     command = [str(binary), "--color", "never", "--layout", "inline", "--verbosity", "0", *flags]
     with tempfile.TemporaryFile() as diagnostics:
         started = time.perf_counter()
-        child = subprocess.Popen(command, cwd=repo, env=ENV, stdout=subprocess.DEVNULL, stderr=diagnostics)
+        child = subprocess.Popen(
+            command, cwd=repo, env=ENV, stdout=subprocess.DEVNULL, stderr=diagnostics
+        )
         if hasattr(os, "wait4"):
             _, status, usage = os.wait4(child.pid, 0)
             child.returncode = os.waitstatus_to_exitcode(status)
@@ -75,11 +84,11 @@ def measure(binary, repo, flags):
     return {"elapsed_ms": elapsed, "peak_rss_bytes": rss, "cpu_ms": cpu}, debug
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--baseline", type=Path)
-    parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--candidate", type=pathlib.Path, required=True)
+    parser.add_argument("--baseline", type=pathlib.Path)
+    parser.add_argument("--directory", type=pathlib.Path, required=True)
     parser.add_argument("--repeats", type=int, default=9)
     args = parser.parse_args()
     if args.repeats < 1:
@@ -98,9 +107,19 @@ def main():
         help_text = subprocess.check_output([str(baseline), "--help"], text=True)
         modes["baseline"] = (baseline, ["--no-cache"] if "--no-cache" in help_text else [])
     report = {"platform": platform.platform(), "repeats": args.repeats, "cases": []}
-    report["versions"] = {name: subprocess.check_output([str(binary), "--version"], text=True).strip() for name, (binary, _) in modes.items()}
-    report["binary_sha256"] = {name: hashlib.sha256(binary.read_bytes()).hexdigest() for name, (binary, _) in modes.items()}
-    for depth, branches, mode in [(10000, 1, "tip"), (10000, 32, "distributed"), (50000, 8, "distributed"), (10000, 128, "tip")]:
+    report["versions"] = {
+        name: subprocess.check_output([str(binary), "--version"], text=True).strip()
+        for name, (binary, _) in modes.items()
+    }
+    report["binary_sha256"] = {
+        name: hashlib.sha256(binary.read_bytes()).hexdigest() for name, (binary, _) in modes.items()
+    }
+    for depth, branches, mode in [
+        (10000, 1, "tip"),
+        (10000, 32, "distributed"),
+        (50000, 8, "distributed"),
+        (10000, 128, "tip"),
+    ]:
         repo = fixture(args.directory, depth, branches, mode)
         samples = {name: [] for name in modes}
         for binary, flags in modes.values():
@@ -112,12 +131,25 @@ def main():
                 binary, flags = modes[name]
                 sample, _ = measure(binary, repo, flags)
                 samples[name].append(sample)
-        result = {"fixture": repo.name, "modes": {name: {"median_ms": statistics.median(sample["elapsed_ms"] for sample in values), "samples": values} for name, values in samples.items()}}
+        result = {
+            "fixture": repo.name,
+            "modes": {
+                name: {
+                    "median_ms": statistics.median(sample["elapsed_ms"] for sample in values),
+                    "samples": values,
+                }
+                for name, values in samples.items()
+            },
+        }
         _, debug = measure(candidate, repo, ["--no-cache", "--debug"])
         (args.directory / f"{repo.name}.debug.txt").write_text(debug)
         report["cases"].append(result)
         (args.directory / "results.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(repo.name, {name: round(value["median_ms"], 3) for name, value in result["modes"].items()}, flush=True)
+        print(
+            repo.name,
+            {name: round(value["median_ms"], 3) for name, value in result["modes"].items()},
+            flush=True,
+        )
 
 
 ENV = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}

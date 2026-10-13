@@ -11,6 +11,9 @@ use super::parse_args_from;
 
 /// Executes the command-line entry point with process arguments and detected
 /// terminal capabilities.
+///
+/// # Errors
+/// Returns an error if arguments or configuration are invalid, repository analysis fails, or output cannot be written.
 pub fn run_from_env() -> Result<()> {
     if env::args_os().nth(1).as_deref()
         == Some(std::ffi::OsStr::new(

@@ -63,7 +63,11 @@ pub(super) struct LaneRenderLayout {
 }
 
 impl LaneRenderLayout {
-    pub(super) fn new(lane_count: usize, lane_field_width: usize, colour_offset: usize) -> Self {
+    pub(super) const fn new(
+        lane_count: usize,
+        lane_field_width: usize,
+        colour_offset: usize,
+    ) -> Self {
         Self {
             lane_count,
             lane_field_width,
@@ -71,11 +75,11 @@ impl LaneRenderLayout {
         }
     }
 
-    pub(super) fn empty() -> Self {
+    pub(super) const fn empty() -> Self {
         Self::new(0, 0, 0)
     }
 
-    pub(super) fn lane_padding(self) -> usize {
+    pub(super) const fn lane_padding(self) -> usize {
         self.lane_field_width.saturating_sub(self.lane_count)
     }
 }
@@ -89,7 +93,7 @@ pub(super) enum MainSpine {
 }
 
 impl MainSpine {
-    pub(super) fn is_connected(self) -> bool {
+    pub(super) const fn is_connected(self) -> bool {
         matches!(self, Self::Future | Self::FutureLine | Self::Connected)
     }
 }

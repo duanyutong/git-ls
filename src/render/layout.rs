@@ -67,7 +67,7 @@ pub(super) fn render_group(
 
 /// The trailing branch-only row of a `Future` group collapses its spine to a
 /// dotted continuation; every other row keeps the group's spine state.
-fn row_main_spine(main_spine: MainSpine, rendered: usize, total: usize) -> MainSpine {
+const fn row_main_spine(main_spine: MainSpine, rendered: usize, total: usize) -> MainSpine {
     if matches!(main_spine, MainSpine::Future) && rendered == total {
         MainSpine::FutureLine
     } else {
