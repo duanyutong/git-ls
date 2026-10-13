@@ -1,0 +1,79 @@
+# Complete coverage applies to execution by the declared unit suites alone.
+[application]
+package = "git-ls"
+source_root = "src"
+minimum_lines = 95
+target = ["--lib", "--all-features"]
+test_filter = ""
+test_skip = ["::repositories::"]
+unit = [
+  "src/app.rs",
+  "src/backend/batch.rs",
+  "src/backend/graph.rs",
+  "src/backend/metadata.rs",
+  "src/backend/session.rs",
+  "src/backend/shell.rs",
+  "src/backend/traits.rs",
+  "src/cache/compatibility.rs",
+  "src/cache/facts.rs",
+  "src/cache/policy.rs",
+  "src/cli/config.rs",
+  "src/cli/runtime.rs",
+  "src/cli/values.rs",
+  "src/diagnostics.rs",
+  "src/error.rs",
+  "src/lanes/construction.rs",
+  "src/lanes/grouping.rs",
+  "src/lanes/observer.rs",
+  "src/lanes/selection.rs",
+  "src/model.rs",
+  "src/render/branch.rs",
+  "src/render/colours.rs",
+  "src/render/context.rs",
+  "src/render/graph.rs",
+  "src/render/layout.rs",
+  "src/render/line.rs",
+  "src/render/metadata.rs",
+  "src/render/orphan.rs",
+  "src/render/rewrite.rs",
+  "src/render/trunk.rs",
+  "src/terminal.rs",
+]
+mixed = [
+  "src/app/cached.rs",
+  "src/cache.rs",
+  "src/cache/maintenance.rs",
+]
+boundary = [
+  "src/app/env.rs",
+  "src/backend/gix.rs",
+  "src/backend/gix/graph.rs",
+  "src/backend/process.rs",
+  "src/main.rs",
+  "src/terminal/detect.rs",
+]
+declarations = [
+  "src/backend/mod.rs",
+  "src/cli.rs",
+  "src/cli/defaults.rs",
+  "src/lanes.rs",
+  "src/lib.rs",
+  "src/render.rs",
+]
+generated = [
+  "src/cli/args.rs",
+]
+
+[versioning]
+package = "xtask"
+source_root = "xtask/src"
+minimum_lines = 95
+target = ["--bin", "xtask"]
+test_filter = ""
+test_skip = []
+unit = ["xtask/src/manifest.rs", "xtask/src/policy.rs"]
+mixed = ["xtask/src/git.rs", "xtask/src/version.rs"]
+boundary = ["xtask/src/main.rs"]
+declarations = []
+# Clap derives the parser; this schema has no executable production coverage entry.
+generated = ["xtask/src/cli.rs"]

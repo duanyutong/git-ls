@@ -179,11 +179,9 @@ pub(super) fn build_branch_point(
         None
     };
 
-    Ok(BranchPoint::new(
-        point.oid.clone(),
-        point.names.clone(),
-        annotation,
-    ))
+    let mut result = BranchPoint::new(point.oid.clone(), point.names.clone(), annotation);
+    result.commit_count = branch_point.commit_count;
+    Ok(result)
 }
 
 #[derive(Clone, Copy)]

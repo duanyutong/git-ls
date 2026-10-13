@@ -6,8 +6,10 @@ exclude = "^(LICENSE|THIRD_PARTY_NOTICES.md|tests/fixtures/)"
 [[repos]]
 repo = "builtin"
 hooks = [
-  { id = "trailing-whitespace", priority = 0 },
-  { id = "end-of-file-fixer", priority = 1 },
+  { id = "trailing-whitespace", stages = ["pre-commit"], priority = 0 },
+  { id = "end-of-file-fixer", stages = ["pre-commit"], priority = 1 },
+  { id = "trailing-whitespace", name = "Check trailing whitespace", args = ["--check"], stages = ["pre-push"], priority = 0 },
+  { id = "end-of-file-fixer", name = "Check end of files", args = ["--check"], stages = ["pre-push"], priority = 1 },
   { id = "check-merge-conflict", priority = 2 },
   { id = "check-added-large-files", priority = 2 },
   { id = "check-yaml", priority = 2 },
@@ -149,8 +151,8 @@ always_run = true
 id = "coverage-unit"
 name = "Unit coverage"
 language = "rust"
-additional_dependencies = ["cli:cargo-llvm-cov:0.9.1", "cli:git-branchless:0.11.1"]
-entry = "uv run scripts/measure.py unit-coverage just coverage-unit-baseline"
+additional_dependencies = ["cli:cargo-llvm-cov:0.9.1"]
+entry = "uv run scripts/measure.py unit-coverage uv run scripts/unit_coverage.py"
 stages = ["manual"]
 pass_filenames = false
 always_run = true
@@ -160,7 +162,7 @@ id = "coverage-versioning"
 name = "Versioning package coverage"
 language = "rust"
 additional_dependencies = ["cli:cargo-llvm-cov:0.9.1"]
-entry = "just coverage-versioning-baseline"
+entry = "uv run scripts/package_coverage.py versioning"
 stages = ["manual"]
 pass_filenames = false
 always_run = true
@@ -170,7 +172,7 @@ id = "coverage-application"
 name = "Application package coverage"
 language = "rust"
 additional_dependencies = ["cli:cargo-llvm-cov:0.9.1", "cli:git-branchless:0.11.1"]
-entry = "uv run scripts/measure.py coverage just coverage-package-baseline"
+entry = "uv run scripts/measure.py coverage uv run scripts/package_coverage.py application"
 stages = ["manual"]
 pass_filenames = false
 always_run = true
@@ -192,12 +194,3 @@ stages = ["pre-push"]
 pass_filenames = false
 always_run = true
 priority = 0
-
-[[repos.hooks]]
-id = "pre-push-check"
-name = "Validation before push"
-language = "system"
-entry = "just check"
-stages = ["pre-push"]
-pass_filenames = false
-always_run = true

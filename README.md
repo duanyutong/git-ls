@@ -39,4 +39,3 @@ Example `~/.gitconfig` section:
 
 Option definitions and precedence are documented in [configuration](docs/configuration.md).
 Development instructions appear in [development](docs/development.md).
-The project is licensed under [AGPL-3.0-only](LICENSE).

@@ -59,11 +59,15 @@ The default ordinary selector stores disposable analysis at `<git-common-dir>/gi
 Linked worktrees share graph facts whilst current-branch and detached-HEAD markers remain live.
 No tracked files or global service are required.
 
-An exact snapshot contains neutral lane topology and raw metadata.
+An exact snapshot contains neutral lane topology, commit counts and head timestamps.
+Branch commit counts remain available independently of optional annotations.
+Commit subjects and branch annotations are hydrated separately as required by the rendered output, so oversized subjects do not invalidate topology admission.
 Its key covers backend and analysis compatibility, object format, canonical repository location, configured main selection, and the sorted mapping of full local reference names to full object IDs.
 Ordering, layout, verbosity, colours, relative ages, and worktree markers are applied afresh.
 Successful directional merge-base, distance, and metadata facts survive snapshot invalidation when their object-ID dependencies remain valid.
 Each category retains up to 512 recently used entries at publication, allowing ordinary editing sequences to retain useful work.
+An exact encoded-entry byte check additionally reduces metadata before graph facts until admission succeeds or the available facts are exhausted.
+Every rejected publication identifies its entry and admission limit in debug output.
 
 Inputs are frozen for analysis and checked again before publication.
 Main configuration is independently re-read because the native repository handle retains its initial configuration snapshot.
@@ -76,7 +80,8 @@ Publication is atomic and uses non-blocking locks.
 Slot collisions, corrupt or incompatible entries, oversized results, contention, and unavailable storage cause a miss or skipped publication rather than command failure.
 
 Persistent reuse bypasses custom or hidden branchless selections, shallow history, replacement refs, grafts, alternate stores, promisor or partial-clone configurations, and unsupported graph-related environment overrides.
-These cases retain their existing backend behaviour and the applicable uncached optimisations.
+These cases retain the applicable uncached optimisations.
+Replacement refs, grafts and their environment overrides select Git subprocess graph semantics when the native backend is requested; debug output records this delegation.
 Repacking alone does not invalidate logical analysis.
 Persistent branchless state and parent-object indexing were assessed but excluded: the former lacks a sufficient ref-only validity key, and the latter was not justified by the residual profile.
 
@@ -212,5 +217,6 @@ No monotonic speedup guarantee is made.
 
 Per-lane ordering walks and ambiguous merge-base searches remain exact backend operations.
 Large general DAGs can still require substantial work and graph storage.
-Existing library commit-graph acceleration and the 4 MiB object cache are retained; there is no automatic Git maintenance, backend switching, or graph-analysis parallelism.
+Existing library commit-graph acceleration and the 4 MiB object cache are retained; there is no automatic Git maintenance or graph-analysis parallelism.
+Backend delegation occurs only where altered graph interpretation requires Git semantics.
 The measured reductions in repeated work do not justify those additional mechanisms at present.

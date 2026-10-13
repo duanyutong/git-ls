@@ -26,9 +26,11 @@ By default, ordinary `draft()` selections reuse analysis stored in `<git-common-
 In a conventional checkout, this is `.git/git-ls/cache/v1/`; linked worktrees share the common repository cache.
 The cache is disposable and is never committed.
 
-An unchanged reference snapshot reuses neutral topology and commit metadata.
+An unchanged reference snapshot reuses neutral topology, whilst optional commit metadata is obtained separately for the requested verbosity.
 Changed branches invalidate that snapshot, whilst successful merge-base, main-distance, and metadata results remain reusable under their full object-ID keys.
 At publication, each fact category retains up to 512 recently used entries.
+Byte admission reduces optional metadata before graph facts, preserving reusable topology independently of oversized commit subjects.
+Snapshot construction does not increase the requested verbosity.
 Branch names and the resolved main configuration participate in validation.
 Worktree markers, ages, ordering, verbosity, layout, and colour are applied afresh.
 
@@ -47,6 +49,8 @@ Configuration or references which change during computation prevent publication.
 
 Persistent reuse is bypassed for branchless selections, hidden selections, shallow repositories, replacements, grafts, alternate object stores, partial clones, and unsupported graph-related environment overrides.
 These modes continue to use the optimised uncached algorithms.
+When replacement refs, grafts or their environment overrides are present, native selection delegates to the Git subprocess backend to preserve Git's graph interpretation.
+Debug output identifies the effective backend.
 The native backend retains at most 65,536 application parent records per invocation; this limit is separate from Git's or gix's internal object caches.
 
 ## Deferred cache maintenance
@@ -60,10 +64,12 @@ The short-lived worker has null standard streams and a separate process group; o
 It acquires non-blocking locks, examines at most 32 snapshot slots, and applies a 100 ms cooperative time budget and an 8 MiB reclamation budget.
 Filesystem calls themselves cannot be interrupted by that time budget.
 It preferentially retains eight recent snapshots and the triggering snapshot; entries older than seven days are eligible for removal.
+Retained entries do not consume the reclamation budget, and oversized entries cannot block eligible smaller entries.
+Deferred reclamation remains eligible after the minimum interval without requiring additional publications.
 Reusable fact files remain bounded independently.
 This mechanism never runs `git gc`, traverses repository history, or accesses the network.
 
-`--debug` distinguishes a scheduled attempt from the previous worker's completed report.
+`--debug` distinguishes a scheduled attempt from the previous worker's report, including whether reclamation remains pending.
 Failed spawning, contention, interruption, or disabled maintenance leaves the foreground result valid.
 The fixed-slot storage limit remains effective in all these cases; maintenance adds only bounded state and report records.
 

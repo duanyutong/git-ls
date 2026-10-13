@@ -23,6 +23,38 @@ No Rust source or acceptance threshold has been changed for this migration.
 Evidence resides in `.validation/uv-setup.log`, `.validation/uv-setup-repeat.log`, `.validation/uv-fmt.log`, `.validation/uv-config-check.log`, `.validation/uv-check.log`, `.validation/uv-coverage.log`, `.validation/uv-coverage-serial.log` and `.validation/uv-coverage-retry.log`.
 CI installs the pinned uv release through the official setup action; hosted Linux and macOS execution remains unverified locally.
 
+## Graph and cache boundary remediation: 13 October 2026
+
+Version 0.13.4 has been validated on macOS arm64 with Rust 1.99.0 and Python 3.15.0.
+The five confirmed follow-up findings have been addressed whilst preserving the shared coverage policy and separated test implementation files.
+Disposable-repository regressions cover colliding tag and branch names, symbolic local aliases, replacement and graft parentage, invalid argument encoding, oversized metadata and topology, and bounded maintenance progression.
+Exact topology reuse remains available independently of optional metadata admission, and unchanged warm hits omit cache revalidation and publication.
+The analysis compatibility identifier is `analysis-3`; earlier graph snapshots and facts are not reused across this semantic change.
+
+`just check` passes with 270 application tests, 41 versioning tests, eight collector regression tests, separate doctests and production release compilation.
+The application unit suite executes 218 in-memory tests; 22 repository-backed internal tests remain in ordinary and package acceptance.
+All 3,011 lines, 4,534 regions and 351 functions in its 31 declared unit modules are covered independently.
+Application package coverage is 4,011 of 4,082 lines, or 98.26%.
+Versioning package coverage remains 382 of 390 lines, or 97.95%; its two unit modules retain complete coverage of 107 lines, 166 regions and 15 functions.
+`just coverage` passes without changing thresholds or source classifications.
+The follow-up plan and acceptance logs reside in `.agents/plans/follow-up-issues.md` and its adjacent evidence directory.
+Linux and other platform-specific execution remain obligations of the corresponding CI jobs.
+
+## Shared coverage policy: 13 October 2026
+
+Both repositories now use the same explicit manifest schema, collectors and collector regression checks.
+Every production source under the declared roots is classified exactly once, with a 95% package line minimum and complete independent coverage of declared unit sources.
+The application unit run executes 217 tests using values and in-memory doubles; 21 repository-backed internal tests remain in ordinary and package acceptance.
+Existing assertions have been retained, while test implementations and test-only helpers have been removed from production report entries.
+The application unit boundary comprises 31 modules and covers all 2,982 lines, 4,474 regions and 348 functions.
+Application package coverage is 3,903 of 3,968 lines, or 98.36%.
+Versioning package coverage is 382 of 390 lines, or 97.95%; its two unit modules cover all 107 lines, 166 regions and 15 functions from 27 in-memory tests.
+The eight collector regression tests, `just check` and `just coverage` pass on macOS arm64.
+The coverage reports exclude test implementations and use integer acceptance counts rather than rounded display percentages.
+The preceding package figures are therefore not directly comparable with historical reports which included inline test code.
+JSON and HTML evidence resides under `coverage/`; execution logs reside in `.validation/coverage-consistency-*.log`.
+Linux and other platform-specific execution remain obligations of the corresponding CI jobs.
+
 ## Dependency and tooling audit
 
 Version 0.13.3 has been validated on macOS arm64 with Rust 1.99.0 and Python 3.15.0.

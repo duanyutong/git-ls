@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -5,7 +6,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(git_ls::GitLsError::Cli(error)) => error.exit(),
         Err(error) => {
-            eprintln!("git ls: {error}");
+            let _ = writeln!(std::io::stderr().lock(), "git ls: {error}");
             ExitCode::FAILURE
         }
     }

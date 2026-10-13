@@ -3,8 +3,6 @@ use crate::backend::{GitBackend, get_commit_meta};
 use crate::cli::Order;
 use crate::error::Result;
 use crate::model::{CommitMeta, Lane, LaneGroup};
-#[cfg(test)]
-use std::cmp::Ordering;
 use std::collections::HashMap;
 pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
     lanes.sort_by(|lhs, rhs| {
@@ -107,11 +105,6 @@ pub(super) fn lane_group_key(group: &LaneGroup, order: Order) -> (bool, usize, i
         },
         group.base_oid.clone().unwrap_or_default(),
     )
-}
-
-#[cfg(test)]
-pub(super) fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
-    lane_group_key(lhs, order).cmp(&lane_group_key(rhs, order))
 }
 
 pub(super) fn lane_group_timestamp(lanes: &[Lane], order: Order) -> i64 {

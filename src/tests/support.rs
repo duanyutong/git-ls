@@ -1,3 +1,4 @@
+use crate::model::BranchPoint;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -173,4 +174,23 @@ pub(crate) fn reference_distances(
             Ok((base.clone(), distance))
         })
         .collect()
+}
+
+impl crate::model::Lane {
+    pub(crate) fn new(
+        head_oid: impl Into<String>,
+        base_oid: Option<String>,
+        branch_points: Vec<BranchPoint>,
+        head_timestamp: i64,
+        contains_current: bool,
+    ) -> Self {
+        Self::new_with_rewritten_commits(
+            head_oid,
+            base_oid,
+            branch_points,
+            Vec::new(),
+            head_timestamp,
+            contains_current,
+        )
+    }
 }

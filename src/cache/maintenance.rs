@@ -21,6 +21,8 @@ struct Report {
     entries_examined: usize,
     entries_removed: usize,
     bytes_reclaimed: u64,
+    #[serde(default)]
+    pending: bool,
 }
 
 fn now() -> u64 {
@@ -40,12 +42,13 @@ pub(crate) fn after_render(store: &Store, published: bool, disabled: bool, retai
         && let Some(report) = store.read::<Report>(REPORT, REPORT)
     {
         crate::diagnostics::event(format_args!(
-            "maintenance_previous completed_at={} duration_ms={:.3} entries_examined={} entries_removed={} bytes_reclaimed={}",
+            "maintenance_previous completed_at={} duration_ms={:.3} entries_examined={} entries_removed={} bytes_reclaimed={} pending={}",
             report.completed_at,
             report.duration_ms,
             report.entries_examined,
             report.entries_removed,
-            report.bytes_reclaimed
+            report.bytes_reclaimed,
+            report.pending
         ));
     }
     let Some(lock) = store.lock("publication.lock") else {
@@ -153,6 +156,7 @@ pub(crate) fn run(root: &Path, retain: &str) {
     let mut entries = Vec::new();
     for slot in 0..SLOTS {
         if started.elapsed() >= PASS_TIME {
+            report.pending = true;
             break;
         }
         let name = format!("snapshot-{slot:02}.json");
@@ -168,20 +172,24 @@ pub(crate) fn run(root: &Path, retain: &str) {
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (index, (modified, name, bytes)) in entries.into_iter().enumerate() {
-        if started.elapsed() >= PASS_TIME
-            || !within_reclamation_budget(report.bytes_reclaimed, bytes)
-        {
-            break;
-        }
         let modified = modified
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        if should_evict(index, modified, bytes, name == retain, current)
-            && fs::remove_file(store.root.join(name)).is_ok()
+        if !should_evict(index, modified, bytes, name == retain, current) {
+            continue;
+        }
+        if started.elapsed() >= PASS_TIME
+            || !within_reclamation_budget(report.bytes_reclaimed, bytes)
         {
+            report.pending = true;
+            continue;
+        }
+        if fs::remove_file(store.root.join(name)).is_ok() {
             report.entries_removed += 1;
             report.bytes_reclaimed += bytes;
+        } else {
+            report.pending = true;
         }
     }
     // No publisher can be active while this lock is held.
@@ -189,96 +197,14 @@ pub(crate) fn run(root: &Path, retain: &str) {
     report.duration_ms = started.elapsed().as_secs_f64() * 1000.0;
     report.completed_at = now();
     store.publish_locked(&lock, REPORT, REPORT, &report);
-    store.publish_locked(&lock, STATE, STATE, &State::completed(report.completed_at));
+    store.publish_locked(
+        &lock,
+        STATE,
+        STATE,
+        &State::completed(report.completed_at, report.pending),
+    );
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cache::ENTRY_LIMIT;
-    use crate::cache::policy::PASS_BYTES;
-
-    #[test]
-    fn worker_obeys_locks_retention_and_byte_budget() {
-        let common = tempfile::tempdir().unwrap();
-        let store = Store::open(common.path()).unwrap();
-        for slot in 0..SLOTS {
-            assert!(store.publish(&format!("snapshot-{slot:02}.json"), "key", &slot));
-        }
-        let lock = store.lock("maintenance.lock").unwrap();
-        run(&store.root, "snapshot-00.json");
-        assert!(store.read::<Report>(REPORT, REPORT).is_none());
-        drop(lock);
-        run(&store.root, "snapshot-00.json");
-        let report: Report = store.read(REPORT, REPORT).unwrap();
-        assert_eq!(report.entries_examined, 32);
-        assert!(report.entries_removed >= 23);
-        assert!(report.bytes_reclaimed <= PASS_BYTES);
-        assert!(store.root.join("snapshot-00.json").exists());
-        let state: State = store.read(STATE, STATE).unwrap();
-        assert_eq!(state.publications, 0);
-        assert!(state.last_attempt > 0);
-        run(common.path(), "");
-    }
-
-    #[test]
-    fn large_cache_eviction_is_bounded_and_never_removes_the_active_publication() {
-        let common = tempfile::tempdir().unwrap();
-        let store = Store::open(common.path()).unwrap();
-        for slot in 0..SLOTS {
-            let path = store.root.join(format!("snapshot-{slot:02}.json"));
-            fs::write(&path, vec![b'x'; usize::try_from(ENTRY_LIMIT).unwrap()]).unwrap();
-            fs::File::open(path)
-                .unwrap()
-                .set_modified(UNIX_EPOCH)
-                .unwrap();
-        }
-        let temporary = store.root.join("publication.tmp");
-        fs::write(&temporary, "in progress").unwrap();
-        let lock = store.lock("publication.lock").unwrap();
-        run(&store.root, "snapshot-00.json");
-        assert!(temporary.exists());
-        assert!(store.read::<Report>(REPORT, REPORT).is_none());
-        drop(lock);
-        run(&store.root, "snapshot-00.json");
-        let report: Report = store.read(REPORT, REPORT).unwrap();
-        assert!(report.entries_removed <= 8);
-        assert!(report.bytes_reclaimed <= PASS_BYTES);
-        assert!(store.root.join("snapshot-00.json").exists());
-        assert!(!temporary.exists());
-        // Another pass can make progress after an interrupted or budgeted pass.
-        run(&store.root, "snapshot-00.json");
-        assert!(store.root.join("snapshot-00.json").exists());
-        assert!(
-            store
-                .read::<Report>(REPORT, REPORT)
-                .unwrap()
-                .bytes_reclaimed
-                <= PASS_BYTES
-        );
-    }
-
-    #[test]
-    fn scheduling_is_disabled_or_coalesced_without_waiting() {
-        let common = tempfile::tempdir().unwrap();
-        let store = Store::open(common.path()).unwrap();
-        after_render(&store, true, true, "");
-        assert!(store.read::<State>(STATE, STATE).is_none());
-        let lock = store.lock("publication.lock").unwrap();
-        after_render(&store, true, false, "");
-        drop(lock);
-        after_render(&store, true, false, "");
-        assert_eq!(store.read::<State>(STATE, STATE).unwrap().publications, 1);
-        store.publish(
-            STATE,
-            STATE,
-            &State {
-                publications: 100,
-                last_attempt: now(),
-                bytes_published: 0,
-            },
-        );
-        after_render(&store, false, false, "");
-        assert_eq!(store.read::<State>(STATE, STATE).unwrap().publications, 100);
-    }
-}
+#[path = "tests/maintenance.rs"]
+mod repositories;

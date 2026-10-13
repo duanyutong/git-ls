@@ -1,3 +1,6 @@
+use crate::backend::GitCommand;
+use crate::cli::read_git_ls_config;
+
 use clap::error::ErrorKind;
 use std::collections::HashMap;
 
@@ -118,14 +121,14 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "feature-oid\nfeature",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main\nfeature-oid\x00feature",
@@ -171,13 +174,13 @@ fn empty_selection_git(timestamp: i64) -> MockGit {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main",
         )
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "main-oid\nmain",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
@@ -412,13 +415,13 @@ fn builds_render_plan_for_empty_selection_without_output_writer() {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main",
         )
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "main-oid\nmain",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
@@ -453,13 +456,13 @@ fn build_render_plan_uses_plain_git_for_default_selection() {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main\nbase\x00feature/base\ntip\x00feature/tip",
         )
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "tip\nfeature/tip",
         )
         .with(&["rev-list", "--stdin"], "base\ntip")
@@ -656,7 +659,7 @@ fn build_render_plan_propagates_lane_selection_errors() {
         error.to_string(),
         missing_mock_response(&[
             "for-each-ref",
-            "--format=%(objectname)%00%(refname:short)",
+            "--format=%(objectname)%00%(refname:lstrip=2)",
             "refs/heads"
         ])
     );
@@ -675,7 +678,7 @@ fn execute_propagates_plan_errors_before_writing() {
         error.to_string(),
         missing_mock_response(&[
             "for-each-ref",
-            "--format=%(objectname)%00%(refname:short)",
+            "--format=%(objectname)%00%(refname:lstrip=2)",
             "refs/heads"
         ])
     );
@@ -692,14 +695,14 @@ fn build_render_plan_propagates_empty_selection_main_metadata_errors() {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "main-oid\nmain",
         );
     let args = runtime_options("draft()", Verbosity::Medium);
@@ -718,14 +721,14 @@ fn build_render_plan_propagates_populated_group_metadata_errors() {
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "feature-oid\nfeature",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "feature-oid\x00feature",
@@ -767,14 +770,14 @@ fn build_render_plan_propagates_populated_main_metadata_errors() {
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "feature-oid\nfeature",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "feature-oid\x00feature",
@@ -848,13 +851,13 @@ fn run_passes_hidden_selection_to_branchless_queries() {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main",
         )
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "main-oid\nmain",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
@@ -896,13 +899,13 @@ fn run_renders_empty_selection_as_trunk() {
         .with(
             &[
                 "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
+                "--format=%(objectname)%00%(refname:lstrip=2)",
                 "refs/heads",
             ],
             "main-oid\x00main",
         )
         .with(
-            &["rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
+            &["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"],
             "main-oid\nmain",
         )
         .with(&["config", "--get", "branchless.core.mainBranch"], "")
@@ -948,7 +951,7 @@ fn run_renders_empty_selection_as_trunk() {
             owned_args(&["config", "--get", "git-ls.cachemaintenance"]),
             vec![
                 "for-each-ref".to_string(),
-                "--format=%(objectname)%00%(refname:short)".to_string(),
+                "--format=%(objectname)%00%(refname:lstrip=2)".to_string(),
                 "refs/heads".to_string()
             ],
             vec![
@@ -959,7 +962,7 @@ fn run_renders_empty_selection_as_trunk() {
             vec![
                 "rev-parse".to_string(),
                 "HEAD".to_string(),
-                "--abbrev-ref".to_string(),
+                "--symbolic-full-name".to_string(),
                 "HEAD".to_string()
             ],
             vec![
@@ -1001,4 +1004,22 @@ fn analysis_rejects_successful_metadata_queries_without_required_records() {
         omitted: "main-oid",
     };
     assert!(build_analysis(&runtime_options("draft()", Verbosity::High), &git).is_err());
+}
+
+fn run<I, S, W, G>(args: I, git: &G, stdout: &mut W) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    W: Write,
+    G: GitBackend + GitCommand,
+{
+    let args = parse_args_from(args)?;
+    let config = read_git_ls_config(git)?;
+    let args = args.resolve(&config);
+    execute(
+        &args,
+        git,
+        stdout,
+        RenderEnvironment::new(crate::test_support::TEST_NOW, None, false),
+    )
 }

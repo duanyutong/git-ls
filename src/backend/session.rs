@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use super::{
@@ -18,6 +18,7 @@ pub(crate) struct Session<'a> {
     facts: RefCell<Facts>,
     inputs: Option<Inputs>,
     limit: usize,
+    new_facts: Cell<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -46,10 +47,15 @@ impl<'a> Session<'a> {
             inner,
             inputs: Some(inputs),
             limit: QUERY_LIMIT,
+            new_facts: Cell::new(false),
             facts: RefCell::new(facts),
             rewrites: RefCell::default(),
         }
     }
+    pub(crate) const fn has_new_facts(&self) -> bool {
+        self.new_facts.get()
+    }
+
     pub(crate) fn into_facts(self) -> Facts {
         self.facts.into_inner()
     }
@@ -61,6 +67,7 @@ impl<'a> Session<'a> {
             facts: RefCell::default(),
             inputs: None,
             limit: QUERY_LIMIT,
+            new_facts: Cell::new(false),
         }
     }
 }
@@ -114,6 +121,9 @@ impl CommitMetadataBackend for Session<'_> {
             if facts.metadata.len() < self.limit
                 && let Some(meta) = cache.get(*oid)
             {
+                if !facts.metadata.contains_key(*oid) {
+                    self.new_facts.set(true);
+                }
                 facts.metadata.insert((*oid).to_string(), meta.clone());
                 if self.inputs.is_some() {
                     facts.touch(oid);
@@ -160,6 +170,7 @@ impl AncestryBackend for Session<'_> {
                 facts.touch(&key);
             }
             facts.bases.insert(key, result.clone());
+            self.new_facts.set(true);
         }
         Ok(result)
     }
@@ -203,6 +214,7 @@ impl AncestryBackend for Session<'_> {
                         facts.touch(&key);
                     }
                     facts.distances.insert(key, *distance);
+                    self.new_facts.set(true);
                 }
             }
             result.extend(computed);
@@ -212,196 +224,9 @@ impl AncestryBackend for Session<'_> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::MockGit;
-
-    #[test]
-    fn memoises_unchanged_empty_and_ambiguous_rewrites() {
-        for result in ["oid", "", "a\nb"] {
-            let git = MockGit::default().with(
-                &["branchless", "query", "-r", "--hidden", "current(oid)"],
-                result,
-            );
-            let session = Session::new(&git);
-            let first = session.query_revset("current(oid)", true).unwrap();
-            assert_eq!(first, session.query_revset("current(oid)", true).unwrap());
-            assert_eq!(git.calls().len(), 1);
-        }
-    }
-}
+#[path = "tests/session.rs"]
+mod tests;
 
 #[cfg(test)]
-mod reuse_tests {
-    use super::*;
-    use crate::backend::GitCommand;
-    use crate::error::GitLsError;
-    use crate::test_support::MockGit;
-
-    struct Failure;
-    impl GitCommand for Failure {
-        fn run(&self, _args: &[&str], _allow_failure: bool) -> Result<String> {
-            Err(GitLsError::TestFixture("failed read".to_string()))
-        }
-    }
-
-    fn inputs() -> Inputs {
-        Inputs {
-            branches: std::collections::BTreeMap::from([(
-                "main".to_string(),
-                vec!["trunk".to_string()],
-            )]),
-            configured_main: "trunk".to_string(),
-        }
-    }
-
-    #[test]
-    fn frozen_inputs_and_successful_facts_survive_a_new_session() {
-        let git = MockGit::default()
-            .with(
-                &[
-                    "for-each-ref",
-                    "--format=%(objectname)%00%(refname:short)",
-                    "refs/heads",
-                ],
-                "main\0z\nmain\0a",
-            )
-            .with(&["merge-base", "main", "tip"], "base")
-            .with(
-                &[
-                    "show",
-                    "-s",
-                    "--format=%H%x00%ct%x00%s%x1e",
-                    "--no-walk=unsorted",
-                    "tip",
-                ],
-                "tip\0\u{31}\0subject\u{1e}",
-            );
-        assert_eq!(
-            Inputs::capture(&git).unwrap().branches["main"],
-            vec!["a", "z"]
-        );
-        let session = Session::with_facts(&git, inputs(), Facts::default());
-        assert_eq!(
-            session.local_branches_by_oid().unwrap()["main"],
-            vec!["trunk"]
-        );
-        assert_eq!(session.main_branch_name().unwrap(), "trunk");
-        assert_eq!(
-            session.merge_base("main", "tip").unwrap(),
-            Some("base".to_string())
-        );
-        assert_eq!(
-            session.merge_base("main", "tip").unwrap(),
-            Some("base".to_string())
-        );
-        assert_eq!(session.merge_base("tip", "main").unwrap(), None);
-        assert_eq!(session.merge_base("tip", "main").unwrap(), None);
-        let expected = HashMap::from([("main".to_string(), Some(0))]);
-        assert_eq!(
-            session
-                .main_distances("main", &["main".to_string()])
-                .unwrap(),
-            expected
-        );
-        assert_eq!(
-            session
-                .main_distances("main", &["main".to_string()])
-                .unwrap(),
-            expected
-        );
-        let mut cache = HashMap::new();
-        session.cache_commit_metas(&["tip"], &mut cache).unwrap();
-        let facts = session.into_facts();
-        let next = Session::with_facts(&git, inputs(), facts);
-        cache.clear();
-        next.cache_commit_metas(&["tip"], &mut cache).unwrap();
-        assert_eq!(cache["tip"].subject, "subject");
-        assert_eq!(
-            next.merge_base("main", "tip").unwrap(),
-            Some("base".to_string())
-        );
-        assert_eq!(
-            next.main_distances("main", &["main".to_string()]).unwrap(),
-            expected
-        );
-        let ordinary = Session::new(&git);
-        ordinary.merge_base("main", "tip").unwrap();
-        ordinary.merge_base("main", "tip").unwrap();
-        ordinary
-            .main_distances("main", &["main".to_string()])
-            .unwrap();
-        ordinary
-            .main_distances("main", &["main".to_string()])
-            .unwrap();
-        assert_eq!(next.into_facts().bases.len(), 2);
-    }
-
-    struct MainFailure<'a>(&'a MockGit);
-    impl GitCommand for MainFailure<'_> {
-        fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
-            if args.first() == Some(&"config") {
-                return Failure.run(args, allow_failure);
-            }
-            self.0.run(args, allow_failure)
-        }
-    }
-
-    #[test]
-    fn errors_are_not_memoised_and_storage_limits_do_not_change_answers() {
-        assert!(Inputs::capture(&Failure).is_err());
-        let failure = Session::new(&Failure);
-        assert!(failure.merge_base("a", "b").is_err());
-        assert!(failure.main_distances("a", &["b".to_string()]).is_err());
-        assert!(failure.query_revset("current(a)", true).is_err());
-        let git = MockGit::default()
-            .with(
-                &["branchless", "query", "-r", "--hidden", "current(a)"],
-                "a",
-            )
-            .with(
-                &[
-                    "show",
-                    "-s",
-                    "--format=%H%x00%ct%x00%s%x1e",
-                    "--no-walk=unsorted",
-                    "a",
-                ],
-                "a\0\u{31}\0subject\u{1e}",
-            );
-        let mut session = Session::new(&git);
-        session.limit = 0;
-        assert_eq!(session.query_revset("current(a)", true).unwrap(), vec!["a"]);
-        assert_eq!(session.merge_base("a", "b").unwrap(), None);
-        assert_eq!(
-            session.main_distances("a", &["a".to_string()]).unwrap()["a"],
-            Some(0)
-        );
-        session
-            .cache_commit_metas(&["a"], &mut HashMap::new())
-            .unwrap();
-        session.limit = 1;
-        session
-            .cache_commit_metas(&["a"], &mut HashMap::new())
-            .unwrap();
-        let omit = crate::test_support::OmitMetadata {
-            inner: &git,
-            omitted: "a",
-        };
-        Session::new(&omit)
-            .cache_commit_metas(&["a"], &mut HashMap::new())
-            .unwrap();
-        assert_eq!(session.into_facts().bases.len(), 0);
-        let missing_main = MockGit::default().with(
-            &[
-                "for-each-ref",
-                "--format=%(objectname)%00%(refname:short)",
-                "refs/heads",
-            ],
-            "",
-        );
-        // Main-name failures are exercised through a command adapter which fails
-        // after a successful reference enumeration.
-        assert!(Inputs::capture(&MainFailure(&missing_main)).is_err());
-    }
-}
+#[path = "tests/session_reuse_tests.rs"]
+mod reuse_tests;

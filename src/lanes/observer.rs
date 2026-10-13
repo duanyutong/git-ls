@@ -30,13 +30,3 @@ impl Drop for AnalysisStage<'_> {
         self.observer.end_stage();
     }
 }
-
-#[cfg(test)]
-impl AnalysisObserver for () {
-    fn begin_stage(&self, _name: &'static str) {}
-    fn end_stage(&self) {}
-    fn detail(&self, _fields: fmt::Arguments<'_>) {}
-    fn progress(&self, _message: fmt::Arguments<'_>) {}
-    fn event(&self, _fields: fmt::Arguments<'_>) {}
-    fn count(&self, _name: &'static str, _amount: usize) {}
-}

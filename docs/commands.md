@@ -64,6 +64,7 @@ The graph uses `git-branchless` glyphs for equivalent concepts, preserving a bra
 
 `git ls --debug` reports contextual progress and performance records on standard error, leaving the rendered graph on standard output unchanged.
 Records include configuration and repository discovery, selection, lane and main-history traversal, formatting, output, and observable backend-operation counts.
+They also identify graph-interpretation delegation, rejected cache publications, retained metadata counts and pending maintenance work.
 
 Durations use a monotonic clock and milliseconds.
 Stage and operation totals are inclusive: nested durations must not be added to their enclosing stages.

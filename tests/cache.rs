@@ -44,7 +44,7 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
         let compatibility: serde_json::Value =
             serde_json::from_str(entry["key"].as_str().expect("structured key"))
                 .expect("JSON compatibility key");
-        assert_eq!(compatibility["analysis"], "analysis-2");
+        assert_eq!(compatibility["analysis"], "analysis-3");
         assert_eq!(compatibility["backend"], backend);
         assert_eq!(compatibility["object_format"], "sha1");
         for order in ["newest", "oldest"] {
@@ -64,6 +64,8 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
                     assert!(debug.contains("cache=hit"), "{debug}");
                     assert!(!debug.contains("operation=ancestry_path"), "{debug}");
                     assert!(!debug.contains("stage=selection"), "{debug}");
+                    assert!(!debug.contains("stage=cache_revalidation"), "{debug}");
+                    assert!(!debug.contains("stage=cache_write"), "{debug}");
                     let mut uncached = options.to_vec();
                     uncached.push("--no-cache");
                     assert_eq!(cached, run(&repo, &uncached).0);
@@ -397,4 +399,120 @@ fn default_configuration_still_uses_one_startup_query() {
         debug.contains("operation=subprocess_config parent=config calls=1"),
         "{debug}"
     );
+}
+
+#[test]
+fn colliding_tags_and_symbolic_local_branches_preserve_backend_and_cache_parity() {
+    let repo = fixture();
+    repo.git(&["tag", "main", "main"]);
+    repo.git(&["tag", "topic", "topic"]);
+    repo.git(&["symbolic-ref", "refs/heads/alias", "refs/heads/topic"]);
+    let (expected, _) = run(&repo, &["--backend", "shell", "--no-cache"]);
+    assert!(expected.contains("alias, topic"));
+    assert!(!expected.contains("heads/main"));
+    assert!(!expected.contains("heads/topic"));
+    for backend in ["gix", "shell"] {
+        let options = ["--backend", backend];
+        assert_eq!(run(&repo, &options).0, expected);
+        let (cached, debug) = run(&repo, &options);
+        assert_eq!(cached, expected);
+        assert!(debug.contains("cache=hit"), "{debug}");
+    }
+    repo.git(&["symbolic-ref", "refs/heads/alias", "refs/heads/main"]);
+    for backend in ["gix", "shell"] {
+        let (output, debug) = run(&repo, &["--backend", backend]);
+        assert!(!debug.contains("cache=hit"));
+        assert!(!output.contains("alias, topic"));
+    }
+}
+
+#[test]
+fn oversized_metadata_reuses_topology_without_forcing_high_verbosity() {
+    let repo = fixture();
+    let subject = "s".repeat(1_100_000);
+    // Standard input avoids imposing an OS argument-size limit on valid objects.
+    let tree = repo.git(&["show", "-s", "--format=%T", "topic"]);
+    let parent = repo.git(&["rev-parse", "topic"]);
+    let commit = repo
+        .command("git")
+        .args(["commit-tree", &tree, "-p", &parent])
+        .write_stdin(subject.clone())
+        .assert()
+        .success();
+    let oid = String::from_utf8(commit.get_output().stdout.clone()).unwrap();
+    repo.git(&["update-ref", "refs/heads/topic", oid.trim()]);
+    for backend in ["gix", "shell"] {
+        let low = ["--backend", backend, "--verbosity", "0"];
+        let (expected, _) = run(
+            &repo,
+            &["--backend", backend, "--verbosity", "0", "--no-cache"],
+        );
+        let (cold, debug) = run(&repo, &low);
+        assert_eq!(cold, expected);
+        assert!(debug.contains("verbosity=Low"), "{debug}");
+        assert!(debug.contains("metadata_before="));
+        let (warm, debug) = run(&repo, &low);
+        assert_eq!(warm, expected);
+        assert!(debug.contains("cache=hit"), "{debug}");
+        assert!(!debug.contains("operation=ancestry_path"));
+        assert!(!debug.contains("operation=select_tips"));
+        for level in ["1", "2"] {
+            let options = ["--backend", backend, "--verbosity", level];
+            let (cached, debug) = run(&repo, &options);
+            assert!(debug.contains("cache=hit"), "{debug}");
+            let (uncached, _) = run(
+                &repo,
+                &["--backend", backend, "--verbosity", level, "--no-cache"],
+            );
+            assert_eq!(cached, uncached);
+            assert!(!debug.contains("operation=ancestry_path"));
+        }
+        let (refreshed, debug) = run(
+            &repo,
+            &["--backend", backend, "--verbosity", "2", "--refresh-cache"],
+        );
+        assert!(refreshed.contains(&subject));
+        assert!(debug.contains("reason=refresh"));
+        assert_eq!(run(&repo, &low).0, expected);
+        let root = repo.path().join(".git/git-ls/cache/v1");
+        for entry in std::fs::read_dir(root).unwrap() {
+            let entry = entry.unwrap();
+            assert!(entry.metadata().unwrap().len() <= 1024 * 1024);
+        }
+    }
+}
+
+#[test]
+fn oversized_topology_reports_publication_limits_and_preserves_graph_facts() {
+    use std::fmt::Write as _;
+
+    let repo = fixture();
+    let tip = repo.git(&["rev-parse", "topic"]);
+    let segment = "n".repeat(240);
+    let prefix = [segment.as_str(); 3].join("/");
+    let mut updates = String::new();
+    for i in 0..1500 {
+        writeln!(updates, "update refs/heads/{prefix}/alias-{i:04} {tip}").unwrap();
+    }
+    repo.command("git")
+        .args(["update-ref", "--stdin"])
+        .write_stdin(updates)
+        .assert()
+        .success();
+    repo.git(&["pack-refs", "--all"]);
+    for backend in ["gix", "shell"] {
+        let (expected, _) = run(&repo, &["--backend", backend, "--no-cache"]);
+        let (cold, debug) = run(&repo, &["--backend", backend]);
+        assert_eq!(cold, expected);
+        assert!(
+            debug.contains("reason=entry_limit_or_encoding entry=snapshot-"),
+            "{debug}"
+        );
+        let (repeated, debug) = run(&repo, &["--backend", backend]);
+        assert_eq!(repeated, expected);
+        assert!(!debug.contains("cache=hit"));
+        assert!(debug.contains("distance_cache_hits=1"), "{debug}");
+        assert!(debug.contains("merge_base_cache_hits=1"), "{debug}");
+        assert!(debug.contains("reason=entry_limit_or_encoding entry=snapshot-"));
+    }
 }

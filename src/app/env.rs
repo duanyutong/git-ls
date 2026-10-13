@@ -20,14 +20,16 @@ pub fn run_from_env() -> Result<()> {
             crate::cache::maintenance::PRIVATE_MODE,
         ))
     {
-        if let (Some(path), Some(retain)) = (env::args_os().nth(2), env::args().nth(3)) {
-            crate::cache::maintenance::run(std::path::Path::new(&path), &retain);
+        if let (Some(path), Some(retain)) = (env::args_os().nth(2), env::args_os().nth(3))
+            && let Some(retain) = retain.to_str()
+        {
+            crate::cache::maintenance::run(std::path::Path::new(&path), retain);
         }
         return Ok(());
     }
     let mut stdout = io::stdout().lock();
     let environment = RenderEnvironment::detect();
-    let args = parse_args_from(env::args().skip(1))?;
+    let args = parse_args_from(env::args_os().skip(1))?;
     crate::diagnostics::observe(args.debug, || {
         crate::diagnostics::event(format_args!(
             "clock=monotonic interval=after_arguments_before_summary"
@@ -47,7 +49,14 @@ pub fn run_from_env() -> Result<()> {
                     let _span = crate::diagnostics::stage("backend_open");
                     GixBackend::discover()?
                 };
-                execute_cached(&raw, &args, &git, &mut stdout, environment)
+                if git.requires_shell_graph()? {
+                    crate::diagnostics::event(format_args!(
+                        "backend_fallback requested=gix effective=shell reason=graph_interpretation"
+                    ));
+                    execute_cached(&raw, &args, &ProcessGit, &mut stdout, environment)
+                } else {
+                    execute_cached(&raw, &args, &git, &mut stdout, environment)
+                }
             }
             Backend::Shell => {
                 let git = ProcessGit;

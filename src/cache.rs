@@ -69,6 +69,20 @@ fn encode(value: &impl Serialize) -> Option<Vec<u8>> {
     Some(buffer.0)
 }
 
+fn encoded_entry(key: &str, value: &impl Serialize) -> Option<Vec<u8>> {
+    let payload = String::from_utf8(encode(value)?).ok()?;
+    encode(&Envelope {
+        semantics: SEMANTICS.to_string(),
+        key: key.to_string(),
+        checksum: hash(&payload),
+        payload,
+    })
+}
+
+pub(crate) fn fits(key: &str, value: &impl Serialize) -> bool {
+    encoded_entry(key, value).is_some()
+}
+
 pub(crate) fn regular(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
@@ -155,17 +169,10 @@ impl Store {
         key: &str,
         value: &T,
     ) -> bool {
-        let Some(payload) = encode(value).and_then(|bytes| String::from_utf8(bytes).ok()) else {
-            return false;
-        };
-        let entry = Envelope {
-            semantics: SEMANTICS.to_string(),
-            key: key.to_string(),
-            checksum: hash(&payload),
-            payload,
-        };
-        let Some(bytes) = encode(&entry) else {
-            crate::diagnostics::event(format_args!("cache_publication=skipped reason=entry_limit"));
+        let Some(bytes) = encoded_entry(key, value) else {
+            crate::diagnostics::event(format_args!(
+                "cache_publication=skipped reason=entry_limit_or_encoding entry={name} entry_limit_bytes={ENTRY_LIMIT}"
+            ));
             return false;
         };
         let temp = self.root.join("publication.tmp");
@@ -218,4 +225,5 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests;
+#[path = "cache/tests/repositories.rs"]
+mod repositories;

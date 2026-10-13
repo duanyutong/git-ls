@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -221,7 +223,9 @@ impl AncestryBackend for FakeLaneBackend {
 }
 
 fn point(oid: &str, names: &[&str]) -> BranchPoint {
-    BranchPoint::new(oid, names.iter().copied(), None)
+    let mut point = BranchPoint::new(oid, names.iter().copied(), None);
+    point.commit_count = 1;
+    point
 }
 
 fn point_ref(oid: &str, names: &[&str]) -> BranchPointRef {
@@ -1699,4 +1703,17 @@ fn absent_metadata_after_batch_hydration_remains_an_error() {
         )
         .is_err()
     );
+}
+
+fn lane_group_order(lhs: &LaneGroup, rhs: &LaneGroup, order: Order) -> Ordering {
+    lane_group_key(lhs, order).cmp(&lane_group_key(rhs, order))
+}
+
+impl AnalysisObserver for () {
+    fn begin_stage(&self, _name: &'static str) {}
+    fn end_stage(&self) {}
+    fn detail(&self, _fields: std::fmt::Arguments<'_>) {}
+    fn progress(&self, _message: std::fmt::Arguments<'_>) {}
+    fn event(&self, _fields: std::fmt::Arguments<'_>) {}
+    fn count(&self, _name: &'static str, _amount: usize) {}
 }

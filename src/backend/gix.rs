@@ -47,6 +47,25 @@ impl GixBackend {
         })
     }
 
+    pub(crate) fn requires_shell_graph(&self) -> Result<bool> {
+        if self.repo.common_dir().join("info/grafts").exists()
+            || std::env::var_os("GIT_GRAFT_FILE").is_some()
+            || std::env::var_os("GIT_REPLACE_REF_BASE").is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .repo
+            .references()
+            .map_err(|source| GitLsError::gix("open replacement references", source))?
+            .prefixed("refs/replace/")
+            .map_err(|source| GitLsError::gix("iterate replacement references", source))?
+            .next()
+            .transpose()
+            .map_err(|source| GitLsError::gix("read replacement reference", source))?
+            .is_some())
+    }
+
     pub(super) fn object_id(oid: &str) -> Result<gix::ObjectId> {
         oid.parse::<gix::ObjectId>()
             .map_err(|source| GitLsError::invalid_object_id(oid, source))
@@ -108,15 +127,17 @@ impl RepositoryStateBackend for GixBackend {
             .local_branches()
             .map_err(|source| GitLsError::gix("iterate local branches", source))?
         {
-            let reference =
+            let mut reference =
                 reference.map_err(|source| GitLsError::gix("read local branch", source))?;
-            let Some(id) = reference.try_id() else {
-                continue;
-            };
+            // Following a symbolic ref mutates its target; retain its own name.
+            let name = reference.name().shorten().to_str_lossy().into_owned();
+            let id = reference
+                .follow_to_object()
+                .map_err(|source| GitLsError::gix("resolve local branch", source))?;
             result
                 .entry(id.detach().to_string())
                 .or_default()
-                .push(reference.name().shorten().to_str_lossy().into_owned());
+                .push(name);
         }
         Ok(result)
     }

@@ -12,7 +12,7 @@ The checkout provisions its own development tools.
 | Dependencies | Committed Cargo lockfile; locked builds and tests; current advisory, licence, source and duplicate-version checks. |
 | Setup | `sh setup.sh` or `just setup`; Python through uv and additional development tools through prek-managed environments. |
 | Formatting | Rustfmt, cargo-sort, offline Tombi, Ruff, spelling and repository hygiene. |
-| Hooks | Fast pre-commit hygiene, Conventional Commit and version validation, full validation before push. |
+| Hooks | Pre-commit formatting and hygiene, Conventional Commit and version validation at commit time, version-history verification and lightweight, read-only built-in file checks before push. |
 | Validation | `just lint`, `just typecheck`, `just test`, `just coverage` and `just build-release`; `just check` combines lint, tests, doctests and release compilation. |
 | Coverage | At least 95% application line coverage and complete coverage within the declared pure-policy boundaries. |
 | CI | Linux and macOS, pinned action revisions, repository setup and local recipes, bounded jobs and retained evidence. |

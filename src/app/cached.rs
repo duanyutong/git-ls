@@ -1,15 +1,16 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
 use gix::bstr::ByteSlice as _;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{GitBackend, Inputs, Session};
+use crate::backend::{GitBackend, Inputs, Session, get_commit_meta};
 use crate::cache::{BackendSemantics, Facts, FactsKey, Store};
-use crate::cli::{Args, Backend, DEFAULT_REVSET, RuntimeOptions, Verbosity};
+use crate::cli::{Args, Backend, DEFAULT_REVSET, RuntimeOptions};
 use crate::error::Result;
 use crate::lanes::{ordered_lanes, plain_git_main_branch, sort_lane_groups};
-use crate::model::{CommitMeta, LaneGroup, RepositorySnapshot};
+use crate::model::{BranchAnnotation, LaneGroup, RepositorySnapshot};
 use crate::terminal::RenderEnvironment;
 
 use super::{Analysis, build_analysis, execute, render_analysis, write_render_plan};
@@ -17,12 +18,61 @@ use super::{Analysis, build_analysis, execute, render_analysis, write_render_pla
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
     groups: Vec<LaneGroup>,
-    main_meta: Option<CommitMeta>,
 }
 
 impl Snapshot {
-    fn live(mut self, args: &RuntimeOptions, repository: RepositorySnapshot) -> Analysis {
+    fn neutral(mut groups: Vec<LaneGroup>) -> Self {
+        for group in &mut groups {
+            group.base_meta = None;
+            for lane in &mut group.lanes {
+                for point in &mut lane.branch_points {
+                    point.annotation = None;
+                }
+            }
+        }
+        Self { groups }
+    }
+
+    fn live(
+        mut self,
+        args: &RuntimeOptions,
+        repository: RepositorySnapshot,
+        main: &str,
+        git: &dyn GitBackend,
+    ) -> Result<Analysis> {
+        let mut metadata = HashMap::new();
+        let mut ids = Vec::new();
+        if args.verbosity.includes_metadata() {
+            ids.push(main);
+        }
+        for group in &self.groups {
+            ids.extend(group.base_oid.as_deref().filter(|base| *base != main));
+            if args.verbosity.includes_metadata() {
+                for lane in &group.lanes {
+                    ids.extend(lane.branch_points.iter().map(|point| point.oid.as_str()));
+                }
+            }
+        }
+        if !ids.is_empty() {
+            let _perf = crate::diagnostics::stage("cache_metadata");
+            ids.sort_unstable();
+            ids.dedup();
+            git.cache_commit_metas(&ids, &mut metadata)?;
+        }
         for group in &mut self.groups {
+            if let Some(base) = group.base_oid.as_deref().filter(|base| *base != main) {
+                group.base_meta = Some(get_commit_meta(git, base, &mut metadata)?);
+            }
+            for lane in &mut group.lanes {
+                if args.verbosity.includes_metadata() {
+                    for point in &mut lane.branch_points {
+                        point.annotation = Some(BranchAnnotation::new(
+                            get_commit_meta(git, &point.oid, &mut metadata)?,
+                            point.commit_count,
+                        ));
+                    }
+                }
+            }
             group.lanes = ordered_lanes(std::mem::take(&mut group.lanes), args.order);
             for lane in &mut group.lanes {
                 lane.contains_current = lane.branch_points.iter().any(|point| {
@@ -35,11 +85,15 @@ impl Snapshot {
             }
         }
         sort_lane_groups(&mut self.groups, args.order);
-        Analysis {
+        Ok(Analysis {
             groups: self.groups,
-            main_meta: self.main_meta,
+            main_meta: if args.verbosity.includes_metadata() {
+                Some(get_commit_meta(git, main, &mut metadata)?)
+            } else {
+                None
+            },
             repository,
-        }
+        })
     }
 }
 
@@ -157,7 +211,7 @@ pub(super) fn execute_cached<W: Write>(
         return execute(args, git, stdout, environment);
     };
     let inputs = Inputs::capture(git)?;
-    let (main_name, _) = plain_git_main_branch(
+    let (main_name, main_oid) = plain_git_main_branch(
         &inputs.branches.clone().into_iter().collect(),
         &inputs.configured_main,
     )?;
@@ -180,11 +234,20 @@ pub(super) fn execute_cached<W: Write>(
     } else {
         store.read(&name, &key)
     };
+    let topology_hit = snapshot.is_some();
+    let facts: Facts = if raw.refresh_cache {
+        Facts::default()
+    } else {
+        store.read(facts_name, &facts_key).unwrap_or_default()
+    };
+    let session = Session::with_facts(git, inputs.clone(), facts);
     let (head, current_branch) = git.current_head_and_branch()?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
     let (analysis, computed) = if let Some(snapshot) = snapshot {
         crate::diagnostics::event(format_args!("cache=hit"));
-        (snapshot.live(args, repository), None)
+        let analysis = snapshot.live(args, repository, &main_oid, &session)?;
+        let facts = session.has_new_facts().then(|| session.into_facts());
+        (analysis, facts)
     } else {
         crate::diagnostics::event(format_args!(
             "cache={} reason={}",
@@ -199,15 +262,7 @@ pub(super) fn execute_cached<W: Write>(
                 "absent_or_key_mismatch"
             }
         ));
-        let facts: Facts = if raw.refresh_cache {
-            Facts::default()
-        } else {
-            store.read(facts_name, &facts_key).unwrap_or_default()
-        };
-        let session = Session::with_facts(git, inputs.clone(), facts);
-        let mut complete = args.clone();
-        complete.verbosity = Verbosity::High;
-        let analysis = build_analysis(&complete, &session)?;
+        let analysis = build_analysis(args, &session)?;
         (analysis, Some(session.into_facts()))
     };
     let plan = render_analysis(args, &analysis, environment);
@@ -222,17 +277,18 @@ pub(super) fn execute_cached<W: Write>(
         if unchanged {
             {
                 let _perf = crate::diagnostics::stage("cache_admission");
-                facts.compact(512);
+                let before = facts.metadata.len();
+                facts.fit(512, &|value| crate::cache::fits(&facts_key, value));
+                crate::diagnostics::event(format_args!(
+                    "cache_admission entry=facts metadata_before={} metadata_retained={}",
+                    before,
+                    facts.metadata.len()
+                ));
             }
             store.publish(facts_name, &facts_key, &facts);
-            published = store.publish(
-                &name,
-                &key,
-                &Snapshot {
-                    groups: analysis.groups,
-                    main_meta: analysis.main_meta,
-                },
-            );
+            if !topology_hit {
+                published = store.publish(&name, &key, &Snapshot::neutral(analysis.groups));
+            }
         } else {
             crate::diagnostics::event(format_args!(
                 "cache_publication=discarded reason=inputs_changed"
@@ -244,30 +300,5 @@ pub(super) fn execute_cached<W: Write>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::repo_support::TestRepo;
-
-    #[test]
-    fn revalidation_observes_configuration_changes_after_backend_creation() {
-        let repo = TestRepo::new();
-        repo.commit("root");
-        repo.git(&["config", "branchless.core.mainBranch", "main"]);
-        let backend = gix::discover(repo.path()).unwrap();
-        let before = location(repo.path()).unwrap();
-        repo.git(&["config", "branchless.core.mainBranch", "trunk"]);
-        assert_eq!(
-            backend
-                .config_snapshot()
-                .string("branchless.core.mainBranch")
-                .unwrap()
-                .to_str_lossy(),
-            "main"
-        );
-        let after = location(repo.path()).unwrap();
-        assert_eq!(after.0, before.0);
-        assert_eq!(after.1, before.1);
-        assert_eq!(after.2, "trunk");
-        assert_ne!(before, after);
-    }
-}
+#[path = "tests/cached.rs"]
+mod repositories;

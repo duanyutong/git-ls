@@ -19,6 +19,7 @@ mod render;
 mod repo_support;
 mod terminal;
 #[cfg(test)]
+#[path = "tests/support.rs"]
 mod test_support;
 
 pub use error::{GitLsError, Result};
@@ -31,12 +32,5 @@ pub use error::{GitLsError, Result};
 pub use app::run_from_env;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn public_execution_boundary_has_stable_signature() {
-        let entry_point: fn() -> Result<()> = run_from_env;
-        let _ = entry_point;
-    }
-}
+#[path = "tests/lib.rs"]
+mod tests;

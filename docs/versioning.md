@@ -11,6 +11,7 @@ The generated changes require review and staging before the commit is repeated.
 Existing unstaged manifest or lockfile changes are preserved and require resolution before automatic generation.
 An incorrect staged increment is rejected without replacement.
 The pre-push hook and CI independently verify committed version history.
+Pre-push combines this version-policy check with lightweight, read-only built-in file checks; full acceptance remains an explicit development command and a CI requirement, as specified in [development](development.md).
 
 ```sh
 git add Cargo.toml Cargo.lock

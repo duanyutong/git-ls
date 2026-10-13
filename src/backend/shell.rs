@@ -155,7 +155,7 @@ fn shell_local_branches_by_oid<G: GitCommand + ?Sized>(
     let output = git.run(
         &[
             "for-each-ref",
-            "--format=%(objectname)%00%(refname:short)",
+            "--format=%(objectname)%00%(refname:lstrip=2)",
             "refs/heads",
         ],
         false,
@@ -176,10 +176,18 @@ fn shell_local_branches_by_oid<G: GitCommand + ?Sized>(
 fn shell_current_head_and_branch<G: GitCommand + ?Sized>(
     git: &G,
 ) -> Result<(Option<String>, Option<String>)> {
-    let output = git.run(&["rev-parse", "HEAD", "--abbrev-ref", "HEAD"], true)?;
+    let output = git.run(&["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"], true)?;
     let mut values = lines(&output).into_iter();
     let head = values.next();
-    let branch = values.next().filter(|branch| branch != "HEAD");
+    let branch = values
+        .next()
+        .filter(|branch| branch != "HEAD")
+        .map(|branch| {
+            branch
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&branch)
+                .to_string()
+        });
     Ok((head, branch))
 }
 

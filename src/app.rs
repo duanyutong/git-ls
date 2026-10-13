@@ -4,11 +4,7 @@ use std::io::Write;
 
 use clap::Parser;
 
-#[cfg(test)]
-use crate::backend::GitCommand;
 use crate::backend::{CommitMetadataBackend, GitBackend, get_commit_meta};
-#[cfg(test)]
-use crate::cli::read_git_ls_config;
 use crate::cli::{Args, Layout, RuntimeOptions, Verbosity};
 use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
@@ -242,25 +238,6 @@ where
     let plan = build_render_plan(args, git, environment)?;
     write_render_plan(stdout, &plan, environment)?;
     Ok(())
-}
-
-#[cfg(test)]
-fn run<I, S, W, G>(args: I, git: &G, stdout: &mut W) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    W: Write,
-    G: GitBackend + GitCommand,
-{
-    let args = parse_args_from(args)?;
-    let config = read_git_ls_config(git)?;
-    let args = args.resolve(&config);
-    execute(
-        &args,
-        git,
-        stdout,
-        RenderEnvironment::new(crate::test_support::TEST_NOW, None, false),
-    )
 }
 
 #[cfg(test)]
