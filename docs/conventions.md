@@ -6,7 +6,7 @@ The checkout provisions its own development tools.
 | Area | Convention |
 | --- | --- |
 | Compiler | Rust 1.99.0, Edition 2024, minimal toolchain with rustfmt, Clippy, LLVM tools and rust-analyzer. |
-| Rust policy | Workspace-wide compiler metadata and lints, inherited by the application and version helper; unsafe code is forbidden. |
+| Rust policy | Workspace-wide compiler metadata and lints, inherited by the application; unsafe code is forbidden. |
 | Release profile | Optimisation level 3, fat LTO, one code-generation unit, aborting panics and stripped symbols. |
 | Build identity | Version output records the package version, commit, dirty state, target, compiler and build timestamp. |
 | Dependencies | Committed Cargo lockfile; locked builds and tests; current advisory, licence, source and duplicate-version checks. |

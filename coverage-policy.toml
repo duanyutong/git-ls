@@ -63,17 +63,3 @@ declarations = [
 generated = [
   "src/cli/args.rs",
 ]
-
-[versioning]
-package = "xtask"
-source_root = "xtask/src"
-minimum_lines = 95
-target = ["--bin", "xtask"]
-test_filter = ""
-test_skip = []
-unit = ["xtask/src/manifest.rs", "xtask/src/policy.rs"]
-mixed = ["xtask/src/git.rs", "xtask/src/version.rs"]
-boundary = ["xtask/src/main.rs"]
-declarations = []
-# Clap derives the parser; this schema has no executable production coverage entry.
-generated = ["xtask/src/cli.rs"]

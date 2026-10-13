@@ -7,7 +7,7 @@ macOS requires the Xcode command-line tools.
 
 The command `sh setup.sh` verifies the command-runner versions, synchronises the Python environment from `uv.lock`, provisions hook environments, fetches locked Rust dependencies and registers hooks.
 prek owns additional development-tool installations in its standard cache; setup creates no repository-local executable directory.
-The non-package project in `pyproject.toml` pins Python to 3.15.0 solely for development scripts.
+The non-package project in `pyproject.toml` pins Python to 3.15.0 for development and versioning scripts.
 uv selects or downloads a compatible interpreter using its standard storage and maintains the repository environment in `.venv`.
 Run development scripts as `uv run scripts/<name>.py`; executable scripts also provide `#!/usr/bin/env -S uv run` shebangs.
 Run these commands from the repository so uv discovers its Python requirement.
@@ -21,6 +21,8 @@ The recipe `just test` runs acceptance through a managed hook containing the dec
 Coverage recipes similarly run their collectors inside hooks containing cargo-llvm-cov and, where repository tests require it, git-branchless.
 Manual lint selects its own hooks explicitly, so invoking it does not execute acceptance tests or coverage.
 CI obtains the pinned just and prek command runners through `uv run` and caches prek environments alongside the Cargo caches.
+Cache keys separate operating systems, architectures and declared Rust toolchains; fallback restoration reuses the most recent compatible cache when dependency or hook configuration changes.
+Restored caches provide build inputs only; the locked dependency, validation and coverage gates still execute.
 Tool installation and update behaviour is delegated to prek rather than maintained in repository-specific installers.
 
 The commands `just typecheck` and `just test-unit` provide focused checks during development.
@@ -47,7 +49,8 @@ Commit hooks validate Conventional Commits and generate required package-version
 Pre-commit hooks perform formatting, spelling, syntax and repository-hygiene checks on applicable staged files.
 Pre-push verifies committed version history and runs prek's built-in trailing-whitespace, end-of-file and large-file checks.
 The whitespace and end-of-file hooks apply automatic fixes at pre-commit and use `--check` at pre-push to report defects without modifying files.
-It invokes the version helper through Cargo, which may compile that helper when its sources or dependencies have changed, but does not run application linting, tests, coverage or release compilation.
+It invokes `uv run --locked scripts/version.py pre-push`; version verification requires no Rust compilation.
+The Python implementation and its behavioural tests are identical in `git-pr` and `git-ls`; package identity is read from the relevant manifest snapshot.
 Existing hook installations read `prek.toml` on invocation and require no reinstallation for this policy change.
 Successful CI on `main` triggers annotated version tags, as specified in [versioning](versioning.md).
 

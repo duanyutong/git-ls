@@ -19,6 +19,7 @@ typecheck:
     cargo check --workspace --all-targets --all-features --locked
 
 test:
+    uv run --locked scripts/test_version.py
     uv run scripts/test_coverage.py
     prek run acceptance-tests --all-files --hook-stage manual --verbose
     uv run scripts/measure.py doctests cargo test --workspace --doc --all-features --locked
@@ -44,16 +45,21 @@ build-release:
 
 # Compare with the latest reachable release tag, or include the initial commit.
 verify-versions base="0000000000000000000000000000000000000000" head="HEAD":
-    cargo run --quiet --locked -p xtask -- version verify-range "$1" "$2"
+    uv run --locked scripts/version.py verify-range "$1" "$2"
 
 # Explicit release command; CI invokes this only after successful main validation.
 tag-versions base head:
-    cargo run --quiet --locked -p xtask -- version tag-range "$1" "$2"
+    uv run --locked scripts/version.py tag-range "$1" "$2"
 
 # Preserve the original parent as the version baseline when amending a commit.
 amend *args:
     #!/bin/sh
-    exec cargo run --quiet --locked -p xtask -- version amend "$@"
+    exec uv run --locked scripts/version.py amend "$@"
 
 coverage-versioning:
-    prek run coverage-versioning --all-files --hook-stage manual --verbose
+    uv run --locked coverage erase
+    uv run --locked coverage run scripts/test_version.py
+    uv run --locked coverage combine
+    uv run --locked coverage report --fail-under=95
+    uv run --locked coverage json -o coverage/versioning.json
+    uv run --locked coverage html -d coverage/versioning

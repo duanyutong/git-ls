@@ -159,10 +159,9 @@ always_run = true
 
 [[repos.hooks]]
 id = "coverage-versioning"
-name = "Versioning package coverage"
-language = "rust"
-additional_dependencies = ["cli:cargo-llvm-cov:0.9.1"]
-entry = "uv run scripts/package_coverage.py versioning"
+name = "Versioning coverage"
+language = "system"
+entry = "just coverage-versioning"
 stages = ["manual"]
 pass_filenames = false
 always_run = true
@@ -181,7 +180,7 @@ always_run = true
 id = "commit-msg"
 name = "Conventional Commit and version policy"
 language = "system"
-entry = "cargo run --quiet --locked -p xtask -- version commit-msg"
+entry = "uv run --locked scripts/version.py commit-msg"
 stages = ["commit-msg"]
 always_run = true
 
@@ -189,7 +188,7 @@ always_run = true
 id = "version-pre-push"
 name = "Pushed version policy"
 language = "system"
-entry = "cargo run --quiet --locked -p xtask -- version pre-push"
+entry = "uv run --locked scripts/version.py pre-push"
 stages = ["pre-push"]
 pass_filenames = false
 always_run = true

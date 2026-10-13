@@ -22,8 +22,8 @@ Plain `just check` and `prek` require no repository-specific `PATH` overrides af
 
 ## Version automation
 
-The `xtask` tests exercise generated version increments, staged and unstaged changes, initial commits, amendments, push revisions and annotated tags in disposable repositories.
-Tag-publication tests use private local bare remotes.
-The package gate requires at least 95% line coverage; the manifest and version-policy modules require complete line, region and function coverage from their independent unit suite.
-The generated Clap CLI schema retains explicit in-memory parser assertions but has no executable production coverage entry.
+The identical `scripts/test_version.py` suites exercise Conventional Commit policy, generated increments, formatting preservation, staged and unstaged changes, initial commits, amendments, push revisions and annotated tags in disposable repositories.
+Tag-publication tests use private local bare remotes, including failed publication, repeated invocation, published baselines, unrelated tags and conflicts.
+The tests use standard-library `unittest` and form part of `just test`.
+The `just coverage-versioning` gate uses coverage.py to require at least 95% line coverage of `scripts/version.py`, including its command subprocesses.
 These gates form part of `just coverage`.

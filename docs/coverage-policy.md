@@ -39,13 +39,13 @@ Acceptance uses integer covered and total counts; rounded display percentages ca
 ## Commands and evidence
 
 `just test-unit` executes the manifest's declared unit suites without instrumentation.
-`just coverage-unit` collects and enforces independent unit coverage for the application and versioning packages.
-`just coverage-versioning` measures the complete versioning package.
+`just coverage-unit` collects and enforces independent unit coverage for the Rust application.
+`just coverage-versioning` measures the Python versioning implementation, including command subprocesses, and requires at least 95% line coverage.
 `just coverage` requires the unit and versioning gates before collecting application package coverage.
 The application collector may retain repository-specific external fixtures where these are necessary to exercise production boundaries.
 
 Unit JSON, HTML and text reports reside under `coverage/unit/<suite>/`; combined unit counts reside in `coverage/unit/summary.json`.
-Application and versioning package reports reside in `coverage/coverage.json` and `coverage/versioning.json`.
+The application report resides in `coverage/coverage.json`; coverage.py retains versioning JSON and HTML under `coverage/versioning.json` and `coverage/versioning/`.
 Collector regression checks exercise inventory rejection, basename collisions, missing and incomplete reports, unit test selection and integer threshold decisions.
 These checks form part of `just test`.
 
