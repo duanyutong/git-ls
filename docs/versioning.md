@@ -30,7 +30,21 @@ A change to the commit type may require a corresponding correction to the staged
 
 Successful CI for a push to `main` triggers the release workflow.
 The workflow verifies the complete untagged range before creating annotated `v<version>` tags, then publishes those tags in one atomic push.
+After compiling the version helper, the workflow refreshes `origin/main` and requires the validated revision to remain an ancestor of that reference before invoking tag publication.
+An ordinary subsequent commit preserves eligibility; an amendment or history rewrite that removes the validated revision causes release failure.
+This check reflects the remote history at fetch time and cannot prevent a concurrent rewrite after the check; published commits shall remain immutable.
 Conflicting tags are rejected; existing tags are never moved.
 PR validation and failed CI do not publish tags.
 Tag publication does not create a GitHub Release, upload binaries or publish a crate.
 The manual equivalent is `just tag-versions <base> <head>`; this command publishes tags to `origin`.
+
+## Recovery
+
+If push-triggered CI fails because of a transient runner, network or service error, rerun the original CI workflow after resolving the cause.
+A successful rerun retains the original push event and revision and can trigger release publication.
+If CI succeeded but release failed, rerun the failed release workflow; version publication is idempotent and retries do not move existing tags.
+Use `gh run list --workflow ci.yml --branch main` and `gh run list --workflow release.yml` to identify the relevant run, then `gh run rerun <run-id>` to rerun it.
+GitHub permits workflow reruns for up to 30 days after the initial run.
+Manually dispatching CI through `gh workflow run ci.yml --ref main` performs validation but does not publish tags, because release accepts only successful push-triggered CI.
+Recovery shall use a validated revision that remains in current `main`; do not rerun release for a superseded amendment or repoint a published tag.
+An actual code defect requires a corrective commit and a new push rather than a retry of the defective revision.

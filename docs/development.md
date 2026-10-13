@@ -21,6 +21,8 @@ The recipe `just test` runs acceptance through a managed hook containing the dec
 Coverage recipes similarly run their collectors inside hooks containing cargo-llvm-cov and, where repository tests require it, git-branchless.
 Manual lint selects its own hooks explicitly, so invoking it does not execute acceptance tests or coverage.
 CI obtains the pinned just and prek command runners through `uv run` and caches prek environments alongside the Cargo caches.
+Cache keys separate operating systems, architectures and declared Rust toolchains; fallback restoration reuses the most recent compatible cache when dependency or hook configuration changes.
+Restored caches provide build inputs only; the locked dependency, validation and coverage gates still execute.
 Tool installation and update behaviour is delegated to prek rather than maintained in repository-specific installers.
 
 The commands `just typecheck` and `just test-unit` provide focused checks during development.

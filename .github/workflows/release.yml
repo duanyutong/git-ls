@@ -38,4 +38,11 @@ jobs:
       - name: Verify and publish annotated tags
         env:
           VALIDATED_HEAD: ${{ github.event.workflow_run.head_sha }}
-        run: cargo run --locked -p xtask -- version tag-range 0000000000000000000000000000000000000000 "$VALIDATED_HEAD"
+        run: |
+          cargo build --locked -p xtask
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$VALIDATED_HEAD" refs/remotes/origin/main; then
+            printf 'Validated revision %s is no longer in origin/main; refusing to publish tags.\n' "$VALIDATED_HEAD" >&2
+            exit 1
+          fi
+          target/debug/xtask version tag-range 0000000000000000000000000000000000000000 "$VALIDATED_HEAD"
