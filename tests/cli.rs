@@ -105,6 +105,49 @@ fn renders_real_stacks_identically_with_both_backends() {
 }
 
 #[test]
+fn renders_forked_stacks_once_with_both_backends() {
+    let repo = TestRepo::new();
+    repo.commit("chore: initialise repository");
+    repo.git(&["checkout", "-b", "feature/base"]);
+    repo.commit("feat: add base");
+    repo.git(&["checkout", "-b", "feature/api"]);
+    repo.commit("feat: add api");
+    repo.git(&["branch", "feature/api-alias"]);
+    repo.git(&["checkout", "-b", "feature/search"]);
+    repo.commit("feat: add search");
+    repo.git(&["checkout", "-b", "feature/export", "feature/api"]);
+    repo.commit("feat: add export");
+    repo.git(&["checkout", "feature/api"]);
+
+    for layout in ["inline", "columns"] {
+        let output = render(&repo, "gix", layout);
+        assert_eq!(output, render(&repo, "shell", layout));
+        for name in ["base", "api", "search", "export"] {
+            assert_eq!(
+                output.matches(&format!("feat: add {name}")).count(),
+                1,
+                "{output}"
+            );
+        }
+        assert_eq!(output.matches("feature/api-alias").count(), 1, "{output}");
+        assert_eq!(output.matches('●').count(), 1, "{output}");
+        assert_eq!(output.matches('▶').count(), 1, "{output}");
+        assert!(output.contains("├─┘"), "{output}");
+        let shared = output
+            .lines()
+            .position(|line| line.contains("feat: add api"))
+            .expect("shared row");
+        for name in ["search", "export"] {
+            let child = output
+                .lines()
+                .position(|line| line.contains(&format!("feat: add {name}")))
+                .expect("child row");
+            assert!(child < shared, "{output}");
+        }
+    }
+}
+
+#[test]
 fn renders_unrelated_history_as_an_orphan_with_both_backends() {
     let repo = TestRepo::new();
     repo.commit("chore: initialise repository");

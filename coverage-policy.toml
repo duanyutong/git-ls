@@ -27,6 +27,7 @@ unit = [
   "src/lanes/observer.rs",
   "src/lanes/selection.rs",
   "src/model.rs",
+  "src/render/ancestry.rs",
   "src/render/branch.rs",
   "src/render/colours.rs",
   "src/render/context.rs",

@@ -1,10 +1,11 @@
 use crate::model::{BranchPoint, Lane, LaneGroup, RewrittenCommit};
 
+use super::ancestry::{Content, shared_ancestry};
 use super::branch::display_names;
 use super::context::RenderContext;
 use super::graph::{
     BRANCH_LABEL_GAP, LaneRenderLayout, MainSpine, REWRITTEN_COMMIT_GLYPH, current_row_indicator,
-    is_current_branch_point, render_row, row_prefix, row_prefix_with_marker,
+    is_current_branch_point, junction_prefix, marker_for, render_row, row_prefix_with_marker,
 };
 use super::line::RenderLine;
 use super::metadata::{age_gutter, format_age};
@@ -12,56 +13,77 @@ use super::orphan::render_orphaned_group;
 use super::rewrite::display_rewritten_commit;
 use super::trunk::{
     TrunkLabel, main_is_current, render_collapsed_main_segment, render_main_tip,
-    render_omitted_main_past, render_top_spacer, trunk_age, trunk_label, trunk_prefix,
+    render_omitted_main_past, render_top_spacer, trunk_age, trunk_label, trunk_prefix_with_roots,
 };
 
 pub(super) fn render_group(
     lanes: &[Lane],
     lane_field_width: usize,
-    colour_offset: usize,
+    next_colour: &mut usize,
     ctx: &RenderContext<'_>,
     label: TrunkLabel<'_>,
     main_spine: MainSpine,
 ) -> Vec<RenderLine> {
     let lane_count = lanes.len();
-    let layout = LaneRenderLayout::new(lane_count, lane_field_width, colour_offset);
-    let content_row_count: usize = lanes
-        .iter()
-        .map(|lane| lane.branch_points.len() + lane.rewritten_commits.len())
-        .sum();
-    let mut rendered_content_rows = 0;
+    let layout = LaneRenderLayout::new(lane_count, lane_field_width, *next_colour);
+    let ancestry = shared_ancestry(lanes);
+    let mut active = vec![false; lane_count];
+    let mut lane_colours = vec![0; lane_count];
     let mut output = Vec::new();
 
-    for (lane_index, lane) in lanes.iter().enumerate() {
-        let colour_index = colour_offset + lane_index;
-        for point in &lane.branch_points {
-            rendered_content_rows += 1;
-            let spine = row_main_spine(main_spine, rendered_content_rows, content_row_count);
-            output.push(render_branch_point_row(
-                point,
-                lane_index,
-                colour_index,
+    for (index, row) in ancestry.rows.iter().enumerate() {
+        if row.children.len() > 1 {
+            let prefix = junction_prefix(
                 layout,
-                spine,
-                ctx,
-            ));
+                main_spine,
+                &row.children,
+                &active,
+                &lane_colours,
+                ctx.colours,
+            );
+            output.push(RenderLine::plain(render_row(
+                &age_gutter(ctx, None),
+                " ",
+                &prefix,
+            )));
+            for &child in &row.children {
+                active[child] = false;
+            }
         }
-
-        for commit in &lane.rewritten_commits {
-            rendered_content_rows += 1;
-            let spine = row_main_spine(main_spine, rendered_content_rows, content_row_count);
-            output.push(render_rewritten_row(
-                commit,
-                lane_index,
-                colour_index,
-                layout,
-                spine,
-                ctx,
-            ));
+        if !active[row.lane] {
+            lane_colours[row.lane] = *next_colour;
+            *next_colour += 1;
         }
+        active[row.lane] = true;
+        let spine = row_main_spine(main_spine, index + 1, ancestry.rows.len());
+        let marker = match row.content {
+            Content::Branch(point) => marker_for(point, ctx.current_branch, ctx.head),
+            Content::Rewritten(_) => REWRITTEN_COMMIT_GLYPH,
+        };
+        let prefix = row_prefix_with_marker(
+            row.lane,
+            layout,
+            marker,
+            spine,
+            &active,
+            &lane_colours,
+            ctx.colours,
+        );
+        let colour_index = lane_colours[row.lane];
+        output.push(match row.content {
+            Content::Branch(point) => render_branch_point_row(point, colour_index, &prefix, ctx),
+            Content::Rewritten(commit) => render_rewritten_row(commit, colour_index, &prefix, ctx),
+        });
     }
 
-    output.push(render_trunk_row(label, layout, main_spine, ctx));
+    output.push(render_trunk_row(
+        label,
+        layout,
+        main_spine,
+        &ancestry.roots,
+        &lane_colours,
+        ctx,
+    ));
     output
 }
 
@@ -83,21 +105,10 @@ fn branch_age(annotation_age: Option<i64>, ctx: &RenderContext<'_>) -> Option<St
 
 fn render_branch_point_row(
     point: &BranchPoint,
-    lane_index: usize,
     colour_index: usize,
-    layout: LaneRenderLayout,
-    main_spine: MainSpine,
+    prefix: &str,
     ctx: &RenderContext<'_>,
 ) -> RenderLine {
-    let prefix = row_prefix(
-        lane_index,
-        layout,
-        point,
-        ctx.current_branch,
-        ctx.head,
-        main_spine,
-        ctx.colours,
-    );
     let label = display_names(
         point,
         ctx.current_branch,
@@ -135,19 +146,10 @@ fn render_branch_point_row(
 
 fn render_rewritten_row(
     commit: &RewrittenCommit,
-    lane_index: usize,
     colour_index: usize,
-    layout: LaneRenderLayout,
-    main_spine: MainSpine,
+    prefix: &str,
     ctx: &RenderContext<'_>,
 ) -> RenderLine {
-    let prefix = row_prefix_with_marker(
-        lane_index,
-        layout,
-        REWRITTEN_COMMIT_GLYPH,
-        main_spine,
-        ctx.colours,
-    );
     let label = display_rewritten_commit(commit, ctx);
     let gutter = age_gutter(ctx, branch_age(Some(commit.meta.timestamp), ctx));
     let line = format!("{prefix}{BRANCH_LABEL_GAP}{label}");
@@ -162,6 +164,8 @@ fn render_trunk_row(
     label: TrunkLabel<'_>,
     layout: LaneRenderLayout,
     main_spine: MainSpine,
+    roots: &[usize],
+    lane_colours: &[usize],
     ctx: &RenderContext<'_>,
 ) -> RenderLine {
     let current_main =
@@ -170,7 +174,14 @@ fn render_trunk_row(
     let rendered = trunk_label(label, ctx);
     let line = format!(
         "{}{BRANCH_LABEL_GAP}{}",
-        trunk_prefix(layout, current_main, main_spine, ctx.colours),
+        trunk_prefix_with_roots(
+            layout,
+            current_main,
+            main_spine,
+            roots,
+            lane_colours,
+            ctx.colours
+        ),
         rendered
     );
     let rendered = render_row(
@@ -201,7 +212,7 @@ fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
 
 pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<RenderLine> {
     let mut output = Vec::new();
-    let mut colour_offset = 1;
+    let mut next_colour = 1;
     let mut connected_started = false;
     let mut rendered_connected_group = false;
     let mut previous_main_distance = 0;
@@ -238,7 +249,7 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
             output.extend(render_group(
                 &group.lanes,
                 lane_field_width,
-                colour_offset,
+                &mut next_colour,
                 ctx,
                 label,
                 main_spine,
@@ -253,10 +264,7 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
                 connected_started = true;
             }
             output.extend(render_orphaned_group(&group.lanes, ctx));
-            continue;
         }
-
-        colour_offset += group.lanes.len();
     }
 
     if !output.is_empty() {

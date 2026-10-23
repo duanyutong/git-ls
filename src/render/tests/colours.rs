@@ -23,12 +23,12 @@ fn colours_text_when_enabled() {
         "\x1b[1m\x1b[38;5;41mx\x1b[0m"
     );
     assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
-    assert_eq!(colours.muted_text("x"), "\x1b[38;5;251mx\x1b[0m");
-    assert_eq!(colours.metadata_age("x"), "\x1b[38;5;251mx\x1b[0m");
+    assert_eq!(colours.muted_text("x"), "x");
+    assert_eq!(colours.metadata_age("x"), "x");
     assert_eq!(colours.metadata_count("x"), "\x1b[38;5;255mx\x1b[0m");
-    assert_eq!(colours.metadata_oid("x"), "\x1b[38;5;251mx\x1b[0m");
-    assert_eq!(colours.metadata_punctuation("x"), "\x1b[38;5;251mx\x1b[0m");
-    assert_eq!(colours.commit_title("x"), "\x1b[38;5;251mx\x1b[0m");
+    assert_eq!(colours.metadata_oid("x"), "x");
+    assert_eq!(colours.metadata_punctuation("x"), "x");
+    assert_eq!(colours.commit_title("x"), "x");
     assert_eq!(colours.orphaned_name("x"), "\x1b[38;5;255mx\x1b[0m");
     assert_eq!(colours.orphaned_glyph("x"), "\x1b[1m\x1b[38;5;255mx\x1b[0m");
     assert_eq!(

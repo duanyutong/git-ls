@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use crate::model::BranchPoint;
 
 use super::colours::Colours;
@@ -98,29 +96,72 @@ impl MainSpine {
     }
 }
 
-pub(super) fn row_prefix(
-    lane_index: usize,
-    layout: LaneRenderLayout,
-    point: &BranchPoint,
-    current_branch: Option<&str>,
-    head: Option<&str>,
-    main_spine: MainSpine,
-    colours: &Colours,
-) -> String {
-    row_prefix_with_marker(
-        lane_index,
-        layout,
-        marker_for(point, current_branch, head),
-        main_spine,
-        colours,
-    )
-}
-
 pub(super) fn row_prefix_with_marker(
     lane_index: usize,
     layout: LaneRenderLayout,
     marker: &str,
     main_spine: MainSpine,
+    active: &[bool],
+    lane_colours: &[usize],
+    colours: &Colours,
+) -> String {
+    let lanes = active.iter().enumerate().map(|(index, &visible)| {
+        let glyph = if index == lane_index {
+            marker
+        } else if visible {
+            "│"
+        } else {
+            " "
+        };
+        colours.stack(lane_colours[index], glyph)
+    });
+    graph_prefix(layout, main_spine, lanes.collect(), colours)
+}
+
+pub(super) fn junction_prefix(
+    layout: LaneRenderLayout,
+    main_spine: MainSpine,
+    children: &[usize],
+    active: &[bool],
+    lane_colours: &[usize],
+    colours: &Colours,
+) -> String {
+    let first = children.iter().min().copied().unwrap_or(0);
+    let last = children.iter().max().copied().unwrap_or(0);
+    let mut lanes = Vec::new();
+    for (index, &visible) in active.iter().enumerate() {
+        let glyph = if index == first {
+            "├"
+        } else if index == last {
+            "┘"
+        } else if children.contains(&index) {
+            "┴"
+        } else if index > first && index < last {
+            "─"
+        } else if visible {
+            "│"
+        } else {
+            " "
+        };
+        let gap = if index > first && index <= last {
+            "─"
+        } else {
+            " "
+        };
+        let slot = if index == 0 {
+            glyph.to_string()
+        } else {
+            format!("{gap}{glyph}")
+        };
+        lanes.push(colours.stack(lane_colours[index], &slot));
+    }
+    graph_prefix(layout, main_spine, vec![lanes.concat()], colours)
+}
+
+fn graph_prefix(
+    layout: LaneRenderLayout,
+    main_spine: MainSpine,
+    lanes: Vec<String>,
     colours: &Colours,
 ) -> String {
     let mut slots = Vec::new();
@@ -139,15 +180,6 @@ pub(super) fn row_prefix_with_marker(
     for _ in 0..layout.lane_padding() {
         slots.push(" ".to_string());
     }
-    for index in 0..layout.lane_count {
-        let colour_index = layout.colour_offset + index;
-        match index.cmp(&lane_index) {
-            Ordering::Less => slots.push(colours.stack(colour_index, "│")),
-            Ordering::Equal => {
-                slots.push(colours.stack(colour_index, marker));
-            }
-            Ordering::Greater => slots.push(" ".to_string()),
-        }
-    }
+    slots.extend(lanes);
     format!("{TREE_LEFT_PADDING}{}", slots.join(" "))
 }

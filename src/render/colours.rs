@@ -3,7 +3,6 @@ use anstyle::{Ansi256Color, Style};
 use crate::cli::Palette;
 
 const ANSI_METADATA_COUNT: u8 = 255;
-const ANSI_MUTED_TEXT: u8 = 251;
 const ANSI_ORPHANED_LABEL: u8 = 255;
 
 pub(crate) struct Colours {
@@ -58,7 +57,7 @@ impl Colours {
     }
 
     pub(super) fn muted_text(&self, text: &str) -> String {
-        self.paint(text, Ansi256Color(ANSI_MUTED_TEXT).on_default())
+        self.paint(text, Style::new())
     }
 
     pub(super) fn metadata_age(&self, text: &str) -> String {

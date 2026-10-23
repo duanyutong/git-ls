@@ -44,7 +44,7 @@ fn renders_markers_names_and_trunk() {
     let output = render_group(
         &lanes,
         lanes.len(),
-        0,
+        &mut 0,
         &ctx,
         TrunkLabel::Main,
         MainSpine::Future,
@@ -95,7 +95,7 @@ fn renders_exactly_one_future_line_above_main_node() {
     let output = render_group(
         &lanes,
         lanes.len(),
-        0,
+        &mut 0,
         &ctx,
         TrunkLabel::Main,
         MainSpine::Future,
@@ -137,7 +137,7 @@ fn renders_single_main_based_lane_with_main_spine() {
     let output = render_group(
         &lanes,
         lanes.len(),
-        0,
+        &mut 0,
         &ctx,
         TrunkLabel::Main,
         MainSpine::Future,
@@ -180,7 +180,7 @@ fn renders_rewritten_commit_marker_below_stale_lane_branch_points() {
     let output = render_group(
         &lanes,
         lanes.len(),
-        0,
+        &mut 0,
         &ctx,
         TrunkLabel::Main,
         MainSpine::Future,
@@ -222,7 +222,7 @@ fn renders_current_main_on_trunk_row() {
     let output = render_group(
         &lanes,
         lanes.len(),
-        0,
+        &mut 0,
         &ctx,
         TrunkLabel::Main,
         MainSpine::Future,

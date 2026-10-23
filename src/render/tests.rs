@@ -6,6 +6,7 @@ mod line;
 mod metadata;
 mod orphan;
 mod rewrite;
+mod shared;
 mod trunk;
 
 use super::Colours;

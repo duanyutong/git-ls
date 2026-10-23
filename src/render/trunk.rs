@@ -56,6 +56,28 @@ pub(super) fn trunk_prefix(
     main_spine: MainSpine,
     colours: &super::colours::Colours,
 ) -> String {
+    let roots: Vec<_> = (0..layout.lane_count).collect();
+    let lane_colours: Vec<_> = (0..layout.lane_count)
+        .map(|index| layout.colour_offset + index)
+        .collect();
+    trunk_prefix_with_roots(
+        layout,
+        main_is_current,
+        main_spine,
+        &roots,
+        &lane_colours,
+        colours,
+    )
+}
+
+pub(super) fn trunk_prefix_with_roots(
+    layout: LaneRenderLayout,
+    main_is_current: bool,
+    main_spine: MainSpine,
+    roots: &[usize],
+    lane_colours: &[usize],
+    colours: &super::colours::Colours,
+) -> String {
     let marker = if main_is_current {
         colours.stack(0, CURRENT_MAIN_COMMIT_GLYPH)
     } else {
@@ -73,16 +95,24 @@ pub(super) fn trunk_prefix(
 
     let mut parts = vec![marker];
     for _ in 0..layout.lane_padding() {
-        let colour_index = layout.colour_offset;
+        let colour_index = lane_colours
+            .first()
+            .copied()
+            .unwrap_or(layout.colour_offset);
         parts.push(colours.stack(colour_index, "──"));
     }
-    for index in 0..layout.lane_count {
-        let glyph = if index + 1 == layout.lane_count {
+    let last = roots.last().copied().unwrap_or(0);
+    for (index, &colour_index) in lane_colours.iter().enumerate() {
+        let glyph = if index > last {
+            "  "
+        } else if index == last {
             "─┘"
-        } else {
+        } else if roots.contains(&index) {
             "─┴"
+        } else {
+            "──"
         };
-        parts.push(colours.stack(layout.colour_offset + index, glyph));
+        parts.push(colours.stack(colour_index, glyph));
     }
     format!("{TREE_LEFT_PADDING}{}", parts.join(""))
 }
