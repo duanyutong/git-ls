@@ -13,7 +13,9 @@ use crate::lanes::{ordered_lanes, plain_git_main_branch, sort_lane_groups};
 use crate::model::{BranchAnnotation, LaneGroup, RepositorySnapshot};
 use crate::terminal::RenderEnvironment;
 
-use super::{Analysis, build_analysis, execute, render_analysis, write_render_plan};
+use super::{
+    Analysis, build_analysis, execute, hydrate_diff_stats, render_analysis, write_render_plan,
+};
 
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
@@ -200,6 +202,12 @@ fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, S
     Some((store, common, object_format))
 }
 
+fn already_persisted(store: &Store, name: &str, key: &str, facts: &Facts) -> bool {
+    store
+        .read::<Facts>(name, key)
+        .is_some_and(|previous| facts.same_answers(&previous))
+}
+
 pub(super) fn execute_cached<W: Write>(
     raw: &Args,
     args: &RuntimeOptions,
@@ -245,7 +253,8 @@ pub(super) fn execute_cached<W: Write>(
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
     let (analysis, computed) = if let Some(snapshot) = snapshot {
         crate::diagnostics::event(format_args!("cache=hit"));
-        let analysis = snapshot.live(args, repository, &main_oid, &session)?;
+        let mut analysis = snapshot.live(args, repository, &main_oid, &session)?;
+        hydrate_diff_stats(args, &mut analysis, &session, environment)?;
         let facts = session.has_new_facts().then(|| session.into_facts());
         (analysis, facts)
     } else {
@@ -262,29 +271,37 @@ pub(super) fn execute_cached<W: Write>(
                 "absent_or_key_mismatch"
             }
         ));
-        let analysis = build_analysis(args, &session)?;
+        let mut analysis = build_analysis(args, &session)?;
+        hydrate_diff_stats(args, &mut analysis, &session, environment)?;
         (analysis, Some(session.into_facts()))
     };
     let plan = render_analysis(args, &analysis, environment);
     write_render_plan(stdout, &plan, environment)?;
     let mut published = false;
     if let Some(mut facts) = computed {
+        {
+            let _perf = crate::diagnostics::stage("cache_admission");
+            let before = facts.metadata.len();
+            facts.fit(4096, &|value| crate::cache::fits(&facts_key, value));
+            crate::diagnostics::event(format_args!(
+                "cache_admission entry=facts metadata_before={} metadata_retained={}",
+                before,
+                facts.metadata.len()
+            ));
+        }
+        if topology_hit && already_persisted(&store, facts_name, &facts_key, &facts) {
+            crate::diagnostics::event(format_args!(
+                "cache_publication=skipped reason=unchanged_answers"
+            ));
+            crate::cache::maintenance::after_render(&store, false, raw.no_cache_maintenance, &name);
+            return Ok(());
+        }
         let unchanged = {
             let _perf = crate::diagnostics::stage("cache_revalidation");
             Inputs::capture(git).is_ok_and(|current| current == inputs)
                 && location(".").as_ref() == Some(&(common, object_format, inputs.configured_main))
         };
         if unchanged {
-            {
-                let _perf = crate::diagnostics::stage("cache_admission");
-                let before = facts.metadata.len();
-                facts.fit(512, &|value| crate::cache::fits(&facts_key, value));
-                crate::diagnostics::event(format_args!(
-                    "cache_admission entry=facts metadata_before={} metadata_retained={}",
-                    before,
-                    facts.metadata.len()
-                ));
-            }
             store.publish(facts_name, &facts_key, &facts);
             if !topology_hit {
                 published = store.publish(&name, &key, &Snapshot::neutral(analysis.groups));

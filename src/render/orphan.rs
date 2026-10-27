@@ -3,6 +3,7 @@ use crate::model::{BranchPoint, Lane};
 
 use super::colours::Colours;
 use super::context::RenderContext;
+use super::diff::with_diff_stat;
 use super::graph::{
     BRANCH_LABEL_GAP, COLLAPSED_MAIN_GLYPH, ORPHANED_BRANCH_GLYPH, TREE_LEFT_PADDING,
     is_current_branch_point, orphaned_row_indicator, render_row,
@@ -111,10 +112,11 @@ pub(super) fn render_orphaned_group(lanes: &[Lane], ctx: &RenderContext<'_>) -> 
                 .as_ref()
                 .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
                 .map(|annotation| ctx.colours.metadata_oid(&annotation.meta.short_oid));
-            output.push(match oid {
+            let line = match oid {
                 Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
                 None => RenderLine::plain(rendered),
-            });
+            };
+            output.push(with_diff_stat(line, point, ctx));
         }
     }
 

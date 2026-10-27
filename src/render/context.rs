@@ -1,7 +1,8 @@
 use crate::cli::{Layout, Verbosity};
-use crate::model::CommitMeta;
+use crate::model::{CommitMeta, LaneGroup};
 
 use super::colours::Colours;
+use super::diff::DiffStatWidths;
 use super::metadata::MetadataWidths;
 
 pub(crate) struct RenderContext<'a> {
@@ -14,6 +15,7 @@ pub(crate) struct RenderContext<'a> {
     pub(super) metadata_widths: MetadataWidths,
     pub(super) layout: Layout,
     pub(super) colours: &'a Colours,
+    pub(super) diff_stat_widths: DiffStatWidths,
 }
 
 impl<'a> RenderContext<'a> {
@@ -37,11 +39,17 @@ impl<'a> RenderContext<'a> {
             metadata_widths,
             layout: Layout::default(),
             colours,
+            diff_stat_widths: DiffStatWidths::default(),
         }
     }
 
     pub(crate) const fn with_layout(mut self, layout: Layout) -> Self {
         self.layout = layout;
+        self
+    }
+
+    pub(crate) fn with_diff_stats(mut self, groups: &[LaneGroup]) -> Self {
+        self.diff_stat_widths = DiffStatWidths::from_groups(groups);
         self
     }
 }

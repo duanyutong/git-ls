@@ -194,3 +194,12 @@ impl crate::model::Lane {
         )
     }
 }
+
+impl crate::backend::DiffStatBackend for OmitMetadata<'_> {
+    fn diff_stats(&self, pairs: &[crate::backend::DiffPair]) -> Result<crate::backend::DiffBatch> {
+        self.inner.diff_stats(pairs)
+    }
+    fn diff_context(&self, paths: &[String]) -> Option<u64> {
+        self.inner.diff_context(paths)
+    }
+}

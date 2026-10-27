@@ -1,4 +1,4 @@
-use anstyle::{Ansi256Color, Style};
+use anstyle::{Ansi256Color, AnsiColor, Style};
 
 use crate::cli::Palette;
 
@@ -78,6 +78,14 @@ impl Colours {
 
     pub(super) fn commit_title(&self, text: &str) -> String {
         self.muted_text(text)
+    }
+
+    pub(super) fn diff_added(&self, text: &str) -> String {
+        self.paint(text, AnsiColor::Green.on_default())
+    }
+
+    pub(super) fn diff_deleted(&self, text: &str) -> String {
+        self.paint(text, AnsiColor::Red.on_default())
     }
 
     pub(super) fn orphaned_name(&self, text: &str) -> String {

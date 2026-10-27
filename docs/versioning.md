@@ -1,6 +1,6 @@
 # Versioning and release tags
 
-Both repositories use identical `scripts/version.py` and `scripts/test_version.py` files.
+`scripts/version.py` implements the repository's commit and release policy, with behavioural tests in `scripts/test_version.py`.
 The helper derives package identity from `Cargo.toml` and requires no Rust compilation.
 
 Every commit after the initial commit shall contain the package version required by its Conventional Commit message.

@@ -4,6 +4,13 @@ use std::ops::Deref;
 pub(crate) struct RenderLine {
     text: String,
     fixed_suffix: Option<FixedSuffix>,
+    diff_stat: Option<DiffStatFallback>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DiffStatFallback {
+    original_suffix_len: Option<usize>,
+    minimum_width: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +24,7 @@ impl RenderLine {
         Self {
             text: text.into(),
             fixed_suffix: None,
+            diff_stat: None,
         }
     }
 
@@ -31,6 +39,7 @@ impl RenderLine {
         Self {
             text,
             fixed_suffix: Some(FixedSuffix { prefix, suffix }),
+            diff_stat: None,
         }
     }
 
@@ -53,6 +62,54 @@ impl RenderLine {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.text
+    }
+
+    pub(super) fn with_diff_stat(mut self, stats: &str, minimum_prefix_width: usize) -> Self {
+        let original_suffix_len = self.fixed_suffix.as_ref().map(|fixed| fixed.suffix.len());
+        if let Some(fixed) = &mut self.fixed_suffix {
+            let insertion = format!("{stats} ");
+            fixed.suffix.insert_str(0, &insertion);
+            let position = if fixed.prefix.is_empty() {
+                0
+            } else {
+                fixed.prefix.len() + 1
+            };
+            self.text.insert_str(position, &insertion);
+        } else {
+            self = Self::with_fixed_suffix(self.text, stats);
+        }
+        let suffix_width = self
+            .fixed_suffix
+            .as_ref()
+            .map_or(0, |fixed| console::measure_text_width(&fixed.suffix));
+        self.diff_stat = Some(DiffStatFallback {
+            original_suffix_len,
+            minimum_width: minimum_prefix_width + 1 + suffix_width,
+        });
+        self
+    }
+
+    pub(crate) fn diff_stat_minimum_width(&self) -> Option<usize> {
+        self.diff_stat.as_ref().map(|stat| stat.minimum_width)
+    }
+
+    pub(super) fn hide_diff_stat(&mut self) {
+        if let Some(stat) = self.diff_stat.take()
+            && let Some(mut fixed) = self.fixed_suffix.take()
+        {
+            if let Some(length) = stat.original_suffix_len {
+                fixed.suffix.drain(..fixed.suffix.len() - length);
+                self.text.clear();
+                self.text.push_str(&fixed.prefix);
+                if !fixed.prefix.is_empty() {
+                    self.text.push(' ');
+                }
+                self.text.push_str(&fixed.suffix);
+                self.fixed_suffix = Some(fixed);
+            } else {
+                self.text = fixed.prefix;
+            }
+        }
     }
 }
 

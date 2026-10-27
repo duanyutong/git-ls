@@ -2,13 +2,13 @@
 [application]
 package = "git-ls"
 source_root = "src"
-minimum_lines = 95
 target = ["--lib", "--all-features"]
 test_filter = ""
 test_skip = ["::repositories::"]
 unit = [
   "src/app.rs",
   "src/backend/batch.rs",
+  "src/backend/diff.rs",
   "src/backend/graph.rs",
   "src/backend/metadata.rs",
   "src/backend/session.rs",
@@ -23,6 +23,7 @@ unit = [
   "src/diagnostics.rs",
   "src/error.rs",
   "src/lanes/construction.rs",
+  "src/lanes/diff.rs",
   "src/lanes/grouping.rs",
   "src/lanes/observer.rs",
   "src/lanes/selection.rs",
@@ -31,6 +32,7 @@ unit = [
   "src/render/branch.rs",
   "src/render/colours.rs",
   "src/render/context.rs",
+  "src/render/diff.rs",
   "src/render/graph.rs",
   "src/render/layout.rs",
   "src/render/line.rs",

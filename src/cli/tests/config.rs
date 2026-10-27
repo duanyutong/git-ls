@@ -110,6 +110,9 @@ fn boolean_conversion_errors_are_preserved() {
 
     let error = read_git_ls_config(&UnavailableBooleans).unwrap_err();
     assert_eq!(error.to_string(), "Git rejected the Boolean value");
+    let values = HashMap::from([("git-ls.cache".into(), "invalid".into())]);
+    assert!(ConfigGit::failing().boolean_values(&values).is_err());
+    assert!(MockGit::default().boolean_values(&values).is_err());
 }
 
 #[test]
@@ -205,6 +208,54 @@ fn reads_git_ls_config_values() {
     assert_eq!(config.backend, Some(Backend::Shell));
     assert_eq!(config.palette, Some(Palette::Okabe));
     assert_eq!(config.layout, Some(Layout::Columns));
+}
+
+#[test]
+fn diff_stat_configuration_uses_typed_git_boolean_conversion() {
+    // The production adapter retains explicitly empty Boolean values.
+    struct PresentBoolean<'a>(&'a ConfigGit, &'a str);
+    impl GitCommand for PresentBoolean<'_> {
+        fn config_values(&self, _keys: &[&str]) -> Result<HashMap<String, String>> {
+            Ok(HashMap::from([(
+                "git-ls.diffstat".to_string(),
+                self.1.to_string(),
+            )]))
+        }
+        fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {
+            self.0.run(args, allow_failure)
+        }
+    }
+    for (value, canonical, expected) in [
+        ("true", "true", true),
+        ("2", "true", true),
+        ("", "false", false),
+    ] {
+        let git = ConfigGit::default()
+            .with(&["config", "--get", "git-ls.diffstat"], value)
+            .with(
+                &["config", "--type=bool", "--get", "git-ls.diffstat"],
+                canonical,
+            );
+        assert_eq!(
+            read_git_ls_config(&PresentBoolean(&git, value))
+                .unwrap()
+                .diff_stat,
+            Some(expected)
+        );
+    }
+    assert_eq!(
+        read_git_ls_config(&ConfigGit::default()).unwrap().diff_stat,
+        None
+    );
+    assert!(parse_boolean(ConfigKey::DiffStat, "invalid").is_err());
+    let git = ConfigGit::default()
+        .with(&["config", "--get", "git-ls.diffstat"], "invalid")
+        .with(
+            &["config", "--type=bool", "--get", "git-ls.diffstat"],
+            "invalid",
+        );
+    assert!(read_git_ls_config(&git).is_err());
+    assert_eq!(ConfigKey::DiffStat.expected(), "true or false");
 }
 
 #[test]

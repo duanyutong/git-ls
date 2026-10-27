@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::diff::{DiffBatch, DiffPair};
 use crate::error::Result;
 use crate::model::CommitMeta;
 
@@ -13,6 +14,25 @@ pub(crate) trait GitCommand {
             }
         }
         Ok(values)
+    }
+
+    fn diff_context(&self, _paths: &[String]) -> Option<u64> {
+        None
+    }
+
+    fn empty_tree(&self) -> Result<String> {
+        self.run_input(&["hash-object", "-t", "tree", "--stdin"], "")
+    }
+
+    fn boolean_values(&self, values: &HashMap<String, String>) -> Result<HashMap<String, String>> {
+        let mut result = HashMap::new();
+        for key in ["git-ls.diffstat", "git-ls.cache", "git-ls.cachemaintenance"] {
+            if values.contains_key(key) {
+                let canonical = self.run(&["config", "--type=bool", "--get", key], false)?;
+                result.insert(key.to_string(), canonical);
+            }
+        }
+        Ok(result)
     }
 
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String>;
@@ -35,6 +55,12 @@ pub(crate) trait CommitMetadataBackend {
         oids: &[&str],
         cache: &mut HashMap<String, CommitMeta>,
     ) -> Result<()>;
+}
+
+pub(crate) trait DiffStatBackend {
+    /// Compare the layer's endpoint trees; an absent base denotes the empty tree.
+    fn diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch>;
+    fn diff_context(&self, paths: &[String]) -> Option<u64>;
 }
 
 pub(crate) trait RepositoryStateBackend {
@@ -62,13 +88,18 @@ pub(crate) trait AncestryBackend {
 }
 
 pub(crate) trait GitBackend:
-    BranchlessQueries + CommitMetadataBackend + RepositoryStateBackend + AncestryBackend
+    BranchlessQueries
+    + CommitMetadataBackend
+    + DiffStatBackend
+    + RepositoryStateBackend
+    + AncestryBackend
 {
 }
 
 impl<T> GitBackend for T where
     T: BranchlessQueries
         + CommitMetadataBackend
+        + DiffStatBackend
         + RepositoryStateBackend
         + AncestryBackend
         + ?Sized

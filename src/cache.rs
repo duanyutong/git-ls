@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod compatibility;
-mod facts;
+pub(crate) mod facts;
 pub(crate) mod maintenance;
 mod policy;
 

@@ -44,7 +44,7 @@ impl RenderEnvironment {
         self.now_timestamp
     }
 
-    const fn terminal_width(self) -> Option<usize> {
+    pub(crate) const fn terminal_width(self) -> Option<usize> {
         self.terminal_width
     }
 

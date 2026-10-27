@@ -29,7 +29,7 @@ fn fixture() -> TestRepo {
 fn repeats_reuse_analysis_and_presentation_remains_live() {
     let repo = fixture();
     for backend in ["gix", "shell"] {
-        let (_, cold) = run(&repo, &["--backend", backend]);
+        let (_, cold) = run(&repo, &["--backend", backend, "-vv"]);
         assert!(
             cold.contains("cache=miss") || cold.contains("cache=invalid"),
             "{cold}"
@@ -473,12 +473,59 @@ fn oversized_metadata_reuses_topology_without_forcing_high_verbosity() {
         );
         assert!(refreshed.contains(&subject));
         assert!(debug.contains("reason=refresh"));
+        // Warm hydration may establish a different retention order from analysis.
+        run(&repo, &["--backend", backend, "--verbosity", "2"]);
+        let (_, debug) = run(&repo, &["--backend", backend, "--verbosity", "2"]);
+        assert!(
+            debug.contains("cache_publication=skipped reason=unchanged_answers"),
+            "{debug}"
+        );
+        assert!(!debug.contains("stage=cache_revalidation"), "{debug}");
+        assert!(!debug.contains("stage=cache_write"), "{debug}");
         assert_eq!(run(&repo, &low).0, expected);
         let root = repo.path().join(".git/git-ls/cache/v1");
         for entry in std::fs::read_dir(root).unwrap() {
             let entry = entry.unwrap();
             assert!(entry.metadata().unwrap().len() <= 1024 * 1024);
         }
+    }
+}
+
+#[test]
+fn unchanged_large_metadata_working_sets_do_not_republish_or_revalidate() {
+    use std::fmt::Write as _;
+
+    let repo = TestRepo::new();
+    let root = repo.commit("root");
+    let mut records = String::new();
+    for index in 0..600 {
+        let subject = format!("topic {index}");
+        writeln!(records, "commit refs/heads/topic-{index:03}\ncommitter Example <example@example.invalid> {} +0000\ndata {}\n{subject}\nfrom {root}\n", 1_700_000_000 + index, subject.len()).unwrap();
+    }
+    repo.command("git")
+        .args(["fast-import", "--quiet"])
+        .write_stdin(records)
+        .assert()
+        .success();
+    for backend in ["gix", "shell"] {
+        let options = [
+            "--backend",
+            backend,
+            "-vv",
+            "--no-diff-stat",
+            "--no-cache-maintenance",
+        ];
+        let (cold, _) = run(&repo, &options);
+        for _ in 0..2 {
+            let (warm, debug) = run(&repo, &options);
+            assert_eq!(warm, cold);
+            assert!(debug.contains("persistent_metadata_hits=601"), "{debug}");
+            assert!(!debug.contains("stage=cache_revalidation"), "{debug}");
+            assert!(!debug.contains("stage=cache_write"), "{debug}");
+        }
+        let mut uncached = options.to_vec();
+        uncached.push("--no-cache");
+        assert_eq!(cold, run(&repo, &uncached).0);
     }
 }
 

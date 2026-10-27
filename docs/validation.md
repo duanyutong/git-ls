@@ -1,5 +1,17 @@
 # Acceptance record
 
+Entries record requirements and results at their stated dates; the current acceptance contract is defined in the [coverage policy](coverage-policy.md).
+
+## Core Rust unit acceptance: 26 October 2026
+
+Version 0.15.0 has been validated on macOS arm64 with Rust 1.99.1 and Python 3.15.0.
+`just check` and `just coverage` pass, including all 298 Rust acceptance tests, 16 versioning tests, 15 collector and guard regression tests, separate doctests and production release compilation.
+The independent Rust unit run executes 242 tests and covers all 3,315 executable lines, 5,052 regions and 384 functions across the unchanged 35-module unit scope.
+The 22 repository-backed internal tests remain part of ordinary acceptance and do not contribute profiles to unit coverage.
+The separate versioning sanity guard passes its 95% line minimum, with its measured percentage retained in diagnostic reports.
+Aggregate application coverage has been retired, and coverage acceptance requires only the pinned stable compiler.
+Evidence resides in `coverage/unit/summary.json`, the associated unit and versioning reports, `.validation/unit-policy-check.log` and `.validation/unit-policy-coverage.log`.
+
 ## Managed development tools: 13 October 2026
 
 prek provisions ShellCheck and typos from their hook repositories, and additional Cargo executables from the dependencies declared in `prek.toml`.
@@ -26,7 +38,7 @@ CI installs the pinned uv release through the official setup action; hosted Linu
 ## Graph and cache boundary remediation: 13 October 2026
 
 Version 0.13.4 has been validated on macOS arm64 with Rust 1.99.0 and Python 3.15.0.
-The five confirmed follow-up findings have been addressed whilst preserving the shared coverage policy and separated test implementation files.
+The five confirmed follow-up findings have been addressed whilst preserving the then-current coverage policy and separated test implementation files.
 Disposable-repository regressions cover colliding tag and branch names, symbolic local aliases, replacement and graft parentage, invalid argument encoding, oversized metadata and topology, and bounded maintenance progression.
 Exact topology reuse remains available independently of optional metadata admission, and unchanged warm hits omit cache revalidation and publication.
 The analysis compatibility identifier is `analysis-3`; earlier graph snapshots and facts are not reused across this semantic change.
@@ -40,9 +52,9 @@ Versioning package coverage remains 382 of 390 lines, or 97.95%; its two unit mo
 The follow-up plan and acceptance logs reside in `.agents/plans/follow-up-issues.md` and its adjacent evidence directory.
 Linux and other platform-specific execution remain obligations of the corresponding CI jobs.
 
-## Shared coverage policy: 13 October 2026
+## Coverage inventory: 13 October 2026
 
-Both repositories now use the same explicit manifest schema, collectors and collector regression checks.
+At this stage, the repository adopted an explicit manifest schema, collectors and collector regression checks.
 Every production source under the declared roots is classified exactly once, with a 95% package line minimum and complete independent coverage of declared unit sources.
 The application unit run executes 217 tests using values and in-memory doubles; 21 repository-backed internal tests remain in ordinary and package acceptance.
 Existing assertions have been retained, while test implementations and test-only helpers have been removed from production report entries.

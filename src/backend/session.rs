@@ -2,9 +2,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use super::{
-    AncestryBackend, BranchlessQueries, CommitMetadataBackend, GitBackend, RepositoryStateBackend,
+    AncestryBackend, BranchlessQueries, CommitMetadataBackend, DiffBatch, DiffPair,
+    DiffStatBackend, GitBackend, RepositoryStateBackend,
 };
-use crate::cache::Facts;
+use crate::cache::{Facts, facts::DiffFacts};
 use crate::error::Result;
 use crate::model::CommitMeta;
 
@@ -152,6 +153,132 @@ impl RepositoryStateBackend for Session<'_> {
     }
 }
 
+impl Session<'_> {
+    fn discard_diff_stats(&self) {
+        let previous = std::mem::take(&mut self.facts.borrow_mut().diff);
+        if previous != DiffFacts::default() {
+            self.new_facts.set(true);
+        }
+    }
+
+    fn checked_diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
+        let batch = self.inner.diff_stats(pairs)?;
+        if batch.stats.len() != pairs.len() {
+            return Err(crate::error::GitLsError::git_command(
+                "diff statistics",
+                "backend returned an incorrect result count",
+            ));
+        }
+        Ok(batch)
+    }
+
+    fn record_diff_stats(
+        &self,
+        pairs: &[DiffPair],
+        batch: &mut DiffBatch,
+        previous: &DiffFacts,
+        valid: bool,
+    ) -> Result<bool> {
+        let mut paths = if valid {
+            previous.paths.clone()
+        } else {
+            Vec::new()
+        };
+        paths.extend(batch.paths.iter().cloned());
+        paths.sort_unstable();
+        paths.dedup();
+        // Discover dependencies first, then measure under a captured context.
+        // Mutable attributes cannot be validated solely from endpoint IDs.
+        let Some(before) = self.inner.diff_context(&paths) else {
+            crate::diagnostics::event(format_args!("diff_cache=bypass reason=unsupported_context"));
+            return Ok(false);
+        };
+        *batch = self.checked_diff_stats(pairs)?;
+        let after = self.inner.diff_context(&paths);
+        let dependencies_covered = batch
+            .paths
+            .iter()
+            .all(|path| paths.binary_search(path).is_ok());
+        if after != Some(before)
+            || !dependencies_covered
+            || (valid && self.inner.diff_context(&previous.paths) != previous.context)
+        {
+            crate::diagnostics::event(format_args!("diff_cache=bypass reason=context_changed"));
+            return Ok(false);
+        }
+        let mut facts = self.facts.borrow_mut();
+        facts.diff.context = after;
+        facts.diff.paths = paths;
+        for (pair, stat) in pairs.iter().zip(&batch.stats) {
+            if facts.diff.values.len() < self.limit {
+                let key = pair.key();
+                facts.diff.values.insert(key.clone(), *stat);
+                facts.touch(&key);
+            }
+        }
+        self.new_facts.set(true);
+        Ok(true)
+    }
+}
+
+impl DiffStatBackend for Session<'_> {
+    fn diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
+        if self.inputs.is_none() || pairs.is_empty() {
+            return self.inner.diff_stats(pairs);
+        }
+        let previous = self.facts.borrow().diff.clone();
+        let valid = previous.context.is_some()
+            && self.inner.diff_context(&previous.paths) == previous.context;
+        if !valid {
+            self.discard_diff_stats();
+        }
+        let missing: Vec<_> = pairs
+            .iter()
+            .filter(|pair| !valid || !previous.values.contains_key(&pair.key()))
+            .cloned()
+            .collect();
+        crate::diagnostics::count("diff_cache_hits", pairs.len() - missing.len());
+        crate::diagnostics::count("diff_cache_misses", missing.len());
+        if missing.is_empty() {
+            return Ok(DiffBatch {
+                stats: pairs
+                    .iter()
+                    .filter_map(|pair| previous.values.get(&pair.key()).copied())
+                    .collect(),
+                paths: previous.paths,
+            });
+        }
+        let mut batch = self.checked_diff_stats(&missing)?;
+        let stable = self.record_diff_stats(&missing, &mut batch, &previous, valid)?;
+        if valid && !stable {
+            self.discard_diff_stats();
+            return self.checked_diff_stats(pairs);
+        }
+        let mut live = if valid {
+            previous.values
+        } else {
+            HashMap::new()
+        };
+        live.extend(
+            missing
+                .iter()
+                .zip(batch.stats)
+                .map(|(pair, stat)| (pair.key(), stat)),
+        );
+        Ok(DiffBatch {
+            stats: pairs
+                .iter()
+                .filter_map(|pair| live.get(&pair.key()).copied())
+                .collect(),
+            paths: batch.paths,
+        })
+    }
+
+    fn diff_context(&self, paths: &[String]) -> Option<u64> {
+        self.inner.diff_context(paths)
+    }
+}
+
 impl AncestryBackend for Session<'_> {
     fn merge_base(&self, main: &str, head: &str) -> Result<Option<String>> {
         let key = format!("{main}:{head}");
@@ -226,6 +353,10 @@ impl AncestryBackend for Session<'_> {
 #[cfg(test)]
 #[path = "tests/session.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/session_diff.rs"]
+mod diff_tests;
 
 #[cfg(test)]
 #[path = "tests/session_reuse_tests.rs"]

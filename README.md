@@ -72,4 +72,5 @@ Example `~/.gitconfig` section:
 ```
 
 Option definitions and precedence are documented in [configuration](docs/configuration.md).
+Verbosity `2` includes per-layer added and deleted line counts; `--diff-stat`, `--no-diff-stat` and `git-ls.diffStat` override that preset.
 Development instructions appear in [development](docs/development.md).

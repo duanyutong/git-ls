@@ -47,6 +47,10 @@ impl Verbosity {
     pub(crate) const fn includes_title(self) -> bool {
         matches!(self, Self::High)
     }
+
+    pub(crate) const fn includes_diff_stat(self) -> bool {
+        matches!(self, Self::High)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

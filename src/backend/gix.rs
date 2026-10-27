@@ -12,11 +12,12 @@ use super::metadata::{insert_commit_meta, missing_commit_aliases};
 use super::process::ProcessGit;
 use super::shell::{shell_query_branch_names, shell_query_revset};
 use super::traits::{
-    AncestryBackend, BranchlessQueries, CommitMetadataBackend, RepositoryStateBackend,
+    AncestryBackend, BranchlessQueries, CommitMetadataBackend, DiffStatBackend,
+    RepositoryStateBackend,
 };
 
 /// Repository backend that uses `gix` for native Git data and shells out only
-/// for `git-branchless` revset queries, whose semantics are external to `gix`.
+/// for `git-branchless` revsets and Git's attribute-aware diff statistics.
 pub(crate) struct GixBackend {
     repo: gix::Repository,
     command: ProcessGit,
@@ -26,8 +27,10 @@ pub(crate) struct GixBackend {
 }
 
 impl GixBackend {
-    pub(crate) fn discover() -> Result<Self> {
-        Self::discover_from(".")
+    pub(crate) fn discover(command: ProcessGit) -> Result<Self> {
+        let mut backend = Self::discover_from(".")?;
+        backend.command = command;
+        Ok(backend)
     }
 
     pub(super) fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
@@ -41,7 +44,7 @@ impl GixBackend {
         Ok(Self {
             repo,
             shallow,
-            command: ProcessGit,
+            command: ProcessGit::default(),
             parents: RefCell::default(),
             selection: RefCell::default(),
         })
@@ -99,6 +102,27 @@ impl BranchlessQueries for GixBackend {
 
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_branch_names(&self.command, revset, hidden)
+    }
+}
+
+impl DiffStatBackend for GixBackend {
+    fn diff_stats(&self, pairs: &[super::DiffPair]) -> Result<super::DiffBatch> {
+        let mut trees = HashMap::new();
+        for id in super::diff::commit_ids(pairs) {
+            let commit = self
+                .repo
+                .find_commit(Self::object_id(id)?)
+                .map_err(|error| GitLsError::gix("find diff endpoint", error))?;
+            let tree = commit
+                .tree_id()
+                .map_err(|error| GitLsError::gix("read endpoint tree", error))?;
+            trees.insert(id.to_string(), tree.detach().to_string());
+        }
+        super::diff::diff_with_trees(&self.command, pairs, &trees)
+    }
+
+    fn diff_context(&self, paths: &[String]) -> Option<u64> {
+        super::GitCommand::diff_context(&self.command, paths)
     }
 }
 

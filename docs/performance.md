@@ -6,6 +6,7 @@
 
 This report records the stated historical builds.
 The current configuration implementation additionally delegates configured Boolean values to typed Git lookups; the timings below do not measure that change.
+The subsequent [per-layer statistics report](diff-stat-performance.md) documents batched comparisons, attribute-sensitive reuse, and the current facts-retention bound.
 
 ## Algorithmic changes
 
@@ -65,7 +66,7 @@ Commit subjects and branch annotations are hydrated separately as required by th
 Its key covers backend and analysis compatibility, object format, canonical repository location, configured main selection, and the sorted mapping of full local reference names to full object IDs.
 Ordering, layout, verbosity, colours, relative ages, and worktree markers are applied afresh.
 Successful directional merge-base, distance, and metadata facts survive snapshot invalidation when their object-ID dependencies remain valid.
-Each category retains up to 512 recently used entries at publication, allowing ordinary editing sequences to retain useful work.
+The historical evaluation retained up to 512 recently used entries per category at publication; the current implementation retains up to 4,096 within the same encoded-entry byte bound.
 An exact encoded-entry byte check additionally reduces metadata before graph facts until admission succeeds or the available facts are exhausted.
 Every rejected publication identifies its entry and admission limit in debug output.
 
@@ -201,11 +202,11 @@ A deliberately blocked maintenance helper establishes that the foreground and ou
 Maintenance tests cover coalescing, active publications, retention, byte quotas, and repeated passes.
 
 The repository gate is `just check`.
-Package coverage retains its 95% minimum; the strict unit gate requires zero uncovered lines, regions, and functions in pure logic.
-New filesystem and process adapters join the existing adapter exclusions from the strict unit boundary and remain subject to package coverage and integration tests.
-The coverage thresholds themselves have not been reduced.
-Final package line coverage was 98.24% for `git-ls` and 98.28% for `xtask`; the strict unit scope achieved 100% lines, regions, and functions.
-Both `just check` and `just coverage` passed on the completed implementation.
+The historical validation used a 95% package-line minimum and required zero uncovered lines, regions and functions in pure logic.
+Its final package line coverage was 98.24% for `git-ls` and 98.28% for `xtask`; the strict unit scope achieved 100% lines, regions and functions.
+Both `just check` and `just coverage` passed under those requirements on the completed implementation.
+The current [coverage policy](coverage-policy.md) requires 100% Rust unit lines, regions and functions, alongside a separate versioning sanity guard.
+Filesystem and process adapters retain their integration tests within `just check`; aggregate application percentages are no longer acceptance metrics.
 Platform-specific Windows process flags were not executed on the macOS validation host.
 
 ## Residual costs and limits

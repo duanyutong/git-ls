@@ -7,7 +7,7 @@ use clap::Parser;
 use crate::backend::{CommitMetadataBackend, GitBackend, get_commit_meta};
 use crate::cli::{Args, Layout, RuntimeOptions, Verbosity};
 use crate::error::Result;
-use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes};
+use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes, populate_diff_stats};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
 use crate::render::{
     Colours, RenderContext, RenderLine, calculate_metadata_widths,
@@ -95,6 +95,7 @@ impl<'a> RenderSession<'a> {
             self.colours,
         )
         .with_layout(self.layout)
+        .with_diff_stats(groups)
     }
 }
 
@@ -178,7 +179,7 @@ fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysi
     })
 }
 
-fn render_analysis(
+fn render_unfitted_analysis(
     args: &RuntimeOptions,
     analysis: &Analysis,
     environment: RenderEnvironment,
@@ -198,13 +199,63 @@ fn render_analysis(
     }
 }
 
+fn render_analysis(
+    args: &RuntimeOptions,
+    analysis: &Analysis,
+    environment: RenderEnvironment,
+) -> RenderPlan {
+    let mut plan = render_unfitted_analysis(args, analysis, environment);
+    crate::render::fit_diff_stats(&mut plan.lines, environment.terminal_width());
+    plan
+}
+
+fn hydrate_diff_stats(
+    args: &RuntimeOptions,
+    analysis: &mut Analysis,
+    git: &dyn GitBackend,
+    environment: RenderEnvironment,
+) -> Result<()> {
+    if !args.diff_stat {
+        return Ok(());
+    }
+    if let Some(width) = environment.terminal_width() {
+        set_placeholder_stats(
+            &mut analysis.groups,
+            Some(crate::model::DiffStat::default()),
+        );
+        let candidate = render_unfitted_analysis(args, analysis, environment);
+        let fits = candidate
+            .lines
+            .iter()
+            .filter_map(RenderLine::diff_stat_minimum_width)
+            .all(|minimum| minimum <= width);
+        set_placeholder_stats(&mut analysis.groups, None);
+        if !fits {
+            crate::diagnostics::event(format_args!("diff_stats=skipped reason=terminal_width"));
+            return Ok(());
+        }
+    }
+    populate_diff_stats(&mut analysis.groups, git, true)
+}
+
+fn set_placeholder_stats(groups: &mut [LaneGroup], value: Option<crate::model::DiffStat>) {
+    for point in groups
+        .iter_mut()
+        .flat_map(|group| &mut group.lanes)
+        .flat_map(|lane| &mut lane.branch_points)
+    {
+        point.diff_stat = value;
+    }
+}
+
 fn build_render_plan(
     args: &RuntimeOptions,
     git: &dyn GitBackend,
     environment: RenderEnvironment,
 ) -> Result<RenderPlan> {
     let git = crate::backend::Session::new(git);
-    let analysis = build_analysis(args, &git)?;
+    let mut analysis = build_analysis(args, &git)?;
+    hydrate_diff_stats(args, &mut analysis, &git, environment)?;
     Ok(render_analysis(args, &analysis, environment))
 }
 

@@ -1,5 +1,11 @@
 const DISPLAY_OID_LEN: usize = 7;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DiffStat {
+    pub(crate) added: u64,
+    pub(crate) deleted: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CommitMeta {
     pub(crate) oid: String,
@@ -26,6 +32,8 @@ pub(crate) struct BranchPoint {
     pub(crate) names: Vec<String>,
     pub(crate) annotation: Option<BranchAnnotation>,
     pub(crate) commit_count: usize,
+    #[serde(skip)]
+    pub(crate) diff_stat: Option<DiffStat>,
 }
 
 impl BranchPoint {
@@ -43,6 +51,7 @@ impl BranchPoint {
             names: names.into_iter().map(Into::into).collect(),
             commit_count: annotation.as_ref().map_or(0, |value| value.commit_count),
             annotation,
+            diff_stat: None,
         }
     }
 }

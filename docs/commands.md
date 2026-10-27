@@ -22,6 +22,9 @@ git ls --layout columns            # Column layout.
 git ls --backend shell             # Git subprocess backend.
 git ls --no-cache                  # Fresh analysis.
 git ls --debug                     # Progress and timings on standard error.
+git ls -vv                         # Detailed display, including layer diff statistics.
+git ls -vv --no-diff-stat           # Detailed display with line counts suppressed.
+git ls -v --diff-stat               # Normal display with line counts requested.
 git ls --help                      # Complete command reference.
 ```
 
@@ -30,8 +33,14 @@ git ls --help                      # Complete command reference.
 ```sh
 git config --global git-ls.layout columns
 git config --local git-ls.layout inline
+git config --global git-ls.verbosity 2
+git config --global git-ls.diffStat false
 git config --show-origin --get-regexp '^git-ls\.'
 ```
+
+Verbosity selects the display preset; explicit diff-stat flags override `git-ls.diffStat`, which otherwise overrides the verbosity preset.
+When `git-ls.diffStat` is unset, verbosity `2` includes counts and levels `0` and `1` omit them.
+The [configuration reference](configuration.md#display-detail-and-diff-statistics) specifies the complete precedence and measurement policy.
 
 ## Plain Git Selection
 

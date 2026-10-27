@@ -34,7 +34,7 @@ pub fn run_from_env() -> Result<()> {
         crate::diagnostics::event(format_args!(
             "clock=monotonic interval=after_arguments_before_summary"
         ));
-        let config_git = ProcessGit;
+        let config_git = ProcessGit::default();
         let config = {
             let _span = crate::diagnostics::stage("config");
             read_git_ls_config(&config_git)?
@@ -47,19 +47,25 @@ pub fn run_from_env() -> Result<()> {
             Backend::Gix => {
                 let git = {
                     let _span = crate::diagnostics::stage("backend_open");
-                    GixBackend::discover()?
+                    GixBackend::discover(config_git)?
                 };
                 if git.requires_shell_graph()? {
                     crate::diagnostics::event(format_args!(
                         "backend_fallback requested=gix effective=shell reason=graph_interpretation"
                     ));
-                    execute_cached(&raw, &args, &ProcessGit, &mut stdout, environment)
+                    execute_cached(
+                        &raw,
+                        &args,
+                        &ProcessGit::default(),
+                        &mut stdout,
+                        environment,
+                    )
                 } else {
                     execute_cached(&raw, &args, &git, &mut stdout, environment)
                 }
             }
             Backend::Shell => {
-                let git = ProcessGit;
+                let git = config_git;
                 execute_cached(&raw, &args, &git, &mut stdout, environment)
             }
         }

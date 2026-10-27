@@ -1,6 +1,6 @@
 # Development
 
-Rust 1.99.0 and Edition 2024 are specified by `rust-toolchain.toml` and `Cargo.toml`.
+Rust 1.99.1 and Edition 2024 are specified by `rust-toolchain.toml` and `Cargo.toml`.
 Development requires Git, rustup, uv, just and prek; command-runner versions are declared in `scripts/dev-tools.env`.
 Linux requires a C compiler and pkg-config; the corresponding Debian and Ubuntu packages are `build-essential pkg-config`.
 macOS requires the Xcode command-line tools.
@@ -18,7 +18,7 @@ The hook interpreter and compiler requests must remain consistent with `project.
 Use `prek run ruff-check --all-files` for Python linting, `prek run ruff-format --all-files` for Python formatting and `prek run pyright --all-files --hook-stage manual` for Python type checking.
 Hooks and recipes require no repository-specific `PATH` changes or virtual-environment activation.
 The recipe `just test` runs acceptance through a managed hook containing the declared git-branchless dependency.
-Coverage recipes similarly run their collectors inside hooks containing cargo-llvm-cov and, where repository tests require it, git-branchless.
+The Rust unit coverage recipe runs its collector inside a hook containing cargo-llvm-cov.
 Manual lint selects its own hooks explicitly, so invoking it does not execute acceptance tests or coverage.
 CI obtains the pinned just and prek command runners through `uv run` and caches prek environments alongside the Cargo caches.
 Cache keys separate operating systems, architectures and declared Rust toolchains; fallback restoration reuses the most recent compatible cache when dependency or hook configuration changes.
@@ -50,7 +50,7 @@ Pre-commit hooks perform formatting, spelling, syntax and repository-hygiene che
 Pre-push verifies committed version history and runs prek's built-in trailing-whitespace, end-of-file and large-file checks.
 The whitespace and end-of-file hooks apply automatic fixes at pre-commit and use `--check` at pre-push to report defects without modifying files.
 It invokes `uv run --locked scripts/version.py pre-push`; version verification requires no Rust compilation.
-The Python implementation and its behavioural tests are identical in `git-pr` and `git-ls`; package identity is read from the relevant manifest snapshot.
+The Python versioning implementation reads package identity from the relevant local manifest snapshot.
 Existing hook installations read `prek.toml` on invocation and require no reinstallation for this policy change.
 Successful CI on `main` triggers annotated version tags, as specified in [versioning](versioning.md).
 

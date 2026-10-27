@@ -11,6 +11,7 @@ Explicit command-line options override the resolved configuration.
 | `layout` | Graph layout: `inline` or `columns`; `inline`. |
 | `palette` | Colour palette; `classic`. |
 | `verbosity` | Detail level from `0` to `2`; `1`. |
+| `diffStat` | Added and deleted line counts per stack layer; follows verbosity when unset. |
 | `cache` | Persistent analysis reuse; `true`. |
 | `cacheMaintenance` | Deferred cache maintenance; `true`. |
 
@@ -19,6 +20,41 @@ Worktree configuration applies when `extensions.worktreeConfig` is enabled.
 The last value for each supported key wins.
 Empty display settings use their application defaults; a bare Boolean key means true, and an explicitly empty Boolean value means false.
 Git performs Boolean conversion, including integer forms; invalid Boolean values and malformed configuration produce errors.
+
+## Display detail and diff statistics
+
+Verbosity selects a display preset; the diff-stat setting overrides only the inclusion of line counts.
+Level `0` shows the graph, branch names and current-branch markers.
+Level `1`, the default, additionally shows commit ages and layer commit counts.
+Level `2` additionally shows commit subjects, abbreviated object identifiers and diff statistics.
+The options `-v` and `-vv` select levels `1` and `2`, respectively; further repetitions retain level `2`.
+An explicit verbosity option overrides configured verbosity rather than incrementing it.
+The independent `--debug` flag enables diagnostic output on standard error.
+
+Diff statistics follow this precedence:
+
+1. An explicit `--diff-stat` or `--no-diff-stat` option determines whether counts are requested.
+2. Otherwise, the resolved Boolean value of `git-ls.diffStat` applies when present.
+3. Otherwise, counts are requested at verbosity `2` and omitted at levels `0` and `1`.
+
+The two opposing CLI options conflict and cannot be supplied together.
+Changing verbosity does not reset an explicit diff-stat preference.
+An unset configuration value follows verbosity; `false` always suppresses counts unless `--diff-stat` overrides it.
+Git configuration scope precedence applies to `diffStat` in the same manner as other persistent settings.
+
+Each `+added -deleted` pair describes the combined tree difference between the preceding branch point and the layer head.
+The first layer is compared with its main-history base; an unrelated history is compared with the empty tree.
+Intermediate edits within a layer are not accumulated separately.
+Counts include changed text files, recognise renames, and exclude binary line counts.
+External diff commands and text-conversion drivers are disabled.
+Both repository backends delegate the diff calculation to Git, preserving its attribute-based text and binary classification.
+Diffs are calculated only when requested and are recalculated for each invocation, including when topology is obtained from the cache.
+
+Additions use the terminal's standard ANSI green and deletions use standard ANSI red, independently of the graph palette.
+The signs and alignment are retained when colour is disabled.
+The columns layout places counts immediately before the abbreviated object identifier; the inline layout appends counts while retaining its existing metadata prefix.
+Main-history and rewritten-commit rows carry no layer statistics.
+Where the terminal cannot accommodate the complete branch labels and statistic columns, statistics are omitted consistently from every row before branch labels are truncated.
 
 ## Persistent analysis reuse
 

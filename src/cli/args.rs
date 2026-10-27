@@ -52,11 +52,21 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) no_cache_maintenance: bool,
 
+    /// Select detail level 1 (-v) or 2 (-vv); level 2 includes diff stats unless overridden.
     #[arg(short, long, action = ArgAction::Count)]
     pub(crate) verbose: u8,
 
+    /// Detail level: 0–2; level 2 includes diff stats unless overridden.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=2), value_name = "VALUE")]
     pub(crate) verbosity: Option<u8>,
+
+    /// Show added/deleted line counts regardless of verbosity.
+    #[arg(long, conflicts_with = "no_diff_stat")]
+    pub(crate) diff_stat: bool,
+
+    /// Hide added/deleted line counts regardless of verbosity.
+    #[arg(long)]
+    pub(crate) no_diff_stat: bool,
 
     #[arg(long, value_enum, value_name = "VALUE")]
     pub(crate) backend: Option<Backend>,

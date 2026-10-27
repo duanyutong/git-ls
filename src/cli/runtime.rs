@@ -9,6 +9,7 @@ pub(crate) struct RuntimeOptions {
     pub(crate) hidden: bool,
     pub(crate) debug: bool,
     pub(crate) verbosity: Verbosity,
+    pub(crate) diff_stat: bool,
     pub(crate) backend: Backend,
     pub(crate) order: Order,
     pub(crate) colour_mode: ColourMode,
@@ -19,15 +20,23 @@ pub(crate) struct RuntimeOptions {
 impl RuntimeOptions {
     fn resolve(args: &Args, config: &GitLsConfig) -> Self {
         let defaults = DEFAULT_RUNTIME_OPTIONS;
+        let verbosity = args
+            .explicit_verbosity()
+            .or(config.verbosity)
+            .unwrap_or(defaults.verbosity);
 
         Self {
             revset: args.revset.clone(),
             hidden: args.hidden,
             debug: args.debug,
-            verbosity: args
-                .explicit_verbosity()
-                .or(config.verbosity)
-                .unwrap_or(defaults.verbosity),
+            verbosity,
+            diff_stat: if args.diff_stat || args.no_diff_stat {
+                args.diff_stat
+            } else {
+                config
+                    .diff_stat
+                    .unwrap_or_else(|| verbosity.includes_diff_stat())
+            },
             backend: args.backend.or(config.backend).unwrap_or(defaults.backend),
             order: args.order.unwrap_or(defaults.order),
             colour_mode: args.colour_mode.unwrap_or(defaults.colour_mode),

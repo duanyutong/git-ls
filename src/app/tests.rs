@@ -41,6 +41,7 @@ fn runtime_options(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
         hidden: false,
         debug: false,
         verbosity,
+        diff_stat: false,
         backend: Backend::Shell,
         order: Order::Newest,
         colour_mode: ColourMode::Never,
@@ -110,6 +111,25 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
     let main_timestamp = TEST_NOW - 120;
 
     MockGit::default()
+        .with(
+            &["cat-file", "--batch-check=%(objectname)"],
+            &format!("{}\n{}\n", "1".repeat(40), "2".repeat(40)),
+        )
+        .with(
+            &[
+                "diff-tree",
+                "--stdin",
+                "-r",
+                "--numstat",
+                "-z",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--no-relative",
+                "--no-color",
+            ],
+            &format!("{} {}\n2\t1\tfile\0", "2".repeat(40), "1".repeat(40)),
+        )
         .with(&["rev-list", "--stdin"], "feature-oid")
         .with(
             &["merge-base", "--independent", "feature-oid"],
@@ -210,6 +230,8 @@ fn parses_default_arguments() {
             debug: false,
             verbose: 0,
             verbosity: None,
+            diff_stat: false,
+            no_diff_stat: false,
             backend: None,
             order: None,
             colour_mode: None,
@@ -246,6 +268,8 @@ fn parses_flags_and_revset() {
             debug: true,
             verbose: 0,
             verbosity: None,
+            diff_stat: false,
+            no_diff_stat: false,
             backend: Some(Backend::Shell),
             order: Some(Order::Oldest),
             colour_mode: Some(ColourMode::Never),
@@ -317,6 +341,8 @@ fn parses_dash_prefixed_revset_after_separator() {
             debug: false,
             verbose: 0,
             verbosity: None,
+            diff_stat: false,
+            no_diff_stat: false,
             backend: None,
             order: None,
             colour_mode: None,
@@ -331,6 +357,19 @@ fn parses_verbose_flag() {
     assert_eq!(parse_args_from(["-v"]).unwrap().verbose, 1);
     assert_eq!(parse_args_from(["--verbose"]).unwrap().verbose, 1);
     assert_eq!(parse_args_from(["-vv"]).unwrap().verbose, 2);
+}
+
+#[test]
+fn rejects_conflicting_diff_stat_flags_in_either_order() {
+    for flags in [
+        ["--diff-stat", "--no-diff-stat"],
+        ["--no-diff-stat", "--diff-stat"],
+    ] {
+        assert_eq!(
+            clap_error_kind(parse_args_from(flags).unwrap_err()),
+            ErrorKind::ArgumentConflict
+        );
+    }
 }
 
 #[test]
@@ -636,6 +675,70 @@ fn run_uses_git_config_verbosity_in_mocked_workflow() {
 }
 
 #[test]
+fn preflight_avoids_invisible_statistics_and_preserves_both_layouts() {
+    for layout in [Layout::Columns, Layout::Inline] {
+        for width in [None, Some(1), Some(1000)] {
+            let git = populated_workflow_git("2");
+            let mut args = runtime_options("draft()", Verbosity::High);
+            args.layout = layout;
+            args.diff_stat = true;
+            let environment = RenderEnvironment::new(TEST_NOW, width, false);
+            let plan = build_render_plan(&args, &git, environment).unwrap();
+            let computed = git
+                .calls()
+                .iter()
+                .any(|call| call.first().is_some_and(|arg| arg == "diff-tree"));
+            assert_eq!(computed, width != Some(1));
+            assert_eq!(
+                plan.lines.iter().any(|line| line.contains("+2 -1")),
+                computed
+            );
+            if !computed {
+                args.diff_stat = false;
+                assert_eq!(plan, build_render_plan(&args, &git, environment).unwrap());
+            }
+        }
+    }
+    let mut args = runtime_options("draft()", Verbosity::High);
+    args.diff_stat = true;
+    build_render_plan(
+        &args,
+        &empty_selection_git(TEST_NOW - 120),
+        RenderEnvironment::new(TEST_NOW, Some(1), false),
+    )
+    .unwrap();
+}
+
+#[test]
+fn diff_failure_prevents_partial_output() {
+    let git = populated_workflow_git("2").with_error(&[
+        "diff-tree",
+        "--stdin",
+        "-r",
+        "--numstat",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--find-renames",
+        "--no-relative",
+        "--no-color",
+    ]);
+    let mut args = runtime_options("draft()", Verbosity::High);
+    args.diff_stat = true;
+    let mut output = RecordingWriter::default();
+    assert!(
+        execute(
+            &args,
+            &git,
+            &mut output,
+            RenderEnvironment::new(TEST_NOW, None, false)
+        )
+        .is_err()
+    );
+    assert!(output.is_empty());
+}
+
+#[test]
 fn run_prefers_cli_verbosity_over_git_config() {
     let git = populated_workflow_git("2");
     let mut output = RecordingWriter::default();
@@ -932,6 +1035,7 @@ fn run_renders_empty_selection_as_trunk() {
                 "--get".to_string(),
                 "git-ls.verbosity".to_string()
             ],
+            owned_args(&["config", "--get", "git-ls.diffstat"]),
             vec![
                 "config".to_string(),
                 "--get".to_string(),

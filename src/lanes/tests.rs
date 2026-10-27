@@ -284,6 +284,7 @@ fn runtime_options(verbosity: Verbosity) -> RuntimeOptions {
         hidden: false,
         debug: false,
         verbosity,
+        diff_stat: false,
         backend: Backend::Gix,
         order: Order::Newest,
         colour_mode: ColourMode::Never,
@@ -1578,6 +1579,7 @@ fn builds_lanes_from_backend_facts() {
         hidden: false,
         debug: false,
         verbosity: Verbosity::Low,
+        diff_stat: false,
         backend: Backend::Gix,
         order: Order::Newest,
         colour_mode: ColourMode::Never,
@@ -1716,4 +1718,13 @@ impl AnalysisObserver for () {
     fn progress(&self, _message: std::fmt::Arguments<'_>) {}
     fn event(&self, _fields: std::fmt::Arguments<'_>) {}
     fn count(&self, _name: &'static str, _amount: usize) {}
+}
+
+impl crate::backend::DiffStatBackend for FakeLaneBackend {
+    fn diff_stats(&self, _pairs: &[crate::backend::DiffPair]) -> Result<crate::backend::DiffBatch> {
+        Err(GitLsError::TestFixture("unexpected diff query".to_string()))
+    }
+    fn diff_context(&self, _paths: &[String]) -> Option<u64> {
+        None
+    }
 }

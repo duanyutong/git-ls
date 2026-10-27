@@ -8,6 +8,7 @@ use super::values::{Backend, Layout, Palette, Verbosity};
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct GitLsConfig {
     pub(crate) verbosity: Option<Verbosity>,
+    pub(crate) diff_stat: Option<bool>,
     pub(crate) backend: Option<Backend>,
     pub(crate) palette: Option<Palette>,
     pub(crate) layout: Option<Layout>,
@@ -18,6 +19,7 @@ pub(crate) struct GitLsConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ConfigKey {
     Verbosity,
+    DiffStat,
     Backend,
     Palette,
     Layout,
@@ -26,8 +28,9 @@ enum ConfigKey {
 }
 
 impl ConfigKey {
-    const LOOKUP_ORDER: [Self; 6] = [
+    const LOOKUP_ORDER: [Self; 7] = [
         Self::Verbosity,
+        Self::DiffStat,
         Self::Backend,
         Self::Palette,
         Self::Layout,
@@ -38,6 +41,7 @@ impl ConfigKey {
     const fn name(self) -> &'static str {
         match self {
             Self::Verbosity => "git-ls.verbosity",
+            Self::DiffStat => "git-ls.diffstat",
             Self::Backend => "git-ls.backend",
             Self::Palette => "git-ls.palette",
             Self::Layout => "git-ls.layout",
@@ -54,7 +58,7 @@ impl ConfigKey {
                 "okabe, tableau, dark2, set1, set2, paired, bold, vivid, tol, or classic"
             }
             Self::Layout => "columns or inline",
-            Self::Cache | Self::CacheMaintenance => "true or false",
+            Self::DiffStat | Self::Cache | Self::CacheMaintenance => "true or false",
         }
     }
 }
@@ -92,6 +96,7 @@ impl GitLsConfig {
     fn set_from_git_config(&mut self, key: ConfigKey, value: &str) -> Result<()> {
         match key {
             ConfigKey::Verbosity => self.verbosity = Some(parse_verbosity_config(key, value)?),
+            ConfigKey::DiffStat => self.diff_stat = Some(parse_boolean(key, value)?),
             ConfigKey::Backend => self.backend = Some(parse_backend_config(key, value)?),
             ConfigKey::Palette => self.palette = Some(parse_palette_config(key, value)?),
             ConfigKey::Layout => self.layout = Some(parse_layout_config(key, value)?),
@@ -108,15 +113,21 @@ pub(crate) fn read_git_ls_config(git: &dyn GitCommand) -> Result<GitLsConfig> {
     let mut config = GitLsConfig::default();
     let keys = ConfigKey::LOOKUP_ORDER.map(ConfigKey::name);
     let values = git.config_values(&keys)?;
+    let booleans = git.boolean_values(&values)?;
     for key in ConfigKey::LOOKUP_ORDER {
         if let Some(value) = values.get(key.name())
-            && (matches!(key, ConfigKey::Cache | ConfigKey::CacheMaintenance)
-                || !value.trim().is_empty())
+            && (matches!(
+                key,
+                ConfigKey::DiffStat | ConfigKey::Cache | ConfigKey::CacheMaintenance
+            ) || !value.trim().is_empty())
         {
-            if matches!(key, ConfigKey::Cache | ConfigKey::CacheMaintenance) {
+            if matches!(
+                key,
+                ConfigKey::DiffStat | ConfigKey::Cache | ConfigKey::CacheMaintenance
+            ) {
                 // Git converts the effective value, including valueless keys and integer forms.
-                let canonical = git.run(&["config", "--type=bool", "--get", key.name()], false)?;
-                config.set_from_git_config(key, &canonical)?;
+                let canonical = booleans.get(key.name()).map_or("", String::as_str);
+                config.set_from_git_config(key, canonical)?;
             } else {
                 config.set_from_git_config(key, value)?;
             }

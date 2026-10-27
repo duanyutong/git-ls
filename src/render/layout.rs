@@ -3,6 +3,7 @@ use crate::model::{BranchPoint, Lane, LaneGroup, RewrittenCommit};
 use super::ancestry::{Content, shared_ancestry};
 use super::branch::display_names;
 use super::context::RenderContext;
+use super::diff::with_diff_stat;
 use super::graph::{
     BRANCH_LABEL_GAP, LaneRenderLayout, MainSpine, REWRITTEN_COMMIT_GLYPH, current_row_indicator,
     is_current_branch_point, junction_prefix, marker_for, render_row, row_prefix_with_marker,
@@ -138,10 +139,11 @@ fn render_branch_point_row(
         .as_ref()
         .filter(|_| ctx.layout.is_columns() && ctx.verbosity.includes_oid())
         .map(|annotation| ctx.colours.metadata_oid(&annotation.meta.short_oid));
-    match oid {
+    let line = match oid {
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
         None => RenderLine::plain(rendered),
-    }
+    };
+    with_diff_stat(line, point, ctx)
 }
 
 fn render_rewritten_row(

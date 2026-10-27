@@ -1,4 +1,43 @@
 use super::*;
+
+#[test]
+fn answer_comparison_ignores_recency_but_detects_each_fact_category() {
+    let original = Facts::default();
+    let mut facts = original.clone();
+    facts.touch("unused");
+    assert!(facts.same_answers(&original));
+    facts.bases.insert("base".into(), None);
+    assert!(!facts.same_answers(&original));
+    facts.bases.clear();
+    facts.distances.insert("distance".into(), None);
+    assert!(!facts.same_answers(&original));
+    facts.distances.clear();
+    facts
+        .metadata
+        .insert("meta".into(), CommitMeta::new("meta", 0, "subject"));
+    assert!(!facts.same_answers(&original));
+    facts.metadata.clear();
+    facts.diff.context = Some(1);
+    assert!(!facts.same_answers(&original));
+}
+
+#[test]
+fn statistics_have_bounded_retention_and_are_discarded_before_graph_facts() {
+    let mut facts = Facts::default();
+    facts.bases.insert("base".into(), None);
+    facts.diff.context = Some(1);
+    facts.diff.paths = vec!["file".into()];
+    for key in ["old", "new"] {
+        facts.diff.values.insert(key.into(), DiffStat::default());
+        facts.touch(key);
+    }
+    facts.compact(1);
+    assert_eq!(facts.diff.values.keys().collect::<Vec<_>>(), vec!["new"]);
+    assert!(facts.recency.contains_key("new"));
+    facts.fit(1, &|value| value.diff.values.is_empty());
+    assert_eq!(facts.diff, DiffFacts::default());
+    assert!(facts.bases.contains_key("base"));
+}
 #[test]
 fn compaction_retains_recently_reused_facts() {
     let mut facts = Facts::default();

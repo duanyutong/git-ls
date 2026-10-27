@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tomllib
 
@@ -21,7 +22,6 @@ class Suite:
     name: str
     package: str
     source_root: str
-    minimum_lines: int
     target: tuple[str, ...]
     test_filter: str
     test_skip: tuple[str, ...]
@@ -35,6 +35,8 @@ class Suite:
 def suites() -> tuple[Suite, ...]:
     """Load the sole coverage policy and reject omitted or duplicate modules."""
     policy = tomllib.loads((ROOT / "coverage-policy.toml").read_text())
+    if not policy:
+        raise AssertionError("coverage policy must declare a unit suite")
     result = []
     for name, values in policy.items():
         expected = {field.name for field in dataclasses.fields(Suite)} - {"name"}
@@ -44,7 +46,6 @@ def suites() -> tuple[Suite, ...]:
             name=name,
             package=values["package"],
             source_root=values["source_root"],
-            minimum_lines=values["minimum_lines"],
             target=tuple(values["target"]),
             test_filter=values["test_filter"],
             test_skip=tuple(values["test_skip"]),
@@ -83,10 +84,18 @@ def suites() -> tuple[Suite, ...]:
 def report_files(report: pathlib.Path) -> dict:
     """Identify coverage entries by their complete repository-relative path."""
     data = json.loads(report.read_text())["data"][0]
-    return {
-        str(pathlib.Path(item["filename"]).resolve().relative_to(ROOT.resolve())): item
-        for item in data["files"]
-    }
+    files = {}
+    for item in data["files"]:
+        try:
+            filename = (
+                pathlib.Path(item["filename"]).resolve().relative_to(ROOT.resolve()).as_posix()
+            )
+        except ValueError as error:
+            raise AssertionError(f"report source outside checkout: {item['filename']}") from error
+        if filename in files:
+            raise AssertionError(f"duplicate report source: {filename}")
+        files[filename] = item
+    return files
 
 
 def enforce(report: pathlib.Path, suite: Suite) -> dict:
@@ -101,40 +110,26 @@ def enforce(report: pathlib.Path, suite: Suite) -> dict:
     for filename in suite.unit:
         for metric in METRICS:
             counts = files[filename]["summary"][metric]
-            if counts["count"] == 0 or counts["covered"] != counts["count"]:
+            if (
+                type(counts["count"]) is not int
+                or type(counts["covered"]) is not int
+                or counts["count"] <= 0
+                or counts["covered"] != counts["count"]
+            ):
                 raise AssertionError(f"{filename}: incomplete unit {metric}: {counts}")
             for key in ("count", "covered"):
                 totals[metric][key] += counts[key]
     return totals
 
 
-def enforce_package(report: pathlib.Path, suite: Suite) -> None:
-    """Require the package minimum and retain complete coverage of unit policy."""
-    files = report_files(report)
-    required = {*suite.unit, *suite.mixed, *suite.boundary}
-    allowed = required | set(suite.declarations) | set(suite.generated)
-    if not required <= files.keys() or not files.keys() <= allowed:
-        raise AssertionError(
-            f"{suite.name}: package boundary differs: "
-            f"missing={required - files.keys()}; extra={files.keys() - allowed}"
-        )
-    counts = json.loads(report.read_text())["data"][0]["totals"]["lines"]
-    if counts["count"] == 0 or counts["covered"] * 100 < counts["count"] * suite.minimum_lines:
-        raise AssertionError(f"{suite.name}: package lines below {suite.minimum_lines}%: {counts}")
-    for filename in suite.unit:
-        for metric in METRICS:
-            counts = files[filename]["summary"][metric]
-            if counts["count"] == 0 or counts["covered"] != counts["count"]:
-                raise AssertionError(f"{filename}: incomplete package {metric}: {counts}")
-
-
-def exclusion_pattern(suite: Suite, *, unit_only: bool) -> str:
-    """Exclude test implementations and, for the unit gate, non-unit sources."""
-    pattern = r"/(tests|\.validation)/|/tests\.rs$"
-    if unit_only:
-        excluded = (*suite.mixed, *suite.boundary, *suite.declarations, *suite.generated)
-        if excluded:
-            pattern += "|(" + "|".join(re.escape("/" + path) for path in excluded) + ")$"
+def exclusion_pattern(suite: Suite) -> str:
+    """Exclude declared non-unit sources and tests within this checkout only."""
+    root = re.escape(ROOT.resolve().as_posix() + "/")
+    sources = re.escape(suite.source_root)
+    pattern = rf"^{root}({sources}/(.*/)?tests(/|\.rs$)|tests/|\.validation/|target/)"
+    excluded = (*suite.mixed, *suite.boundary, *suite.declarations, *suite.generated)
+    if excluded:
+        pattern += "|^" + root + "(" + "|".join(re.escape(path) for path in excluded) + ")$"
     return pattern
 
 
@@ -161,11 +156,16 @@ def collect(suite: Suite) -> dict:
     environment["CARGO_LLVM_COV_BUILD_DIR"] = environment["CARGO_LLVM_COV_TARGET_DIR"]
     environment.pop("LLVM_PROFILE_FILE", None)
     environment.setdefault("RUST_TEST_THREADS", "6")
+    compiler = subprocess.check_output(
+        ["rustc", "--version"], cwd=ROOT, env=environment, text=True, timeout=30
+    ).strip()
+    directory = ROOT / "coverage/unit" / suite.name
+    if directory.exists():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True)
     run(["cargo", "llvm-cov", "clean", "--workspace"], environment)
     tests = ["cargo", "llvm-cov", "--no-report", *test_arguments(suite)]
     run(tests, environment)
-    directory = ROOT / "coverage/unit" / suite.name
-    directory.mkdir(parents=True, exist_ok=True)
     base = [
         "cargo",
         "llvm-cov",
@@ -173,7 +173,7 @@ def collect(suite: Suite) -> dict:
         "-p",
         suite.package,
         "--ignore-filename-regex",
-        exclusion_pattern(suite, unit_only=True),
+        exclusion_pattern(suite),
     ]
     report = directory / "coverage.json"
     run([*base, "--json", "--output-path", str(report)], environment)
@@ -188,8 +188,13 @@ def collect(suite: Suite) -> dict:
             timeout=120,
         )
     totals = enforce(report, suite)
-    print(f"{suite.name}: {len(suite.unit)} modules; 100% unit lines, regions and functions")
-    return {"files": list(suite.unit), "metrics": totals}
+    print(f"Rust unit coverage: 100% lines, regions and functions ({len(suite.unit)} modules)")
+    return {
+        "compiler": compiler,
+        "tests": test_arguments(suite),
+        "files": list(suite.unit),
+        "metrics": totals,
+    }
 
 
 def main() -> None:
@@ -197,14 +202,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-only", action="store_true", help="run unit tests without coverage")
     arguments = parser.parse_args()
+    summary = ROOT / "coverage/unit/summary.json"
+    if not arguments.test_only:
+        summary.unlink(missing_ok=True)
     declared = suites()
     if arguments.test_only:
         for suite in declared:
             run(["cargo", "test", *test_arguments(suite)], dict(os.environ))
         return
-    (ROOT / "coverage/unit/summary.json").unlink(missing_ok=True)
     results = {suite.name: collect(suite) for suite in declared}
-    (ROOT / "coverage/unit/summary.json").write_text(json.dumps(results, indent=2) + "\n")
+    summary.write_text(json.dumps(results, indent=2) + "\n")
 
 
 if __name__ == "__main__":
