@@ -8,8 +8,9 @@
 
 The graph uses `git-branchless` glyphs for equivalent concepts, with branch heads arranged above their ancestors.
 Stacks with a common downstack path share that path and connect through a junction above the shared branch point.
-Colours rotate in display order: each uninterrupted stack segment retains its colour, and a shared downstack segment receives the next colour after its child stacks join.
-The rotation continues across stack groups and repeats when the palette is exhausted.
+Each uninterrupted stack segment retains one colour, and a shared downstack segment receives its own colour after its child stacks join.
+The built-in palette is assigned according to segment size, visual adjacency and colour-family exposure, with larger stacks preferentially avoiding coral and green.
+The [colour-assignment policy](docs/colour-assignment.md) specifies the deterministic heuristic and its limitations.
 The following example uses synthetic branch names:
 
 ```text
@@ -28,7 +29,7 @@ The following example uses synthetic branch names:
 | `◉` | Branch point at `HEAD` when it is not the current named branch, including a detached `HEAD`. |
 | `◇` | Main-history node. |
 | `◆` | Current main-history node. |
-| `⦸` | Branch group orphaned from main history, labelled `(orphaned)` and rendered in a separate grey lane excluded from palette rotation. |
+| `⦸` | Branch group orphaned from main history, labelled `(orphaned)` and rendered in a separate grey lane excluded from stack colour assignment. |
 | `✕` | Rewritten commit, accompanied by its replacement commit. |
 | `▶` | Current branch row indicator in the leading gutter. |
 | `│` | Visible main or stack ancestry. |
@@ -65,7 +66,6 @@ Example `~/.gitconfig` section:
 [git-ls]
     backend = gix
     layout = columns
-    palette = classic
     verbosity = 2
     cache = true
     cacheMaintenance = true

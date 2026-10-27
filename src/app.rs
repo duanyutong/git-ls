@@ -184,7 +184,7 @@ fn render_unfitted_analysis(
     analysis: &Analysis,
     environment: RenderEnvironment,
 ) -> RenderPlan {
-    let colours = Colours::new(environment.colour_enabled(args.colour_mode), args.palette);
+    let colours = Colours::new(environment.colour_enabled(args.colour_mode));
     let session = RenderSession::new(
         args,
         &analysis.repository,

@@ -3,14 +3,13 @@ use clap::ValueEnum;
 use crate::backend::GitCommand;
 use crate::error::{GitLsError, Result};
 
-use super::values::{Backend, Layout, Palette, Verbosity};
+use super::values::{Backend, Layout, Verbosity};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct GitLsConfig {
     pub(crate) verbosity: Option<Verbosity>,
     pub(crate) diff_stat: Option<bool>,
     pub(crate) backend: Option<Backend>,
-    pub(crate) palette: Option<Palette>,
     pub(crate) layout: Option<Layout>,
     pub(crate) cache: Option<bool>,
     pub(crate) cache_maintenance: Option<bool>,
@@ -21,18 +20,16 @@ enum ConfigKey {
     Verbosity,
     DiffStat,
     Backend,
-    Palette,
     Layout,
     Cache,
     CacheMaintenance,
 }
 
 impl ConfigKey {
-    const LOOKUP_ORDER: [Self; 7] = [
+    const LOOKUP_ORDER: [Self; 6] = [
         Self::Verbosity,
         Self::DiffStat,
         Self::Backend,
-        Self::Palette,
         Self::Layout,
         Self::Cache,
         Self::CacheMaintenance,
@@ -43,7 +40,6 @@ impl ConfigKey {
             Self::Verbosity => "git-ls.verbosity",
             Self::DiffStat => "git-ls.diffstat",
             Self::Backend => "git-ls.backend",
-            Self::Palette => "git-ls.palette",
             Self::Layout => "git-ls.layout",
             Self::Cache => "git-ls.cache",
             Self::CacheMaintenance => "git-ls.cachemaintenance",
@@ -54,9 +50,6 @@ impl ConfigKey {
         match self {
             Self::Verbosity => "0, 1, or 2",
             Self::Backend => "gix or shell",
-            Self::Palette => {
-                "okabe, tableau, dark2, set1, set2, paired, bold, vivid, tol, or classic"
-            }
             Self::Layout => "columns or inline",
             Self::DiffStat | Self::Cache | Self::CacheMaintenance => "true or false",
         }
@@ -73,10 +66,6 @@ fn invalid_git_config(key: ConfigKey, value: &str) -> GitLsError {
 
 fn parse_backend_config(key: ConfigKey, value: &str) -> Result<Backend> {
     Backend::from_str(value, true).map_err(|_| invalid_git_config(key, value))
-}
-
-fn parse_palette_config(key: ConfigKey, value: &str) -> Result<Palette> {
-    Palette::from_str(value, true).map_err(|_| invalid_git_config(key, value))
 }
 
 fn parse_layout_config(key: ConfigKey, value: &str) -> Result<Layout> {
@@ -98,7 +87,6 @@ impl GitLsConfig {
             ConfigKey::Verbosity => self.verbosity = Some(parse_verbosity_config(key, value)?),
             ConfigKey::DiffStat => self.diff_stat = Some(parse_boolean(key, value)?),
             ConfigKey::Backend => self.backend = Some(parse_backend_config(key, value)?),
-            ConfigKey::Palette => self.palette = Some(parse_palette_config(key, value)?),
             ConfigKey::Layout => self.layout = Some(parse_layout_config(key, value)?),
             ConfigKey::Cache => self.cache = Some(parse_boolean(key, value)?),
             ConfigKey::CacheMaintenance => {

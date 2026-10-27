@@ -7,7 +7,6 @@ fn args_with(
     backend: Option<Backend>,
     order: Option<Order>,
     colour_mode: Option<ColourMode>,
-    palette: Option<Palette>,
     layout: Option<Layout>,
 ) -> Args {
     Args {
@@ -25,13 +24,12 @@ fn args_with(
         backend,
         order,
         colour_mode,
-        palette,
         layout,
     }
 }
 
 fn default_args() -> Args {
-    args_with(0, None, None, None, None, None, None)
+    args_with(0, None, None, None, None, None)
 }
 
 #[test]
@@ -49,7 +47,6 @@ fn runtime_options_use_central_defaults_without_cli_or_config() {
             backend: DEFAULT_RUNTIME_OPTIONS.backend,
             order: DEFAULT_RUNTIME_OPTIONS.order,
             colour_mode: DEFAULT_RUNTIME_OPTIONS.colour_mode,
-            palette: DEFAULT_RUNTIME_OPTIONS.palette,
             layout: DEFAULT_RUNTIME_OPTIONS.layout,
         }
     );
@@ -61,7 +58,6 @@ fn runtime_options_use_git_config_before_defaults() {
         verbosity: Some(Verbosity::High),
         diff_stat: None,
         backend: Some(Backend::Shell),
-        palette: Some(Palette::Okabe),
         layout: Some(Layout::Columns),
         cache: None,
         cache_maintenance: None,
@@ -71,7 +67,6 @@ fn runtime_options_use_git_config_before_defaults() {
 
     assert_eq!(args.verbosity, Verbosity::High);
     assert_eq!(args.backend, Backend::Shell);
-    assert_eq!(args.palette, Palette::Okabe);
     assert_eq!(args.layout, Layout::Columns);
     assert_eq!(args.order, DEFAULT_RUNTIME_OPTIONS.order);
     assert_eq!(args.colour_mode, DEFAULT_RUNTIME_OPTIONS.colour_mode);
@@ -83,7 +78,6 @@ fn runtime_options_prefer_cli_over_git_config() {
         verbosity: Some(Verbosity::High),
         diff_stat: None,
         backend: Some(Backend::Shell),
-        palette: Some(Palette::Okabe),
         layout: Some(Layout::Columns),
         cache: None,
         cache_maintenance: None,
@@ -94,7 +88,6 @@ fn runtime_options_prefer_cli_over_git_config() {
         Some(Backend::Gix),
         Some(Order::Oldest),
         Some(ColourMode::Never),
-        Some(Palette::Classic),
         Some(Layout::Inline),
     )
     .resolve(&config);
@@ -103,7 +96,6 @@ fn runtime_options_prefer_cli_over_git_config() {
     assert_eq!(args.backend, Backend::Gix);
     assert_eq!(args.order, Order::Oldest);
     assert_eq!(args.colour_mode, ColourMode::Never);
-    assert_eq!(args.palette, Palette::Classic);
     assert_eq!(args.layout, Layout::Inline);
 }
 

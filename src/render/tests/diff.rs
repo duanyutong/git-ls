@@ -44,7 +44,7 @@ fn groups() -> Vec<LaneGroup> {
 fn aligns_each_count_and_uses_standard_ansi_colours() {
     let groups = groups();
     for enabled in [false, true] {
-        let colours = Colours::new(enabled, crate::cli::Palette::Classic);
+        let colours = Colours::new(enabled);
         let ctx = RenderContext::new(
             "main",
             None,
@@ -74,7 +74,7 @@ fn aligns_each_count_and_uses_standard_ansi_colours() {
 #[test]
 fn supports_low_verbosity_inline_and_orphaned_rows() {
     let mut groups = groups();
-    let colours = Colours::new(false, crate::cli::Palette::Classic);
+    let colours = Colours::new(false);
     for orphan in [false, true] {
         if orphan {
             groups[0].main_distance = None;

@@ -5,7 +5,7 @@ use clap::error::ErrorKind;
 use std::collections::HashMap;
 
 use super::*;
-use crate::cli::{Args, Backend, ColourMode, Layout, Order, Palette, Verbosity};
+use crate::cli::{Args, Backend, ColourMode, Layout, Order, Verbosity};
 use crate::error::GitLsError;
 use crate::model::{BranchAnnotation, BranchPoint, Lane};
 use crate::test_support::{MockGit, TEST_NOW};
@@ -45,7 +45,6 @@ fn runtime_options(revset: &str, verbosity: Verbosity) -> RuntimeOptions {
         backend: Backend::Shell,
         order: Order::Newest,
         colour_mode: ColourMode::Never,
-        palette: Palette::Classic,
         layout: Layout::Inline,
     }
 }
@@ -137,7 +136,6 @@ fn populated_workflow_git(config_verbosity: &str) -> MockGit {
         )
         .with(&["config", "--get", "git-ls.verbosity"], config_verbosity)
         .with(&["config", "--get", "git-ls.backend"], "")
-        .with(&["config", "--get", "git-ls.palette"], "")
         .with(&["branchless", "query", "-r", "main()"], "main-oid")
         .with(&["branchless", "query", "-b", revset], "feature")
         .with(
@@ -235,7 +233,6 @@ fn parses_default_arguments() {
             backend: None,
             order: None,
             colour_mode: None,
-            palette: None,
             layout: None,
         }
     );
@@ -251,8 +248,6 @@ fn parses_flags_and_revset() {
             "--order=oldest",
             "--colour",
             "never",
-            "--palette",
-            "tableau",
             "--layout",
             "inline",
             "draft() & branches(feature/)",
@@ -273,7 +268,6 @@ fn parses_flags_and_revset() {
             backend: Some(Backend::Shell),
             order: Some(Order::Oldest),
             colour_mode: Some(ColourMode::Never),
-            palette: Some(Palette::Tableau),
             layout: Some(Layout::Inline),
         }
     );
@@ -288,42 +282,6 @@ fn parses_layout_names() {
     assert_eq!(
         parse_args_from(["--layout", "inline"]).unwrap().layout,
         Some(Layout::Inline)
-    );
-}
-
-#[test]
-fn parses_palette_names() {
-    assert_eq!(
-        parse_args_from(["-p", "classic"]).unwrap().palette,
-        Some(Palette::Classic)
-    );
-    assert_eq!(
-        parse_args_from(["--palette", "okabe"]).unwrap().palette,
-        Some(Palette::Okabe)
-    );
-}
-
-#[test]
-fn parses_additional_palette_names() {
-    assert_eq!(
-        parse_args_from(["-p", "set1"]).unwrap().palette,
-        Some(Palette::Set1)
-    );
-    assert_eq!(
-        parse_args_from(["-p", "paired"]).unwrap().palette,
-        Some(Palette::Paired)
-    );
-    assert_eq!(
-        parse_args_from(["-p", "bold"]).unwrap().palette,
-        Some(Palette::Bold)
-    );
-    assert_eq!(
-        parse_args_from(["-p", "vivid"]).unwrap().palette,
-        Some(Palette::Vivid)
-    );
-    assert_eq!(
-        parse_args_from(["-p", "tol"]).unwrap().palette,
-        Some(Palette::Tol)
     );
 }
 
@@ -346,7 +304,6 @@ fn parses_dash_prefixed_revset_after_separator() {
             backend: None,
             order: None,
             colour_mode: None,
-            palette: None,
             layout: None,
         }
     );
@@ -423,18 +380,6 @@ fn rejects_invalid_arguments() {
         ErrorKind::InvalidValue
     );
     assert_eq!(
-        clap_error_kind(parse_args_from(["--palette=maybe"]).unwrap_err()),
-        ErrorKind::InvalidValue
-    );
-    assert_eq!(
-        clap_error_kind(parse_args_from(["--palette=safe"]).unwrap_err()),
-        ErrorKind::InvalidValue
-    );
-    assert_eq!(
-        clap_error_kind(parse_args_from(["--palette=okabe-ito"]).unwrap_err()),
-        ErrorKind::InvalidValue
-    );
-    assert_eq!(
         clap_error_kind(parse_args_from(["--unknown"]).unwrap_err()),
         ErrorKind::UnknownArgument
     );
@@ -442,6 +387,16 @@ fn rejects_invalid_arguments() {
         clap_error_kind(parse_args_from(["one", "two"]).unwrap_err()),
         ErrorKind::UnknownArgument
     );
+}
+
+#[test]
+fn rejects_removed_palette_options() {
+    for flags in [["--palette", "classic"], ["-p", "classic"]] {
+        assert_eq!(
+            clap_error_kind(parse_args_from(flags).unwrap_err()),
+            ErrorKind::UnknownArgument
+        );
+    }
 }
 
 #[test]
@@ -595,7 +550,7 @@ fn write_render_plan_propagates_output_errors() {
 #[test]
 fn render_session_supplies_shared_context_to_populated_plan() {
     let args = runtime_options("draft()", Verbosity::Medium);
-    let colours = Colours::new(false, Palette::Classic);
+    let colours = Colours::new(false);
     let repository = repository_snapshot(Some("feature"), Some("feature-oid"));
     let main_meta = commit_meta("main-oid", TEST_NOW - 120, "main tip");
     let branch_meta = commit_meta("feature-oid", TEST_NOW - 60, "feature tip");
@@ -945,7 +900,6 @@ fn run_passes_hidden_selection_to_branchless_queries() {
     let git = MockGit::default()
         .with(&["config", "--get", "git-ls.verbosity"], "")
         .with(&["config", "--get", "git-ls.backend"], "")
-        .with(&["config", "--get", "git-ls.palette"], "")
         .with(
             &["branchless", "query", "-r", "--hidden", "main()"],
             "main-oid",
@@ -1040,11 +994,6 @@ fn run_renders_empty_selection_as_trunk() {
                 "config".to_string(),
                 "--get".to_string(),
                 "git-ls.backend".to_string()
-            ],
-            vec![
-                "config".to_string(),
-                "--get".to_string(),
-                "git-ls.palette".to_string()
             ],
             vec![
                 "config".to_string(),

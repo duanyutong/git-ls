@@ -106,14 +106,14 @@ fn from_conversions_route_to_boundary_variants() {
 
 #[test]
 fn constructors_preserve_structured_diagnostic_fields() {
-    let error = GitLsError::invalid_git_config("git-ls.palette", "mauve", "classic");
+    let error = GitLsError::invalid_git_config("git-ls.layout", "wide", "columns or inline");
     assert!(matches!(
         error,
         GitLsError::InvalidGitConfig {
-            key: "git-ls.palette",
+            key: "git-ls.layout",
             value,
-            expected: "classic",
-        } if value == "mauve"
+            expected: "columns or inline",
+        } if value == "wide"
     ));
 
     let error = GitLsError::gix("read HEAD name", "invalid ref");

@@ -195,18 +195,27 @@ fn reads_git_ls_config_in_declared_lookup_order() {
 }
 
 #[test]
+fn obsolete_palette_configuration_is_not_requested() {
+    let git = MockGit::default().with(&["config", "--get", "git-ls.palette"], "invalid");
+    assert_eq!(read_git_ls_config(&git).unwrap(), GitLsConfig::default());
+    assert!(
+        git.calls()
+            .iter()
+            .all(|call| !call.iter().any(|value| value == "git-ls.palette"))
+    );
+}
+
+#[test]
 fn reads_git_ls_config_values() {
     let git = ConfigGit::default()
         .with(&["config", "--get", ConfigKey::Verbosity.name()], "2")
         .with(&["config", "--get", ConfigKey::Backend.name()], "shell")
-        .with(&["config", "--get", ConfigKey::Palette.name()], "okabe")
         .with(&["config", "--get", ConfigKey::Layout.name()], "columns");
 
     let config = read_git_ls_config(&git).unwrap();
 
     assert_eq!(config.verbosity, Some(Verbosity::High));
     assert_eq!(config.backend, Some(Backend::Shell));
-    assert_eq!(config.palette, Some(Palette::Okabe));
     assert_eq!(config.layout, Some(Layout::Columns));
 }
 
@@ -259,12 +268,9 @@ fn diff_stat_configuration_uses_typed_git_boolean_conversion() {
 }
 
 #[test]
-fn rejects_invalid_backend_and_palette_config_values() {
+fn rejects_invalid_backend_config_values() {
     let backend_error = parse_backend_config(ConfigKey::Backend, "native").unwrap_err();
     assert_invalid_config(backend_error, ConfigKey::Backend, "native");
-
-    let palette_error = parse_palette_config(ConfigKey::Palette, "safe").unwrap_err();
-    assert_invalid_config(palette_error, ConfigKey::Palette, "safe");
 }
 
 #[test]
@@ -272,7 +278,6 @@ fn rejects_invalid_git_ls_config_values_by_key() {
     let cases = [
         (ConfigKey::Verbosity, "3"),
         (ConfigKey::Backend, "native"),
-        (ConfigKey::Palette, "safe"),
         (ConfigKey::Layout, "wide"),
     ];
 

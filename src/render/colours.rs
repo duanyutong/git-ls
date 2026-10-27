@@ -1,21 +1,40 @@
 use anstyle::{Ansi256Color, AnsiColor, Style};
 
-use crate::cli::Palette;
+use crate::model::LaneGroup;
+
+mod assignment;
 
 const ANSI_METADATA_COUNT: u8 = 255;
 const ANSI_ORPHANED_LABEL: u8 = 255;
 
 pub(crate) struct Colours {
     enabled: bool,
-    palette: &'static [u8],
+    assignment: Vec<usize>,
 }
 
 impl Colours {
-    pub(crate) const fn new(enabled: bool, palette: Palette) -> Self {
+    pub(crate) const fn new(enabled: bool) -> Self {
         Self {
             enabled,
-            palette: palette.ansi_colours(),
+            assignment: Vec::new(),
         }
+    }
+
+    pub(super) fn for_groups(&self, groups: &[LaneGroup]) -> Self {
+        Self {
+            enabled: self.enabled,
+            assignment: if self.enabled {
+                assignment::assign(groups)
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    fn ansi_colour(&self, index: usize) -> Ansi256Color {
+        Ansi256Color(assignment::ansi_colour(
+            self.assignment.get(index).copied().unwrap_or(index),
+        ))
     }
 
     pub(super) fn paint(&self, text: &str, style: Style) -> String {
@@ -27,29 +46,18 @@ impl Colours {
     }
 
     pub(super) fn stack(&self, index: usize, text: &str) -> String {
-        self.paint(
-            text,
-            Ansi256Color(self.palette[index % self.palette.len()]).on_default(),
-        )
+        self.paint(text, self.ansi_colour(index).on_default())
     }
 
     pub(super) fn current_stack(&self, index: usize, text: &str) -> String {
         self.paint(
             text,
-            Ansi256Color(self.palette[index % self.palette.len()])
-                .on_default()
-                .bold()
-                .underline(),
+            self.ansi_colour(index).on_default().bold().underline(),
         )
     }
 
     pub(super) fn current_indicator(&self, index: usize, text: &str) -> String {
-        self.paint(
-            text,
-            Ansi256Color(self.palette[index % self.palette.len()])
-                .on_default()
-                .bold(),
-        )
+        self.paint(text, self.ansi_colour(index).on_default().bold())
     }
 
     pub(super) fn dim(&self, text: &str) -> String {

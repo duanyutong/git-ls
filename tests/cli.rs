@@ -15,7 +15,7 @@ fn help_exits_successfully_without_git() {
             .and(predicate::str::contains("--backend <VALUE>"))
             .and(predicate::str::contains("--order <VALUE>"))
             .and(predicate::str::contains("--color <VALUE>"))
-            .and(predicate::str::contains("-p, --palette <VALUE>")),
+            .and(predicate::str::contains("--palette").not()),
     );
 }
 
@@ -28,6 +28,31 @@ fn invalid_option_exits_unsuccessfully_without_git() {
         .failure()
         .stdout("")
         .stderr(predicate::str::contains("invalid value 'later'"));
+}
+
+#[test]
+fn obsolete_palette_configuration_does_not_affect_the_built_in_palette() {
+    let repo = TestRepo::new();
+    repo.commit("chore: initialise repository");
+    repo.git(&["checkout", "-b", "feature/topic"]);
+    repo.commit("feat: add topic");
+    let args = ["--color", "always", "--verbosity", "0"];
+    let original = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    repo.git(&["config", "git-ls.palette", "obsolete-value"]);
+    repo.command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .args(args)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(original);
 }
 
 #[test]

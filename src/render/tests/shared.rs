@@ -1,4 +1,4 @@
-use crate::cli::{Layout, Palette, Verbosity};
+use crate::cli::{Layout, Verbosity};
 use crate::model::{Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
 use crate::render::graph::MainSpine;
@@ -273,7 +273,10 @@ fn preserves_metadata_aliases_detached_head_and_colour_in_both_layouts() {
             .iter()
             .find(|line| line.contains("alias"))
             .expect("shared row");
-        assert!(row.contains("\x1b[38;5;220m◉\x1b[0m"));
+        let colour = marker_colour(row, '◉');
+        for name in ["shared", "alias"] {
+            assert!(row.contains(&format!("\x1b[38;5;{colour}m{name}\x1b[0m")));
+        }
         let plain = console::strip_ansi_codes(row.as_str());
         let expected = if layout.is_columns() {
             " 2 shared, alias "
@@ -281,7 +284,15 @@ fn preserves_metadata_aliases_detached_head_and_colour_in_both_layouts() {
             "(2, shared) shared, alias "
         };
         assert!(plain.contains(expected), "{plain}");
-        assert!(text.contains("\x1b[38;5;203m├\x1b[0m"));
+        let junction = output
+            .iter()
+            .find(|row| row.contains('├'))
+            .expect("junction row");
+        let alpha = output
+            .iter()
+            .find(|row| row.contains("feat: add alpha"))
+            .expect("alpha row");
+        assert_eq!(marker_colour(junction, '├'), marker_colour(alpha, '◯'));
     }
 }
 
@@ -290,8 +301,8 @@ fn empty_paths_do_not_create_branch_rows() {
     assert_eq!(render(&[]), ["  ◇── main"]);
 }
 
-fn coloured_rows(groups: &[LaneGroup], palette: Palette) -> Vec<crate::render::RenderLine> {
-    let colours = crate::render::Colours::new(true, palette);
+fn coloured_rows(groups: &[LaneGroup]) -> Vec<crate::render::RenderLine> {
+    let colours = crate::render::Colours::new(true);
     let ctx = RenderContext::new(
         "main",
         None,
@@ -309,8 +320,27 @@ fn group(lanes: Vec<Lane>, distance: Option<usize>) -> LaneGroup {
     LaneGroup::new(Some("main".to_string()), None, distance, lanes)
 }
 
+fn marker_colour(row: &str, marker: char) -> u8 {
+    let end = row.find(marker).expect("marker present");
+    row[..end]
+        .rsplit_once("\x1b[38;5;")
+        .expect("256-colour foreground")
+        .1
+        .trim_end_matches('m')
+        .parse()
+        .expect("colour index")
+}
+
+fn branch_colour(output: &[crate::render::RenderLine], name: &str) -> u8 {
+    let row = output
+        .iter()
+        .find(|line| console::strip_ansi_codes(line).ends_with(name))
+        .expect("branch row");
+    marker_colour(row, if name == "shared" { '●' } else { '◯' })
+}
+
 #[test]
-fn rotates_in_display_order_at_nested_junctions_and_across_groups() {
+fn preserves_segment_continuity_and_consistent_glyph_colours_at_nested_junctions() {
     let groups = [
         group(
             vec![
@@ -324,103 +354,159 @@ fn rotates_in_display_order_at_nested_junctions_and_across_groups() {
         group(vec![lane(&["orphan"])], None),
         group(vec![lane(&["historical"])], Some(2)),
     ];
-    let output = coloured_rows(&groups, Palette::Classic);
-    let colours = test_colours(true);
-    for (name, colour_index) in [
-        ("alpha", 1),
-        ("beta", 2),
-        ("inner", 3),
-        ("gamma", 4),
-        ("shared", 5),
-        ("base", 5),
-        ("independent", 6),
-        ("historical", 7),
+    let output = coloured_rows(&groups);
+    let shared = branch_colour(&output, "shared");
+    let independent = branch_colour(&output, "independent");
+    assert_eq!(shared, branch_colour(&output, "base"));
+    for (left, right) in [
+        ("alpha", "beta"),
+        ("alpha", "inner"),
+        ("beta", "inner"),
+        ("inner", "gamma"),
+        ("gamma", "shared"),
+        ("inner", "shared"),
+        ("shared", "independent"),
+        ("independent", "historical"),
     ] {
+        assert_ne!(branch_colour(&output, left), branch_colour(&output, right));
+    }
+    for name in [
+        "alpha",
+        "beta",
+        "inner",
+        "gamma",
+        "shared",
+        "base",
+        "independent",
+        "historical",
+    ] {
+        let colour = branch_colour(&output, name);
         let row = output
             .iter()
             .find(|line| console::strip_ansi_codes(line).ends_with(name))
-            .expect("branch row");
-        let marker = if name == "shared" { "●" } else { "◯" };
-        assert!(
-            row.contains(&colours.stack(colour_index, marker)),
-            "{name}: {row:?}"
-        );
-        let label = if name == "shared" {
-            colours.current_stack(colour_index, name)
-        } else {
-            colours.stack(colour_index, name)
-        };
-        assert!(row.contains(&label), "{name}: {row:?}");
+            .unwrap();
+        assert!(row.contains(&format!("\x1b[38;5;{colour}m{name}\x1b[0m")));
     }
     let current = output
         .iter()
         .find(|line| line.contains('▶'))
         .expect("current row");
-    assert!(current.contains(&colours.current_indicator(5, "▶")));
-    let independent = output
+    assert!(current.contains(&format!("\x1b[1m\x1b[38;5;{shared}m▶")));
+    assert!(current.contains(&format!("\x1b[1m\x1b[4m\x1b[38;5;{shared}mshared")));
+    let independent_row = output
         .iter()
         .find(|line| line.contains("independent"))
-        .expect("independent row");
-    assert!(independent.contains(&colours.stack(5, "│")));
+        .unwrap();
+    assert!(independent_row.contains(&format!("\x1b[38;5;{shared}m│")));
     let main = output
         .iter()
         .find(|line| line.contains('◇'))
         .expect("main row");
-    assert!(main.contains(&colours.stack(5, "─┴")));
-    assert!(main.contains(&colours.stack(6, "─┘")));
-    assert!(main.contains(&colours.stack(0, "◇")));
+    assert!(main.contains(&format!("\x1b[38;5;{shared}m─┴")));
+    assert!(main.contains(&format!("\x1b[38;5;{independent}m─┘")));
+    assert_eq!(marker_colour(main, '◇'), 47);
 }
 
 #[test]
-fn rotates_shared_segments_until_the_selected_palette_is_exhausted() {
-    for palette in [Palette::Classic, Palette::Paired] {
-        let count = palette.ansi_colours().len() + 2;
-        let names: Vec<_> = (0..count).map(|index| format!("topic-{index}")).collect();
-        let lanes = names
-            .iter()
-            .map(|name| lane(&[name, "shared", "base"]))
-            .collect();
-        let output = coloured_rows(&[group(lanes, Some(0))], palette);
-        for (name, index) in names
-            .iter()
-            .enumerate()
-            .map(|(index, name)| (name.as_str(), index + 1))
-            .chain([("shared", count + 1), ("base", count + 1)])
-        {
-            let row = output
-                .iter()
-                .find(|line| console::strip_ansi_codes(line).ends_with(name))
-                .expect("branch row");
-            let marker = if name == "shared" { "●" } else { "◯" };
-            let code = palette.ansi_colours()[index % palette.ansi_colours().len()];
-            assert!(
-                row.contains(&format!("\x1b[38;5;{code}m{marker}\x1b[0m")),
-                "{name}: {row:?}"
-            );
-        }
+fn reuses_the_built_in_palette_for_large_forks_without_losing_shared_continuity() {
+    let count = 32;
+    let names: Vec<_> = (0..count).map(|index| format!("topic-{index}")).collect();
+    let lanes = names
+        .iter()
+        .map(|name| lane(&[name, "shared", "base"]))
+        .collect();
+    let output = coloured_rows(&[group(lanes, Some(0))]);
+    let mut previous = None;
+    for name in &names {
+        let colour = branch_colour(&output, name);
+        assert!([47, 203, 39, 220, 177, 33, 208].contains(&colour));
+        assert_ne!(previous, Some(colour));
+        previous = Some(colour);
     }
+    assert_eq!(
+        branch_colour(&output, "shared"),
+        branch_colour(&output, "base")
+    );
 }
 
 #[test]
-fn duplicate_paths_do_not_skip_unused_colours() {
-    let groups = [group(
+fn duplicate_paths_do_not_change_segment_colours() {
+    let original = coloured_rows(&[group(
+        vec![lane(&["alpha", "shared"]), lane(&["beta", "shared"])],
+        Some(0),
+    )]);
+    let duplicated = coloured_rows(&[group(
         vec![
             lane(&["alpha", "shared"]),
             lane(&["alpha", "shared"]),
             lane(&["beta", "shared"]),
         ],
         Some(0),
+    )]);
+    for name in ["alpha", "beta", "shared"] {
+        assert_eq!(
+            branch_colour(&original, name),
+            branch_colour(&duplicated, name)
+        );
+    }
+}
+
+#[test]
+fn display_settings_and_checkout_state_preserve_colours_and_plain_graph_shape() {
+    let groups = [group(
+        vec![
+            lane(&["alpha", "shared", "base"]),
+            lane(&["beta", "shared", "base"]),
+        ],
+        Some(0),
     )];
-    let output = coloured_rows(&groups, Palette::Classic);
     let colours = test_colours(true);
-    let beta = output
-        .iter()
-        .find(|line| line.contains("beta"))
-        .expect("beta row");
-    assert!(beta.contains(&colours.stack(2, "◯")));
-    let shared = output
-        .iter()
-        .find(|line| line.contains("shared"))
-        .expect("shared row");
-    assert!(shared.contains(&colours.stack(3, "●")));
+    let mut expected = None;
+    for layout in [Layout::Inline, Layout::Columns] {
+        for verbosity in [Verbosity::Low, Verbosity::Medium, Verbosity::High] {
+            for current in [Some("alpha"), Some("shared"), None] {
+                let ctx = RenderContext::new(
+                    "main",
+                    None,
+                    current,
+                    Some("shared"),
+                    TEST_NOW + 500,
+                    verbosity,
+                    MetadataWidths::default(),
+                    &colours,
+                )
+                .with_layout(layout);
+                let output = render_lane_groups(&groups, &ctx);
+                let assigned: Vec<_> = output
+                    .iter()
+                    .filter_map(|row| {
+                        row.chars()
+                            .find(|c| matches!(c, '●' | '◯' | '◉'))
+                            .map(|marker| marker_colour(row, marker))
+                    })
+                    .collect();
+                if let Some(expected) = &expected {
+                    assert_eq!(&assigned, expected);
+                } else {
+                    expected = Some(assigned);
+                }
+                let plain_colours = test_colours(false);
+                let plain_ctx = RenderContext {
+                    colours: &plain_colours,
+                    ..ctx
+                };
+                let plain = render_lane_groups(&groups, &plain_ctx);
+                assert_eq!(
+                    output
+                        .iter()
+                        .map(|row| console::strip_ansi_codes(row).into_owned())
+                        .collect::<Vec<_>>(),
+                    plain
+                        .iter()
+                        .map(|row| row.as_str().to_string())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 }

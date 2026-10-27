@@ -213,6 +213,11 @@ fn connected_lane_field_width(groups: &[LaneGroup]) -> usize {
 }
 
 pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) -> Vec<RenderLine> {
+    let colours = ctx.colours.for_groups(groups);
+    let ctx = &RenderContext {
+        colours: &colours,
+        ..*ctx
+    };
     let mut output = Vec::new();
     let mut next_colour = 1;
     let mut connected_started = false;

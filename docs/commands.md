@@ -61,7 +61,7 @@ The graph uses `git-branchless` glyphs for equivalent concepts, preserving a bra
 | `◯` | Non-current branch head or branch point. |
 | `◇` | Main-history node. |
 | `◆` | Current main-history node. |
-| `⦸` | Branch group orphaned from main history; rendered in a separate grey warning lane, labelled `(orphaned)`, and excluded from lane palette rotation. |
+| `⦸` | Branch group orphaned from main history; rendered in a separate grey warning lane, labelled `(orphaned)`, and excluded from stack colour assignment. |
 | `▶` | Current branch row indicator. `git-branchless` uses `ᐅ`; `git-ls` uses `▶` in a leading gutter so the graph glyph remains adjacent to the branch name. |
 | `│` | Visible main or stack ancestry. |
 | `⁝` | Omitted or elided main-history continuation. A counted form, such as `⁝ (531 commits on main)`, represents a collapsed main-history segment. |

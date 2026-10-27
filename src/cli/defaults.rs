@@ -1,4 +1,4 @@
-use super::values::{Backend, ColourMode, Layout, Order, Palette, Verbosity};
+use super::values::{Backend, ColourMode, Layout, Order, Verbosity};
 
 pub(crate) const DEFAULT_REVSET: &str = "draft()";
 
@@ -8,7 +8,6 @@ pub(super) struct RuntimeDefaults {
     pub(super) backend: Backend,
     pub(super) order: Order,
     pub(super) colour_mode: ColourMode,
-    pub(super) palette: Palette,
     pub(super) layout: Layout,
 }
 
@@ -17,6 +16,5 @@ pub(super) const DEFAULT_RUNTIME_OPTIONS: RuntimeDefaults = RuntimeDefaults {
     backend: Backend::Gix,
     order: Order::Newest,
     colour_mode: ColourMode::Auto,
-    palette: Palette::Classic,
     layout: Layout::Inline,
 };

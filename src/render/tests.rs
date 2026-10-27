@@ -11,7 +11,6 @@ mod trunk;
 
 use super::Colours;
 
-use crate::cli::Palette;
 use crate::model::{BranchAnnotation, BranchPoint, CommitMeta};
 use crate::test_support::TEST_COMMIT_TIME;
 
@@ -45,5 +44,5 @@ fn meta(oid: &str, subject: &str) -> CommitMeta {
 }
 
 fn test_colours(enabled: bool) -> Colours {
-    Colours::new(enabled, Palette::Classic)
+    Colours::new(enabled)
 }

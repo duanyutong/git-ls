@@ -9,7 +9,6 @@ Explicit command-line options override the resolved configuration.
 | --- | --- |
 | `backend` | Repository backend: `gix` or `shell`; `gix`. |
 | `layout` | Graph layout: `inline` or `columns`; `inline`. |
-| `palette` | Colour palette; `classic`. |
 | `verbosity` | Detail level from `0` to `2`; `1`. |
 | `diffStat` | Added and deleted line counts per stack layer; follows verbosity when unset. |
 | `cache` | Persistent analysis reuse; `true`. |
@@ -20,6 +19,10 @@ Worktree configuration applies when `extensions.worktreeConfig` is enabled.
 The last value for each supported key wins.
 Empty display settings use their application defaults; a bare Boolean key means true, and an explicitly empty Boolean value means false.
 Git performs Boolean conversion, including integer forms; invalid Boolean values and malformed configuration produce errors.
+
+Stack colours use a single built-in seven-colour palette and the [colour-assignment policy](colour-assignment.md).
+Palette selection is not configurable.
+Legacy `git-ls.palette` entries are ignored; the former `--palette` and `-p` options are no longer accepted.
 
 ## Display detail and diff statistics
 

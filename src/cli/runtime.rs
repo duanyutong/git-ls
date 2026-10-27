@@ -1,7 +1,7 @@
 use super::args::Args;
 use super::config::GitLsConfig;
 use super::defaults::DEFAULT_RUNTIME_OPTIONS;
-use super::values::{Backend, ColourMode, Layout, Order, Palette, Verbosity};
+use super::values::{Backend, ColourMode, Layout, Order, Verbosity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeOptions {
@@ -13,7 +13,6 @@ pub(crate) struct RuntimeOptions {
     pub(crate) backend: Backend,
     pub(crate) order: Order,
     pub(crate) colour_mode: ColourMode,
-    pub(crate) palette: Palette,
     pub(crate) layout: Layout,
 }
 
@@ -40,7 +39,6 @@ impl RuntimeOptions {
             backend: args.backend.or(config.backend).unwrap_or(defaults.backend),
             order: args.order.unwrap_or(defaults.order),
             colour_mode: args.colour_mode.unwrap_or(defaults.colour_mode),
-            palette: args.palette.or(config.palette).unwrap_or(defaults.palette),
             layout: args.layout.or(config.layout).unwrap_or(defaults.layout),
         }
     }

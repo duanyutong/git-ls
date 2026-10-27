@@ -31,6 +31,8 @@ unit = [
   "src/render/ancestry.rs",
   "src/render/branch.rs",
   "src/render/colours.rs",
+  "src/render/colours/assignment.rs",
+  "src/render/colours/assignment/topology.rs",
   "src/render/context.rs",
   "src/render/diff.rs",
   "src/render/graph.rs",

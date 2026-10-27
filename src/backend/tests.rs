@@ -12,12 +12,12 @@ use crate::test_support::MockGit;
 #[test]
 fn batch_configuration_preserves_records_and_last_value_precedence() {
     let values = super::shell::parse_config_records(
-        "git-ls.backend\ngix\0git-ls.backend\nshell\0git-ls.cache\0git-ls.other\nline one\nline two\0git-ls.palette\n\0",
+        "git-ls.backend\ngix\0git-ls.backend\nshell\0git-ls.cache\0git-ls.other\nline one\nline two\0git-ls.empty\n\0",
     );
     assert_eq!(values["git-ls.backend"], "shell");
     assert_eq!(values["git-ls.cache"], "true");
     assert_eq!(values["git-ls.other"], "line one\nline two");
-    assert_eq!(values["git-ls.palette"], "");
+    assert_eq!(values["git-ls.empty"], "");
 }
 
 struct MetadataBackendStub {

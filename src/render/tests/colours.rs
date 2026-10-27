@@ -13,14 +13,14 @@ use super::{point, test_colours};
 fn colours_text_when_enabled() {
     let colours = test_colours(true);
 
-    assert_eq!(colours.stack(0, "x"), "\x1b[38;5;41mx\x1b[0m");
+    assert_eq!(colours.stack(0, "x"), "\x1b[38;5;47mx\x1b[0m");
     assert_eq!(
         colours.current_stack(0, "x"),
-        "\x1b[1m\x1b[4m\x1b[38;5;41mx\x1b[0m"
+        "\x1b[1m\x1b[4m\x1b[38;5;47mx\x1b[0m"
     );
     assert_eq!(
         colours.current_indicator(0, "x"),
-        "\x1b[1m\x1b[38;5;41mx\x1b[0m"
+        "\x1b[1m\x1b[38;5;47mx\x1b[0m"
     );
     assert_eq!(colours.dim("x"), "\x1b[2mx\x1b[0m");
     assert_eq!(colours.muted_text("x"), "x");
@@ -45,10 +45,10 @@ fn colours_text_when_enabled() {
         MetadataWidths::default(),
         &colours,
     );
-    assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;41mmain\x1b[0m");
+    assert_eq!(main_label(&ctx), "\x1b[1m\x1b[4m\x1b[38;5;47mmain\x1b[0m");
     assert_eq!(
         trunk_prefix(LaneRenderLayout::empty(), true, MainSpine::Hidden, &colours),
-        "\x1b[38;5;41m◆\x1b[0m\x1b[38;5;41m──\x1b[0m"
+        "\x1b[38;5;47m◆\x1b[0m\x1b[38;5;47m──\x1b[0m"
     );
     let inactive_main_ctx = RenderContext::new(
         "main",
@@ -60,7 +60,7 @@ fn colours_text_when_enabled() {
         MetadataWidths::default(),
         &colours,
     );
-    assert_eq!(main_label(&inactive_main_ctx), "\x1b[38;5;41mmain\x1b[0m");
+    assert_eq!(main_label(&inactive_main_ctx), "\x1b[38;5;47mmain\x1b[0m");
     assert_eq!(
         trunk_prefix(
             LaneRenderLayout::empty(),
@@ -68,7 +68,7 @@ fn colours_text_when_enabled() {
             MainSpine::Hidden,
             &colours
         ),
-        "\x1b[38;5;41m◇\x1b[0m\x1b[38;5;41m──\x1b[0m"
+        "\x1b[38;5;47m◇\x1b[0m\x1b[38;5;47m──\x1b[0m"
     );
 }
 
@@ -101,7 +101,11 @@ fn main_reserves_first_palette_colour() {
 
     let output = render_lane_groups(&groups, &ctx);
 
-    assert!(output[1].contains("\x1b[38;5;203m●\x1b[0m"));
-    assert!(output[2].contains("\x1b[38;5;41m◇\x1b[0m"));
-    assert!(output[2].contains("\x1b[38;5;41mmain\x1b[0m"));
+    assert!(
+        [39, 220, 177, 33, 208]
+            .into_iter()
+            .any(|code| { output[1].contains(&format!("\x1b[38;5;{code}m●\x1b[0m")) })
+    );
+    assert!(output[2].contains("\x1b[38;5;47m◇\x1b[0m"));
+    assert!(output[2].contains("\x1b[38;5;47mmain\x1b[0m"));
 }
