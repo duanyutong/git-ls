@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{DiffStatBackend, GitCommand};
 use crate::error::{GitLsError, Result};
@@ -22,6 +22,48 @@ pub(crate) struct DiffBatch {
     pub(crate) paths: Vec<String>,
 }
 
+/// Effective inputs for one capture; path fingerprints permit subset validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiffContext {
+    pub(crate) scope: u64,
+    pub(crate) configuration: u64,
+    pub(crate) attributes: BTreeMap<String, u64>,
+}
+
+impl DiffContext {
+    pub(crate) const fn uniform(configuration: u64) -> Self {
+        Self {
+            scope: 0,
+            configuration,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn fingerprint(&self, paths: &[String]) -> u64 {
+        crate::cache::hash(&(
+            self.configuration,
+            paths
+                .iter()
+                .map(|path| (path, self.attributes.get(path)))
+                .collect::<Vec<_>>(),
+        ))
+    }
+}
+
+pub(super) fn configuration_fingerprint(config: &str) -> u64 {
+    let records: Vec<_> = config
+        .split_terminator('\0')
+        .filter(|record| {
+            let key = record
+                .split_once('\n')
+                .map_or(*record, |(key, _)| key)
+                .to_ascii_lowercase();
+            !key.starts_with("git-ls.") && !matches!(key.as_str(), "core.editor" | "core.pager")
+        })
+        .collect();
+    crate::cache::hash(&records)
+}
+
 pub(super) const DIFF_ARGS: &[&str] = &[
     "diff-tree",
     "--stdin",
@@ -31,6 +73,20 @@ pub(super) const DIFF_ARGS: &[&str] = &[
     "--no-ext-diff",
     "--no-textconv",
     "--find-renames",
+    "--no-relative",
+    "--no-color",
+];
+
+const PATH_ARGS: &[&str] = &[
+    "diff-tree",
+    "--stdin",
+    "-r",
+    "--raw",
+    "--no-abbrev",
+    "-z",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
     "--no-relative",
     "--no-color",
 ];
@@ -73,6 +129,114 @@ impl<T: GitCommand + ?Sized> DiffStatBackend for T {
     fn diff_context(&self, paths: &[String]) -> Option<u64> {
         GitCommand::diff_context(self, paths)
     }
+
+    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+        GitCommand::diff_snapshot(self, paths)
+    }
+
+    fn diff_tree_pairs(
+        &self,
+        pairs: &[DiffPair],
+        trees: &mut HashMap<String, String>,
+    ) -> Result<Option<Vec<DiffPair>>> {
+        let ids: Vec<_> = commit_ids(pairs)
+            .into_iter()
+            .filter(|id| !trees.contains_key(*id))
+            .collect();
+        if !ids.is_empty() {
+            let mut input = String::new();
+            for id in &ids {
+                input.push_str(id);
+                input.push_str("^{tree}\n");
+            }
+            let output = self.run_input(&["cat-file", "--batch-check=%(objectname)"], &input)?;
+            trees.extend(parse_trees(ids.into_iter(), &output)?);
+        }
+        let empty = if pairs.iter().any(|pair| pair.base.is_none()) {
+            self.empty_tree()?.trim().to_string()
+        } else {
+            String::new()
+        };
+        resolved_pairs(pairs, trees, &empty).map(Some)
+    }
+
+    fn diff_paths(&self, pairs: &[DiffPair]) -> Result<Vec<Vec<String>>> {
+        let headers: Vec<_> = pairs
+            .iter()
+            .map(|pair| {
+                format!(
+                    "{} {}\n",
+                    pair.base.as_deref().unwrap_or_default(),
+                    pair.head
+                )
+            })
+            .collect();
+        if headers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let output = self.run_input(PATH_ARGS, &headers.concat())?;
+        parse_paths(&headers, &output)
+    }
+
+    fn diff_tree_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
+        tree_stats(self, pairs)
+    }
+}
+
+pub(super) fn resolved_pairs(
+    pairs: &[DiffPair],
+    trees: &HashMap<String, String>,
+    empty: &str,
+) -> Result<Vec<DiffPair>> {
+    pairs
+        .iter()
+        .map(|pair| {
+            Ok(DiffPair {
+                base: Some(match &pair.base {
+                    Some(id) => trees.get(id).ok_or_else(invalid)?.clone(),
+                    None => empty.to_string(),
+                }),
+                head: trees.get(&pair.head).ok_or_else(invalid)?.clone(),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn tree_stats(
+    git: &(impl GitCommand + ?Sized),
+    pairs: &[DiffPair],
+) -> Result<DiffBatch> {
+    let trees = commit_ids(pairs)
+        .into_iter()
+        .map(|id| (id.to_string(), id.to_string()))
+        .collect();
+    diff_with_trees(git, pairs, &trees)
+}
+
+fn parse_paths(headers: &[String], mut output: &str) -> Result<Vec<Vec<String>>> {
+    let mut result = Vec::with_capacity(headers.len());
+    for (index, header) in headers.iter().enumerate() {
+        output = output.strip_prefix(header).ok_or_else(invalid)?;
+        let mut paths = Vec::new();
+        while !output.is_empty()
+            && !headers
+                .get(index + 1)
+                .is_some_and(|next| output.starts_with(next))
+        {
+            let (record, rest) = output.split_once('\0').ok_or_else(invalid)?;
+            if !record.starts_with(':') {
+                return Err(invalid());
+            }
+            let (path, rest) = rest.split_once('\0').ok_or_else(invalid)?;
+            paths.push(path.to_string());
+            output = rest;
+        }
+        result.push(paths);
+    }
+    if !output.is_empty() {
+        return Err(invalid());
+    }
+    Ok(result)
 }
 
 fn parse_trees<'a>(

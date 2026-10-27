@@ -300,11 +300,18 @@ fn unrelated_layers_are_compared_with_the_empty_tree() {
         assert!(row(&output, "feature/island").contains("+3 -0"), "{output}");
         assert!(row(&output, "feature/second").contains("+1 -0"), "{output}");
         assert!(row(&output, "feature/island").contains("(orphaned)"));
-        let hash = debug
-            .lines()
-            .find(|line| line.contains("operation=subprocess_hash_object"))
-            .expect("empty-tree resolution");
-        assert!(hash.contains("calls=1"), "{debug}");
+        if backend == "shell" {
+            let hash = debug
+                .lines()
+                .find(|line| line.contains("operation=subprocess_hash_object"))
+                .expect("empty-tree resolution");
+            assert!(hash.contains("calls=1"), "{debug}");
+        } else {
+            assert!(
+                !debug.contains("operation=subprocess_hash_object"),
+                "{debug}"
+            );
+        }
     }
 }
 
@@ -331,5 +338,66 @@ fn compares_merge_endpoints_and_coalesces_distinct_commits_with_identical_trees(
         assert!(row(&output, "feature/merged").contains("+2 -0"), "{output}");
         assert!(debug.contains("diff_unique_pairs=3"), "{debug}");
         assert!(debug.contains("diff_tree_pairs=2"), "{debug}");
+    }
+}
+
+#[test]
+fn cold_extension_and_metadata_only_amendments_use_at_most_one_numeric_batch() {
+    let repo = TestRepo::new();
+    repo.commit("root");
+    repo.git(&["checkout", "-b", "feature/topic"]);
+    write(&repo, "data", "one\n");
+    repo.commit("topic");
+    for backend in ["gix", "shell"] {
+        let (_, cold) = run(
+            &repo,
+            backend,
+            &["-vv", "--refresh-cache", "--no-cache-maintenance"],
+        );
+        assert!(cold.contains("diff_batch_launches=1"), "{cold}");
+        let (_, warm) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(!warm.contains("operation=subprocess_diff"), "{warm}");
+        repo.git(&["config", "core.editor", "false"]);
+        let (_, editor) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(!editor.contains("operation=subprocess_diff"), "{editor}");
+        repo.git(&[
+            "commit",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "amended metadata",
+        ]);
+        let (output, amended) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(!amended.contains("operation=subprocess_diff"), "{amended}");
+        assert!(amended.contains("diff_tree_cache_hits=1"), "{amended}");
+        assert_eq!(output, run(&repo, backend, &["-vv", "--no-cache"]).0);
+        write(&repo, "data", format!("one\ntwo\n{backend}\n"));
+        repo.commit("another change");
+        let (output, extended) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(extended.contains("diff_batch_launches=1"), "{extended}");
+        assert_eq!(output, run(&repo, backend, &["-vv", "--no-cache"]).0);
+    }
+}
+
+#[test]
+fn attributes_of_a_deleted_branch_do_not_invalidate_requested_statistics() {
+    let repo = TestRepo::new();
+    repo.commit("root");
+    repo.git(&["checkout", "-b", "feature/old"]);
+    write(&repo, "old", "old\n");
+    let old = repo.commit("old branch");
+    repo.git(&["checkout", "-b", "feature/topic", "main"]);
+    write(&repo, "new", "new\n");
+    repo.commit("topic");
+    for backend in ["gix", "shell"] {
+        repo.git(&["branch", "-f", "feature/old", &old]);
+        write(&repo, ".git/info/attributes", "");
+        run(&repo, backend, &["-vv", "--refresh-cache"]);
+        repo.git(&["branch", "-D", "feature/old"]);
+        let (expected, _) = run(&repo, backend, &["-vv"]);
+        write(&repo, ".git/info/attributes", "old -diff\n");
+        let (output, debug) = run(&repo, backend, &["-vv"]);
+        assert_eq!(output, expected);
+        assert!(!debug.contains("operation=subprocess_diff"), "{debug}");
     }
 }

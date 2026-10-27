@@ -44,7 +44,7 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
         let compatibility: serde_json::Value =
             serde_json::from_str(entry["key"].as_str().expect("structured key"))
                 .expect("JSON compatibility key");
-        assert_eq!(compatibility["analysis"], "analysis-3");
+        assert_eq!(compatibility["analysis"], "analysis-4");
         assert_eq!(compatibility["backend"], backend);
         assert_eq!(compatibility["object_format"], "sha1");
         for order in ["newest", "oldest"] {
@@ -94,7 +94,7 @@ fn changes_recompute_dependent_analysis_and_retain_immutable_facts() {
     repo.git(&["branch", "-m", "renamed"]);
     let (output, debug) = run(&repo, &[]);
     assert!(!debug.contains("cache=hit"));
-    assert!(debug.contains("merge_base_cache_hits="));
+    assert!(debug.contains("merge_base_cache_hits=") || debug.contains("lane_summary_hits="));
     assert!(output.contains("renamed"));
     repo.git(&["checkout", "main"]);
     repo.commit("advance main");
@@ -559,7 +559,10 @@ fn oversized_topology_reports_publication_limits_and_preserves_graph_facts() {
         assert_eq!(repeated, expected);
         assert!(!debug.contains("cache=hit"));
         assert!(debug.contains("distance_cache_hits=1"), "{debug}");
-        assert!(debug.contains("merge_base_cache_hits=1"), "{debug}");
+        assert!(
+            debug.contains("merge_base_cache_hits=1") || debug.contains("lane_summary_hits=1"),
+            "{debug}"
+        );
         assert!(debug.contains("reason=entry_limit_or_encoding entry=snapshot-"));
     }
 }

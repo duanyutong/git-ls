@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 
 /// Classifies a revision range using only edges already returned by its walk.
@@ -76,6 +76,82 @@ fn indexed_graph<K: Copy + Eq + Hash>(nodes: &[(K, Vec<K>)]) -> IndexedGraph<K> 
         children,
         order,
     }
+}
+
+#[derive(Clone, Copy)]
+struct PathState<K> {
+    base: Option<K>,
+    tip: Option<usize>,
+    gap: usize,
+}
+
+struct PathLink<K> {
+    id: K,
+    count: usize,
+    parent: Option<usize>,
+}
+
+pub(super) struct LinearPaths<K> {
+    links: Vec<PathLink<K>>,
+    states: HashMap<K, PathState<K>>,
+}
+
+type PathSummary<K> = (Option<K>, Vec<(K, usize)>);
+
+impl<K: Copy + Eq + Hash> LinearPaths<K> {
+    pub(super) fn summary(&self, head: &K) -> Option<PathSummary<K>> {
+        let state = self.states.get(head)?;
+        let mut points = Vec::new();
+        let mut cursor = state.tip;
+        while let Some(index) = cursor {
+            let link = &self.links[index];
+            points.push((link.id, link.count));
+            cursor = link.parent;
+        }
+        Some((state.base, points))
+    }
+}
+
+/// Summarise shared single-parent corridors once; merged ranges retain the exact walk.
+pub(super) fn linear_paths<K: Copy + Eq + Hash>(
+    nodes: &[(K, Vec<K>)],
+    points: &HashSet<K>,
+) -> Option<LinearPaths<K>> {
+    if nodes.iter().any(|(_, parents)| parents.len() > 1) {
+        return None;
+    }
+    let graph = indexed_graph(nodes);
+    if graph.order.len() != nodes.len() {
+        return None;
+    }
+    let mut result = LinearPaths {
+        links: Vec::new(),
+        states: HashMap::new(),
+    };
+    for vertex in graph.order {
+        let (id, parents) = &nodes[vertex];
+        let mut state = parents
+            .first()
+            .and_then(|parent| result.states.get(parent))
+            .copied()
+            .unwrap_or_else(|| PathState {
+                base: parents.first().copied(),
+                tip: None,
+                gap: 0,
+            });
+        state.gap += 1;
+        if points.contains(id) {
+            result.links.push(PathLink {
+                id: *id,
+                count: state.gap,
+                parent: state.tip,
+            });
+            state.tip = Some(result.links.len() - 1);
+            state.gap = 0;
+        }
+        result.states.insert(*id, state);
+    }
+    Some(result)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

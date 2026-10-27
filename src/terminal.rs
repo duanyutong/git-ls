@@ -64,7 +64,38 @@ fn fit_line_to_terminal_width(line: &str, terminal_width: Option<usize>) -> Cow<
     if width == 0 {
         return Cow::Borrowed("");
     }
-    truncate_str(line, width, truncation_tail(width))
+    let fitted = truncate_str(line, width, truncation_tail(width));
+    match compact_styles(&fitted) {
+        Cow::Borrowed(_) => fitted,
+        Cow::Owned(value) => Cow::Owned(value),
+    }
+}
+
+/// Drop overwritten style changes which have no visible characters between them.
+fn compact_styles(text: &str) -> Cow<'_, str> {
+    if !text.contains('\u{1b}') {
+        return Cow::Borrowed(text);
+    }
+    let mut output = String::with_capacity(text.len().min(4096));
+    let mut pending = String::new();
+    for (part, ansi) in console::AnsiCodeIterator::new(text) {
+        if ansi && part.starts_with("\u{1b}[") && part.ends_with('m') {
+            if matches!(part, "\u{1b}[0m" | "\u{1b}[m") {
+                pending.clear();
+            }
+            pending.push_str(part);
+        } else {
+            output.push_str(&pending);
+            pending.clear();
+            output.push_str(part);
+        }
+    }
+    output.push_str(&pending);
+    if output == text {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(output)
+    }
 }
 
 fn fit_line_with_fixed_suffix(line: &RenderLine, terminal_width: Option<usize>) -> Cow<'_, str> {
@@ -81,11 +112,11 @@ fn fit_line_with_fixed_suffix(line: &RenderLine, terminal_width: Option<usize>) 
 
     let suffix_width = console::measure_text_width(suffix);
     if width <= suffix_width {
-        return truncate_str(suffix, width, truncation_tail(width));
+        return fit_line_to_terminal_width(suffix, Some(width));
     }
 
     let prefix_width = width - suffix_width - 1;
-    let prefix = truncate_str(prefix, prefix_width, truncation_tail(prefix_width));
+    let prefix = fit_line_to_terminal_width(prefix, Some(prefix_width));
     let padding_width = width
         .saturating_sub(console::measure_text_width(prefix.as_ref()) + suffix_width)
         .max(1);
@@ -98,11 +129,9 @@ pub(crate) fn write_rendered_line(
     line: &RenderLine,
     environment: RenderEnvironment,
 ) -> Result<()> {
-    writeln!(
-        stdout,
-        "{}",
-        fit_line_with_fixed_suffix(line, environment.terminal_width())
-    )?;
+    let fitted = fit_line_with_fixed_suffix(line, environment.terminal_width());
+    crate::diagnostics::count("output_bytes", fitted.len() + 1);
+    writeln!(stdout, "{fitted}")?;
     Ok(())
 }
 

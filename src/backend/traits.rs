@@ -1,8 +1,13 @@
 use std::collections::HashMap;
 
-use super::diff::{DiffBatch, DiffPair};
+use super::diff::{DiffBatch, DiffContext, DiffPair};
 use crate::error::Result;
 use crate::model::CommitMeta;
+
+pub(crate) struct AncestrySummary {
+    pub(crate) base: Option<String>,
+    pub(crate) points: Vec<(String, usize)>,
+}
 
 pub(crate) trait GitCommand {
     fn config_values(&self, keys: &[&str]) -> Result<HashMap<String, String>> {
@@ -18,6 +23,10 @@ pub(crate) trait GitCommand {
 
     fn diff_context(&self, _paths: &[String]) -> Option<u64> {
         None
+    }
+
+    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+        self.diff_context(paths).map(DiffContext::uniform)
     }
 
     fn empty_tree(&self) -> Result<String> {
@@ -47,6 +56,34 @@ pub(crate) trait GitCommand {
 pub(crate) trait BranchlessQueries {
     fn query_revset(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>>;
+
+    fn query_rewrites_in_path(
+        &self,
+        _base: Option<&str>,
+        _head: &str,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        self.query_rewrites(oids, targets)
+    }
+
+    fn query_rewrites(
+        &self,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        let mut rewrites = HashMap::new();
+        for oid in oids {
+            let current = self.query_revset(&format!("current({oid})"), true)?;
+            if let [replacement] = current.as_slice()
+                && replacement != oid
+                && targets.contains(replacement)
+            {
+                rewrites.insert(oid.clone(), replacement.clone());
+            }
+        }
+        Ok(rewrites)
+    }
 }
 
 pub(crate) trait CommitMetadataBackend {
@@ -61,6 +98,28 @@ pub(crate) trait DiffStatBackend {
     /// Compare the layer's endpoint trees; an absent base denotes the empty tree.
     fn diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch>;
     fn diff_context(&self, paths: &[String]) -> Option<u64>;
+
+    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+        self.diff_context(paths).map(DiffContext::uniform)
+    }
+
+    /// Resolve immutable endpoint trees, reusing already captured commit mappings.
+    fn diff_tree_pairs(
+        &self,
+        _pairs: &[DiffPair],
+        _trees: &mut HashMap<String, String>,
+    ) -> Result<Option<Vec<DiffPair>>> {
+        Ok(None)
+    }
+
+    /// Discover an attribute-independent superset of each comparison's paths.
+    fn diff_paths(&self, _pairs: &[DiffPair]) -> Result<Vec<Vec<String>>> {
+        Ok(Vec::new())
+    }
+
+    fn diff_tree_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
+        self.diff_stats(pairs)
+    }
 }
 
 pub(crate) trait RepositoryStateBackend {
@@ -70,6 +129,15 @@ pub(crate) trait RepositoryStateBackend {
 }
 
 pub(crate) trait AncestryBackend {
+    /// Prepare shared paths once for the complete branch-point selection.
+    fn prepare_ancestry(&self, _main: &str, _points: &[&str]) -> Result<()> {
+        Ok(())
+    }
+
+    fn ancestry_summary(&self, _main: &str, _head: &str) -> Result<Option<AncestrySummary>> {
+        Ok(None)
+    }
+
     fn merge_base(&self, main_oid: &str, head_oid: &str) -> Result<Option<String>>;
     fn ancestry_path(&self, base_oid: Option<&str>, head_oid: &str) -> Result<Vec<String>>;
 

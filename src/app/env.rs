@@ -27,7 +27,7 @@ pub fn run_from_env() -> Result<()> {
         }
         return Ok(());
     }
-    let mut stdout = io::stdout().lock();
+    let mut stdout = io::BufWriter::with_capacity(64 * 1024, io::stdout().lock());
     let environment = RenderEnvironment::detect();
     let args = parse_args_from(env::args_os().skip(1))?;
     crate::diagnostics::observe(args.debug, || {

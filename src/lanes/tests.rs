@@ -29,6 +29,9 @@ struct FakeLaneBackend {
     ancestry_paths: HashMap<(Option<String>, String), Vec<String>>,
     metas: HashMap<String, CommitMeta>,
     metadata_requests: RefCell<Vec<Vec<String>>>,
+    ancestry_preparations: RefCell<Vec<Vec<String>>>,
+    summary: Option<Vec<(String, usize)>>,
+    summary_error: bool,
 }
 
 impl FakeLaneBackend {
@@ -190,6 +193,32 @@ impl CommitMetadataBackend for FakeLaneBackend {
 }
 
 impl AncestryBackend for FakeLaneBackend {
+    fn prepare_ancestry(&self, _main: &str, points: &[&str]) -> Result<()> {
+        if self.summary_error {
+            return Err(missing_fixture("summary preparation", "failed"));
+        }
+        let mut points: Vec<_> = points.iter().map(|point| (*point).to_string()).collect();
+        points.sort();
+        self.ancestry_preparations.borrow_mut().push(points);
+        Ok(())
+    }
+
+    fn ancestry_summary(
+        &self,
+        _main: &str,
+        _head: &str,
+    ) -> Result<Option<crate::backend::AncestrySummary>> {
+        if self.summary_error {
+            return Err(missing_fixture("summary", "failed"));
+        }
+        Ok(self
+            .summary
+            .as_ref()
+            .map(|points| crate::backend::AncestrySummary {
+                base: Some("base".into()),
+                points: points.clone(),
+            }))
+    }
     fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
         crate::test_support::reference_unmerged(self, main, tips)
     }
@@ -550,6 +579,41 @@ fn uses_plain_git_for_default_selection() {
             point("base", &["feature/base"]),
         ]
     );
+}
+
+#[test]
+fn prepares_all_branch_points_once_before_building_independent_lanes() {
+    let mut git = FakeLaneBackend::default()
+        .with_local_branches(&[
+            ("main-oid", &["main"]),
+            ("a", &["topic/a"]),
+            ("b", &["topic/b"]),
+        ])
+        .with_merge_base("a", "main-oid", Some("main-oid"))
+        .with_merge_base("b", "main-oid", Some("main-oid"))
+        .with_merge_base("a", "b", Some("main-oid"))
+        .with_merge_base("b", "a", Some("main-oid"))
+        .with_merge_base("main-oid", "a", Some("main-oid"))
+        .with_merge_base("main-oid", "b", Some("main-oid"))
+        .with_meta("a", "a", 20)
+        .with_meta("b", "b", 30)
+        .with_ancestry_path(Some("main-oid"), "a", &["a"])
+        .with_ancestry_path(Some("main-oid"), "b", &["b"]);
+    let args = runtime_options(Verbosity::Low);
+    let BuiltLanes::Populated { lanes, .. } =
+        build_lanes(&git, &args, &mut HashMap::new(), &()).unwrap()
+    else {
+        panic!("expected independent lanes");
+    };
+    assert_eq!(lanes.len(), 2);
+    assert_eq!(
+        *git.ancestry_preparations.borrow(),
+        vec![vec!["a".to_string(), "b".to_string()]]
+    );
+
+    git.summary_error = true;
+    let error = build_lanes(&git, &args, &mut HashMap::new(), &()).unwrap_err();
+    assert_test_fixture_error(error, "summary preparation");
 }
 
 #[test]
@@ -1723,4 +1787,116 @@ impl crate::backend::DiffStatBackend for FakeLaneBackend {
     fn diff_context(&self, _paths: &[String]) -> Option<u64> {
         None
     }
+}
+
+#[test]
+fn uses_shared_path_summaries_with_exact_counts_and_current_branch_markers() {
+    let points = HashMap::from([
+        ("tip".into(), point_ref("tip", &["topic"])),
+        ("base-point".into(), point_ref("base-point", &["downstack"])),
+    ]);
+    let git = FakeLaneBackend {
+        summary: Some(vec![
+            ("tip".into(), 3),
+            ("base-point".into(), 2),
+            ("unknown".into(), 1),
+        ]),
+        ..FakeLaneBackend::default()
+            .with_meta("tip", "tip subject", 2)
+            .with_meta("base-point", "base subject", 1)
+    };
+    for (current, head, verbosity) in [
+        (Some("topic"), None, Verbosity::High),
+        (Some("other"), Some("tip"), Verbosity::Low),
+        (None, None, Verbosity::Medium),
+    ] {
+        let context = LaneBuildContext {
+            current_branch: current,
+            head,
+            verbosity,
+            detect_rewritten_commits: false,
+            observer: &(),
+        };
+        let lane = build_lane(&git, "tip", "main", &points, context, &mut HashMap::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lane.branch_points
+                .iter()
+                .map(|point| point.commit_count)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert_eq!(lane.base_oid.as_deref(), Some("base"));
+        assert_eq!(
+            lane.contains_current,
+            current == Some("topic") || head == Some("tip")
+        );
+    }
+}
+
+#[test]
+fn incomplete_shared_path_summaries_preserve_empty_and_error_outcomes() {
+    let points = HashMap::from([("tip".into(), point_ref("tip", &["topic"]))]);
+    let context = LaneBuildContext {
+        current_branch: None,
+        head: None,
+        verbosity: Verbosity::High,
+        detect_rewritten_commits: false,
+        observer: &(),
+    };
+    let empty = FakeLaneBackend {
+        summary: Some(Vec::new()),
+        ..FakeLaneBackend::default()
+    };
+    assert!(
+        build_lane(&empty, "tip", "main", &points, context, &mut HashMap::new())
+            .unwrap()
+            .is_none()
+    );
+    let missing_meta = FakeLaneBackend {
+        summary: Some(vec![("tip".into(), 1)]),
+        ..FakeLaneBackend::default()
+    };
+    assert!(
+        build_lane(
+            &missing_meta,
+            "tip",
+            "main",
+            &points,
+            context,
+            &mut HashMap::new()
+        )
+        .is_err()
+    );
+    let no_annotation = LaneBuildContext {
+        verbosity: Verbosity::Low,
+        ..context
+    };
+    assert!(
+        build_lane(
+            &missing_meta,
+            "tip",
+            "main",
+            &points,
+            no_annotation,
+            &mut HashMap::new()
+        )
+        .is_err()
+    );
+    let failed = FakeLaneBackend {
+        summary_error: true,
+        ..FakeLaneBackend::default()
+    };
+    assert!(
+        build_lane(
+            &failed,
+            "tip",
+            "main",
+            &points,
+            context,
+            &mut HashMap::new()
+        )
+        .is_err()
+    );
 }

@@ -537,3 +537,207 @@ fn shell_selection_ignores_unlabelled_internal_commits() {
 }
 
 mod repositories;
+
+#[test]
+fn collective_rewrite_queries_skip_unchanged_groups_and_resolve_selected_replacements() {
+    let git = MockGit::default()
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(a | b)"],
+            "a\nb",
+        )
+        .with(
+            &[
+                "branchless",
+                "query",
+                "-r",
+                "--hidden",
+                "current(a | b | c)",
+            ],
+            "a\nb\ntarget",
+        )
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(a)"],
+            "a",
+        )
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(b | c)"],
+            "b\ntarget",
+        )
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(b)"],
+            "b",
+        )
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(c)"],
+            "target",
+        );
+    assert!(
+        git.query_rewrites(&["a".into(), "b".into()], &["target".into()])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(git.calls().len(), 1);
+    assert_eq!(
+        git.query_rewrites(&["a".into(), "b".into(), "c".into()], &["target".into()])
+            .unwrap(),
+        HashMap::from([("c".into(), "target".into())])
+    );
+    let session = Session::new(&git);
+    let oids = ["a".into(), "b".into(), "c".into()];
+    let first = session.query_rewrites(&oids, &["target".into()]).unwrap();
+    let calls = git.calls().len();
+    assert_eq!(
+        session.query_rewrites(&oids, &["target".into()]).unwrap(),
+        first
+    );
+    assert_eq!(git.calls().len(), calls);
+    let ambiguous = MockGit::default().with(
+        &["branchless", "query", "-r", "--hidden", "current(c)"],
+        "target\nother",
+    );
+    assert!(
+        ambiguous
+            .query_rewrites(&["c".into()], &["target".into()])
+            .unwrap()
+            .is_empty()
+    );
+    let unchanged = MockGit::default().with(
+        &["branchless", "query", "-r", "--hidden", "current(c)"],
+        "c",
+    );
+    assert!(
+        unchanged
+            .query_rewrites(&["c".into()], &["c".into()])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        MockGit::default()
+            .query_rewrites(&["missing".into()], &[])
+            .is_err()
+    );
+}
+
+#[test]
+fn optional_backend_capabilities_have_conservative_defaults() {
+    let tree = "a".repeat(40);
+    let git = MockGit::default().with(
+        &["cat-file", "--batch-check=%(objectname)"],
+        &format!("{tree}\n{tree}\n"),
+    );
+    let adapter = crate::test_support::OmitMetadata {
+        inner: &git,
+        omitted: "none",
+    };
+    assert!(adapter.diff_snapshot(&[]).is_none());
+    assert!(
+        adapter
+            .diff_tree_pairs(&[], &mut HashMap::new())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(adapter.diff_paths(&[]).unwrap(), Vec::<Vec<String>>::new());
+    assert!(git.ancestry_summary("main", "tip").unwrap().is_none());
+    git.prepare_ancestry("main", &[]).unwrap();
+    let session = Session::with_facts(
+        &adapter,
+        Inputs {
+            branches: std::collections::BTreeMap::new(),
+            configured_main: "main".into(),
+        },
+        crate::cache::Facts::default(),
+    );
+    assert_eq!(
+        session.diff_stats(&[]).unwrap().stats,
+        Vec::<crate::model::DiffStat>::new()
+    );
+    assert_eq!(
+        session
+            .diff_stats(&[DiffPair {
+                base: Some("main".into()),
+                head: "tip".into()
+            }])
+            .unwrap()
+            .stats,
+        vec![crate::model::DiffStat::default()]
+    );
+}
+
+#[test]
+fn scoped_rewrite_discovery_uses_one_live_query_for_unchanged_interiors() {
+    let expression = "current(((range(base, tip) - base)) - (target))";
+    let git = MockGit::default().with(
+        &["branchless", "query", "-r", "--hidden", expression],
+        "interior",
+    );
+    let oids = vec!["interior".to_string(); 512];
+    assert!(
+        git.query_rewrites_in_path(Some("base"), "tip", &oids, &["target".into()])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(git.calls().len(), 1);
+    let session = Session::new(&git);
+    assert!(
+        session
+            .query_rewrites_in_path(Some("base"), "tip", &oids, &["target".into()])
+            .unwrap()
+            .is_empty()
+    );
+    let calls = git.calls().len();
+    assert!(
+        session
+            .query_rewrites_in_path(Some("base"), "tip", &oids, &["target".into()])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(git.calls().len(), calls);
+    let changed = MockGit::default()
+        .with(
+            &[
+                "branchless",
+                "query",
+                "-r",
+                "--hidden",
+                "current((ancestors(tip)) - (target))",
+            ],
+            "target",
+        )
+        .with(
+            &["branchless", "query", "-r", "--hidden", "current(old)"],
+            "target",
+        );
+    assert_eq!(
+        changed
+            .query_rewrites_in_path(None, "tip", &["old".into()], &["target".into()])
+            .unwrap()["old"],
+        "target"
+    );
+    assert!(
+        changed
+            .query_rewrites_in_path(None, "tip", &[], &[])
+            .unwrap()
+            .is_empty()
+    );
+    let fallback = MockGit::default().with(
+        &["branchless", "query", "-r", "--hidden", "current(old)"],
+        "old",
+    );
+    assert!(
+        fallback
+            .query_rewrites_in_path(None, "tip", &["old".into()], &["x".repeat(8200)])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fallback
+            .query_rewrites_in_path(None, "tip", &["old".into()], &[])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        MockGit::default()
+            .query_rewrites_in_path(None, "tip", &["old".into()], &["target".into()])
+            .is_err()
+    );
+}

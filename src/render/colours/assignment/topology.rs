@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Unbounded};
 
 use crate::model::LaneGroup;
-use crate::render::ancestry::{Content, shared_ancestry};
+use crate::render::ancestry::{Content, PreparedTopology, shared_ancestry};
 
 use super::Segment;
 
@@ -16,10 +16,27 @@ struct Graph {
 }
 
 pub(super) fn segments(groups: &[LaneGroup]) -> Vec<Segment> {
+    segments_prepared(groups, None)
+}
+
+pub(super) fn segments_prepared(
+    groups: &[LaneGroup],
+    prepared: Option<&PreparedTopology>,
+) -> Vec<Segment> {
     let mut graph = Graph::default();
-    for group in groups.iter().filter(|group| group.main_distance.is_some()) {
+    for (index, group) in groups
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| group.main_distance.is_some())
+    {
         let mut active = BTreeMap::new();
-        for row in shared_ancestry(&group.lanes).rows {
+        let ancestry = prepared
+            .and_then(|prepared| prepared.groups.get(index))
+            .map_or_else(
+                || shared_ancestry(&group.lanes),
+                |prepared| prepared.bind(&group.lanes),
+            );
+        for row in ancestry.rows {
             let segment = active
                 .get(&row.lane)
                 .copied()

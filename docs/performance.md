@@ -6,7 +6,8 @@
 
 This report records the stated historical builds.
 The current configuration implementation additionally delegates configured Boolean values to typed Git lookups; the timings below do not measure that change.
-The subsequent [per-layer statistics report](diff-stat-performance.md) documents batched comparisons, attribute-sensitive reuse, and the current facts-retention bound.
+The subsequent [per-layer statistics report](diff-stat-performance.md) documents batched comparisons, attribute-sensitive reuse, and the facts-retention bound for that build.
+The [local performance update](performance-updates.md) describes tree-pair persistence, bounded worktree contexts, shared topology, collective ancestry summaries and clipped terminal output in the candidate following version 0.16.0.
 
 ## Algorithmic changes
 

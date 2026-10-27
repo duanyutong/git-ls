@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes, populate_diff_stats};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
 use crate::render::{
-    Colours, RenderContext, RenderLine, calculate_metadata_widths,
+    Colours, PreparedTopology, RenderContext, RenderLine, calculate_metadata_widths,
     render_empty_selection as render_empty_lines, render_lane_groups,
 };
 use crate::terminal::{RenderEnvironment, write_rendered_line};
@@ -63,6 +63,8 @@ struct RenderSession<'a> {
     verbosity: Verbosity,
     layout: Layout,
     colours: &'a Colours,
+    topology: &'a PreparedTopology,
+    terminal_width: Option<usize>,
 }
 
 impl<'a> RenderSession<'a> {
@@ -72,6 +74,7 @@ impl<'a> RenderSession<'a> {
         main_meta: Option<&'a CommitMeta>,
         environment: RenderEnvironment,
         colours: &'a Colours,
+        topology: &'a PreparedTopology,
     ) -> Self {
         Self {
             repository,
@@ -80,6 +83,8 @@ impl<'a> RenderSession<'a> {
             verbosity: args.verbosity,
             layout: args.layout,
             colours,
+            topology,
+            terminal_width: environment.terminal_width(),
         }
     }
 
@@ -96,6 +101,7 @@ impl<'a> RenderSession<'a> {
         )
         .with_layout(self.layout)
         .with_diff_stats(groups)
+        .with_topology(self.topology, self.terminal_width)
     }
 }
 
@@ -128,6 +134,20 @@ struct Analysis {
     groups: Vec<LaneGroup>,
     repository: RepositorySnapshot,
     main_meta: Option<CommitMeta>,
+}
+
+struct RenderPreparation {
+    colours: Colours,
+    topology: PreparedTopology,
+}
+
+impl RenderPreparation {
+    fn new(args: &RuntimeOptions, analysis: &Analysis, environment: RenderEnvironment) -> Self {
+        let topology = PreparedTopology::new(&analysis.groups);
+        let colours = Colours::new(environment.colour_enabled(args.colour_mode))
+            .prepare(&analysis.groups, &topology);
+        Self { colours, topology }
+    }
 }
 
 fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysis> {
@@ -183,14 +203,15 @@ fn render_unfitted_analysis(
     args: &RuntimeOptions,
     analysis: &Analysis,
     environment: RenderEnvironment,
+    prepared: &RenderPreparation,
 ) -> RenderPlan {
-    let colours = Colours::new(environment.colour_enabled(args.colour_mode));
     let session = RenderSession::new(
         args,
         &analysis.repository,
         analysis.main_meta.as_ref(),
         environment,
-        &colours,
+        &prepared.colours,
+        &prepared.topology,
     );
     if analysis.groups.is_empty() {
         render_empty_selection(&session)
@@ -203,8 +224,9 @@ fn render_analysis(
     args: &RuntimeOptions,
     analysis: &Analysis,
     environment: RenderEnvironment,
+    prepared: &RenderPreparation,
 ) -> RenderPlan {
-    let mut plan = render_unfitted_analysis(args, analysis, environment);
+    let mut plan = render_unfitted_analysis(args, analysis, environment, prepared);
     crate::render::fit_diff_stats(&mut plan.lines, environment.terminal_width());
     plan
 }
@@ -214,16 +236,17 @@ fn hydrate_diff_stats(
     analysis: &mut Analysis,
     git: &dyn GitBackend,
     environment: RenderEnvironment,
-) -> Result<()> {
+) -> Result<RenderPreparation> {
+    let prepared = RenderPreparation::new(args, analysis, environment);
     if !args.diff_stat {
-        return Ok(());
+        return Ok(prepared);
     }
     if let Some(width) = environment.terminal_width() {
         set_placeholder_stats(
             &mut analysis.groups,
             Some(crate::model::DiffStat::default()),
         );
-        let candidate = render_unfitted_analysis(args, analysis, environment);
+        let candidate = render_unfitted_analysis(args, analysis, environment, &prepared);
         let fits = candidate
             .lines
             .iter()
@@ -232,10 +255,11 @@ fn hydrate_diff_stats(
         set_placeholder_stats(&mut analysis.groups, None);
         if !fits {
             crate::diagnostics::event(format_args!("diff_stats=skipped reason=terminal_width"));
-            return Ok(());
+            return Ok(prepared);
         }
     }
-    populate_diff_stats(&mut analysis.groups, git, true)
+    populate_diff_stats(&mut analysis.groups, git, true)?;
+    Ok(prepared)
 }
 
 fn set_placeholder_stats(groups: &mut [LaneGroup], value: Option<crate::model::DiffStat>) {
@@ -255,8 +279,8 @@ fn build_render_plan(
 ) -> Result<RenderPlan> {
     let git = crate::backend::Session::new(git);
     let mut analysis = build_analysis(args, &git)?;
-    hydrate_diff_stats(args, &mut analysis, &git, environment)?;
-    Ok(render_analysis(args, &analysis, environment))
+    let prepared = hydrate_diff_stats(args, &mut analysis, &git, environment)?;
+    Ok(render_analysis(args, &analysis, environment, &prepared))
 }
 
 fn write_render_plan<W: Write>(

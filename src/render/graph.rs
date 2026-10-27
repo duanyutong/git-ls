@@ -58,6 +58,7 @@ pub(super) struct LaneRenderLayout {
     pub(super) lane_count: usize,
     pub(super) lane_field_width: usize,
     pub(super) colour_offset: usize,
+    visible: Option<usize>,
 }
 
 impl LaneRenderLayout {
@@ -70,6 +71,7 @@ impl LaneRenderLayout {
             lane_count,
             lane_field_width,
             colour_offset,
+            visible: None,
         }
     }
 
@@ -79,6 +81,16 @@ impl LaneRenderLayout {
 
     pub(super) const fn lane_padding(self) -> usize {
         self.lane_field_width.saturating_sub(self.lane_count)
+    }
+
+    pub(super) const fn with_width(mut self, width: Option<usize>) -> Self {
+        self.visible = width;
+        self
+    }
+
+    fn visible_lanes(self) -> usize {
+        self.visible
+            .map_or(self.lane_count, |width| self.lane_count.min(width / 2 + 1))
     }
 }
 
@@ -105,17 +117,27 @@ pub(super) fn row_prefix_with_marker(
     lane_colours: &[usize],
     colours: &Colours,
 ) -> String {
-    let lanes = active.iter().enumerate().map(|(index, &visible)| {
-        let glyph = if index == lane_index {
-            marker
-        } else if visible {
-            "│"
-        } else {
-            " "
-        };
-        colours.stack(lane_colours[index], glyph)
-    });
-    graph_prefix(layout, main_spine, lanes.collect(), colours)
+    let visible_count = layout.visible_lanes();
+    crate::diagnostics::count("rendered_lane_cells", visible_count);
+    let lanes = active
+        .iter()
+        .enumerate()
+        .take(visible_count)
+        .map(|(index, &visible)| {
+            let glyph = if index == lane_index {
+                marker
+            } else if visible {
+                "│"
+            } else {
+                " "
+            };
+            colours.stack(lane_colours[index], glyph)
+        });
+    let mut lanes: Vec<_> = lanes.collect();
+    if active.len() > visible_count {
+        lanes.push(" ".repeat((active.len() - visible_count) * 2 - 1));
+    }
+    graph_prefix(layout, main_spine, lanes, colours)
 }
 
 pub(super) fn junction_prefix(
@@ -129,7 +151,8 @@ pub(super) fn junction_prefix(
     let first = children.iter().min().copied().unwrap_or(0);
     let last = children.iter().max().copied().unwrap_or(0);
     let mut lanes = Vec::new();
-    for (index, &visible) in active.iter().enumerate() {
+    let visible_count = layout.visible_lanes();
+    for (index, &visible) in active.iter().enumerate().take(visible_count) {
         let glyph = if index == first {
             "├"
         } else if index == last {
@@ -154,6 +177,9 @@ pub(super) fn junction_prefix(
             format!("{gap}{glyph}")
         };
         lanes.push(colours.stack(lane_colours[index], &slot));
+    }
+    if active.len() > visible_count {
+        lanes.push(" ".repeat((active.len() - visible_count) * 2));
     }
     graph_prefix(layout, main_spine, vec![lanes.concat()], colours)
 }

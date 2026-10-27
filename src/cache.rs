@@ -12,6 +12,7 @@ mod compatibility;
 pub(crate) mod facts;
 pub(crate) mod maintenance;
 mod policy;
+pub(crate) mod topology;
 
 use compatibility::ANALYSIS_SEMANTICS as SEMANTICS;
 
@@ -69,7 +70,7 @@ fn encode(value: &impl Serialize) -> Option<Vec<u8>> {
     Some(buffer.0)
 }
 
-fn encoded_entry(key: &str, value: &impl Serialize) -> Option<Vec<u8>> {
+pub(crate) fn encoded_entry(key: &str, value: &impl Serialize) -> Option<Vec<u8>> {
     let payload = String::from_utf8(encode(value)?).ok()?;
     encode(&Envelope {
         semantics: SEMANTICS.to_string(),
@@ -77,10 +78,6 @@ fn encoded_entry(key: &str, value: &impl Serialize) -> Option<Vec<u8>> {
         checksum: hash(&payload),
         payload,
     })
-}
-
-pub(crate) fn fits(key: &str, value: &impl Serialize) -> bool {
-    encoded_entry(key, value).is_some()
 }
 
 pub(crate) fn regular(path: &Path) -> bool {
@@ -175,6 +172,18 @@ impl Store {
             ));
             return false;
         };
+        self.write_locked(name, &bytes)
+    }
+
+    pub(crate) fn publish_encoded(&self, name: &str, bytes: &[u8]) -> bool {
+        let _perf = crate::diagnostics::stage("cache_write");
+        let Some(_lock) = self.lock("publication.lock") else {
+            return false;
+        };
+        self.write_locked(name, bytes)
+    }
+
+    fn write_locked(&self, name: &str, bytes: &[u8]) -> bool {
         let temp = self.root.join("publication.tmp");
         // The lock permits safe reclamation of one interrupted publication.
         if temp.exists() && fs::remove_file(&temp).is_err() {
@@ -185,7 +194,7 @@ impl Store {
                 .write(true)
                 .create_new(true)
                 .open(&temp)?;
-            file.write_all(&bytes)?;
+            file.write_all(bytes)?;
             file.flush()?;
             fs::rename(&temp, self.root.join(name))
         })()

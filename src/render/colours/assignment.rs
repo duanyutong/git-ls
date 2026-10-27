@@ -68,7 +68,17 @@ pub(super) const fn ansi_colour(index: usize) -> u8 {
 
 /// Return main's fixed entry followed by one palette index per segment in render order.
 pub(super) fn assign(groups: &[LaneGroup]) -> Vec<usize> {
-    let segments = topology::segments(groups);
+    assign_prepared(groups, None)
+}
+
+pub(super) fn assign_prepared(
+    groups: &[LaneGroup],
+    prepared: Option<&crate::render::PreparedTopology>,
+) -> Vec<usize> {
+    let segments = prepared.map_or_else(
+        || topology::segments(groups),
+        |prepared| topology::segments_prepared(groups, Some(prepared)),
+    );
     let mut order: Vec<_> = (0..segments.len()).collect();
     order.sort_unstable_by(|&left, &right| {
         segments[right]

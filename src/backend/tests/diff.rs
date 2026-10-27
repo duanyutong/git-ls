@@ -195,3 +195,113 @@ fn validates_resolved_tree_counts_object_formats_and_invalid_objects() {
             .is_err()
     );
 }
+
+#[test]
+fn context_fingerprints_exclude_only_known_irrelevant_settings() {
+    use super::super::diff::configuration_fingerprint;
+    let base = "diff.algorithm\npatience\0";
+    assert_eq!(
+        configuration_fingerprint(base),
+        configuration_fingerprint(&format!(
+            "{base}core.editor\nfalse\0core.pager\nless\0git-ls.layout\ncolumns\0"
+        ))
+    );
+    assert_ne!(
+        configuration_fingerprint(base),
+        configuration_fingerprint("diff.algorithm\nminimal\0")
+    );
+    assert_ne!(
+        configuration_fingerprint(base),
+        configuration_fingerprint(&format!("{base}unknown.setting\0"))
+    );
+    let context = super::super::DiffContext {
+        scope: 1,
+        configuration: 2,
+        attributes: std::collections::BTreeMap::from([("one".into(), 3), ("two".into(), 4)]),
+    };
+    let mut other = context.clone();
+    other.attributes.insert("two".into(), 5);
+    assert_eq!(
+        context.fingerprint(&["one".into()]),
+        other.fingerprint(&["one".into()])
+    );
+    assert_ne!(
+        context.fingerprint(&["two".into()]),
+        other.fingerprint(&["two".into()])
+    );
+}
+
+#[test]
+fn resolves_cached_tree_pairs_and_discovers_framed_raw_paths() {
+    let a = "a".repeat(40);
+    let b = "b".repeat(40);
+    let header = format!("{a} {b}\n");
+    let git = MockGit::default()
+        .with(
+            &["cat-file", "--batch-check=%(objectname)"],
+            &format!("{a}\n{b}\n"),
+        )
+        .with(&["hash-object", "-t", "tree", "--stdin"], &a)
+        .with(
+            PATH_ARGS,
+            &format!("{header}:000000 100644 {a} {b} A\0strange\tfile\nname\0"),
+        )
+        .with(DIFF_ARGS, &format!("{header}1\t0\tfile\0"));
+    let pairs = [pair(Some("one"), "two")];
+    let mut trees = HashMap::new();
+    let resolved = git.diff_tree_pairs(&pairs, &mut trees).unwrap().unwrap();
+    assert_eq!(resolved, [pair(Some(&a), &b)]);
+    assert_eq!(
+        git.diff_tree_pairs(&pairs, &mut trees).unwrap().unwrap(),
+        resolved
+    );
+    assert_eq!(git.calls().len(), 1);
+    assert_eq!(
+        git.diff_paths(&resolved).unwrap(),
+        [vec!["strange\tfile\nname".to_string()]]
+    );
+    assert_eq!(git.diff_tree_stats(&resolved).unwrap().stats[0].added, 1);
+    assert_eq!(
+        git.diff_tree_pairs(&[pair(None, "two")], &mut trees)
+            .unwrap()
+            .unwrap(),
+        resolved
+    );
+    assert_eq!(git.diff_paths(&[]).unwrap(), Vec::<Vec<String>>::new());
+    assert!(DiffStatBackend::diff_snapshot(&git, &[]).is_none());
+    assert!(resolved_pairs(&[pair(Some("missing"), "two")], &trees, "empty").is_err());
+    assert!(resolved_pairs(&[pair(None, "missing")], &trees, "empty").is_err());
+    assert!(
+        MockGit::default()
+            .diff_tree_pairs(&pairs, &mut HashMap::new())
+            .is_err()
+    );
+    assert!(
+        MockGit::default()
+            .with(&["cat-file", "--batch-check=%(objectname)"], "bad")
+            .diff_tree_pairs(&pairs, &mut HashMap::new())
+            .is_err()
+    );
+    assert!(MockGit::default().diff_paths(&resolved).is_err());
+    assert!(
+        MockGit::default()
+            .diff_tree_pairs(&[pair(None, "two")], &mut trees)
+            .is_err()
+    );
+    let headers = ["one two\n".into(), "two three\n".into()];
+    let output = "one two\n:meta\0two three\n\0two three\n";
+    assert_eq!(
+        parse_paths(&headers, output).unwrap(),
+        [vec!["two three\n".to_string()], Vec::new()]
+    );
+    for output in [
+        "",
+        "one two\ninvalid\0path\0",
+        "one two\n:meta",
+        "one two\n:meta\0path",
+        "one two\ntwo three\ntrailing",
+    ] {
+        assert!(parse_paths(&headers, output).is_err(), "{output:?}");
+    }
+    assert!(parse_paths(&[], "trailing").is_err());
+}

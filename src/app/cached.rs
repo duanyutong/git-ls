@@ -19,6 +19,7 @@ use super::{
 
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
+    #[serde(with = "crate::cache::topology")]
     groups: Vec<LaneGroup>,
 }
 
@@ -202,10 +203,42 @@ fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, S
     Some((store, common, object_format))
 }
 
-fn already_persisted(store: &Store, name: &str, key: &str, facts: &Facts) -> bool {
-    store
-        .read::<Facts>(name, key)
-        .is_some_and(|previous| facts.same_answers(&previous))
+fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
+    let _perf = crate::diagnostics::stage("cache_admission");
+    let encoded = std::cell::RefCell::new(None);
+    let before = facts.metadata.len();
+    facts.fit(4096, &|value| {
+        let bytes = crate::cache::encoded_entry(key, value);
+        let fits = bytes.is_some();
+        encoded.replace(bytes);
+        fits
+    });
+    crate::diagnostics::event(format_args!(
+        "cache_admission entry=facts metadata_before={} metadata_retained={}",
+        before,
+        facts.metadata.len()
+    ));
+    crate::diagnostics::count("retained_diff_contexts", facts.diff.scopes.len());
+    crate::diagnostics::count(
+        "retained_diff_pairs",
+        facts
+            .diff
+            .scopes
+            .values()
+            .map(|scope| scope.values.len())
+            .sum(),
+    );
+    crate::diagnostics::count(
+        "retained_diff_paths",
+        facts
+            .diff
+            .scopes
+            .values()
+            .flat_map(|scope| scope.values.values())
+            .map(|value| value.paths.len())
+            .sum(),
+    );
+    encoded.into_inner()
 }
 
 pub(super) fn execute_cached<W: Write>(
@@ -248,15 +281,16 @@ pub(super) fn execute_cached<W: Write>(
     } else {
         store.read(facts_name, &facts_key).unwrap_or_default()
     };
+    let original_facts = facts.clone();
     let session = Session::with_facts(git, inputs.clone(), facts);
     let (head, current_branch) = git.current_head_and_branch()?;
     let repository = RepositorySnapshot::new(current_branch, head, main_name);
-    let (analysis, computed) = if let Some(snapshot) = snapshot {
+    let (analysis, computed, prepared) = if let Some(snapshot) = snapshot {
         crate::diagnostics::event(format_args!("cache=hit"));
         let mut analysis = snapshot.live(args, repository, &main_oid, &session)?;
-        hydrate_diff_stats(args, &mut analysis, &session, environment)?;
+        let prepared = hydrate_diff_stats(args, &mut analysis, &session, environment)?;
         let facts = session.has_new_facts().then(|| session.into_facts());
-        (analysis, facts)
+        (analysis, facts, prepared)
     } else {
         crate::diagnostics::event(format_args!(
             "cache={} reason={}",
@@ -272,24 +306,15 @@ pub(super) fn execute_cached<W: Write>(
             }
         ));
         let mut analysis = build_analysis(args, &session)?;
-        hydrate_diff_stats(args, &mut analysis, &session, environment)?;
-        (analysis, Some(session.into_facts()))
+        let prepared = hydrate_diff_stats(args, &mut analysis, &session, environment)?;
+        (analysis, Some(session.into_facts()), prepared)
     };
-    let plan = render_analysis(args, &analysis, environment);
+    let plan = render_analysis(args, &analysis, environment, &prepared);
     write_render_plan(stdout, &plan, environment)?;
     let mut published = false;
     if let Some(mut facts) = computed {
-        {
-            let _perf = crate::diagnostics::stage("cache_admission");
-            let before = facts.metadata.len();
-            facts.fit(4096, &|value| crate::cache::fits(&facts_key, value));
-            crate::diagnostics::event(format_args!(
-                "cache_admission entry=facts metadata_before={} metadata_retained={}",
-                before,
-                facts.metadata.len()
-            ));
-        }
-        if topology_hit && already_persisted(&store, facts_name, &facts_key, &facts) {
+        let encoded = admit_facts(&mut facts, &facts_key);
+        if topology_hit && facts.same_answers(&original_facts) {
             crate::diagnostics::event(format_args!(
                 "cache_publication=skipped reason=unchanged_answers"
             ));
@@ -302,7 +327,9 @@ pub(super) fn execute_cached<W: Write>(
                 && location(".").as_ref() == Some(&(common, object_format, inputs.configured_main))
         };
         if unchanged {
-            store.publish(facts_name, &facts_key, &facts);
+            if let Some(bytes) = encoded {
+                store.publish_encoded(facts_name, &bytes);
+            }
             if !topology_hit {
                 published = store.publish(&name, &key, &Snapshot::neutral(analysis.groups));
             }

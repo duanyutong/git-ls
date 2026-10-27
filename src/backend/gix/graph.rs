@@ -13,6 +13,7 @@ pub(super) struct TipAnalysis {
     pub(super) unmerged: Vec<String>,
     pub(super) heads: Vec<String>,
     pub(super) bases: HashMap<String, Option<String>>,
+    pub(super) nodes: Option<Vec<(Oid, Vec<Oid>)>>,
 }
 
 impl GixBackend {
@@ -116,6 +117,7 @@ impl GixBackend {
             unmerged,
             heads,
             bases,
+            nodes: retained,
         })
     }
 

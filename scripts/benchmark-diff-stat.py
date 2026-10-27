@@ -13,6 +13,7 @@ import os
 import pathlib
 import platform
 import random
+import re
 import shutil
 import statistics
 import subprocess
@@ -31,6 +32,8 @@ class Case:
     layers: int
     shape: str = "independent"
     renames: int = 0
+    trunk: int = 16
+    paths: int = 0
 
 
 CASES = [
@@ -38,6 +41,7 @@ CASES = [
     Case("independent-8", 8),
     Case("independent-32", 32),
     Case("independent-128", 128),
+    Case("independent-512", 512),
     Case("stack-32", 32, "stack"),
     Case("shared-16-plus-32", 32, "shared"),
     Case("empty-32", 32, "empty"),
@@ -47,6 +51,19 @@ CASES = [
     Case("large-text", 1, "large"),
     Case("binary", 1, "binary"),
     Case("metadata-600", 600, "metadata"),
+    Case("shared-named-320", 32, "shared_named", trunk=320),
+    Case("shared-deep-5000", 32, "shared_deep", trunk=5000),
+    Case("paths-4000", 1, "paths", paths=4000),
+    Case("paths-6000", 1, "paths", paths=6000),
+    Case("amend-identical-tree", 1, "amend"),
+    Case("edit-same-path", 32, "edit"),
+    Case("edit-new-path", 32, "new_path"),
+    Case("new-topic", 32, "new_topic"),
+    Case("unrelated-config", 32, "config"),
+    Case("relevant-attributes", 32, "attributes"),
+    Case("inactive-path-attributes", 2, "inactive"),
+    Case("alternating-worktrees", 32, "worktree"),
+    Case("branchless-interior-32", 1, "branchless", trunk=32),
 ]
 MODES = {
     "warm_off": ["--no-diff-stat"],
@@ -105,11 +122,23 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
         initial = [("data", b"stable content\n" * 200000)]
     base = commit("main", 0, initial or [("data", b"base\n")])
     trunk = base
-    if case.shape == "shared":
-        for index in range(16):
-            trunk = commit(f"shared-{index:03}", trunk, [(f"shared-{index}", b"content\n")])
+    if case.shape.startswith("shared") or case.shape == "branchless":
+        for index in range(case.trunk):
+            name = "shared" if case.shape in ("shared_deep", "branchless") else f"shared-{index:03}"
+            files = (
+                [(f"shared-{index}", b"content\n")]
+                if case.shape == "shared"
+                else [("shared-data", b"content\n")]
+            )
+            trunk = commit(name, trunk, files)
     for index in range(case.layers):
-        parent = trunk if case.shape in ("stack", "shared") else base
+        parent = (
+            trunk
+            if case.shape == "stack"
+            or case.shape.startswith("shared")
+            or case.shape == "branchless"
+            else base
+        )
         if case.shape == "orphan":
             parent = 0
         files = [(f"layer-{index:03}", b"changed\n")]
@@ -124,11 +153,63 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
             files = [("data", initial[0][1] + b"changed\n")]
         elif case.shape == "binary":
             files = [("binary", b"\0binary\0content\0")]
+        elif case.shape == "paths":
+            files = [
+                (f"file-{number:05}-" + "x" * 210, b"changed\n") for number in range(case.paths)
+            ]
         tip = commit(f"topic-{index:03}", parent, files, bool(case.renames))
         if case.shape == "stack":
             trunk = tip
     git(repo, "fast-import", "--quiet", data=bytes(records))
+    if case.shape == "worktree":
+        git(repo, "worktree", "add", "--detach", str(repo.parent / "linked"), "main")
+    elif case.shape == "inactive":
+        git(repo, "update-ref", "refs/benchmark/inactive-tip", "topic-001")
+    elif case.shape == "branchless":
+        git(repo, "branchless", "init", "--main-branch", "main")
     return repo
+
+
+def prepare_sample(
+    binary: pathlib.Path, repo: pathlib.Path, case: Case, backend: str, flags: list[str], token: int
+) -> None:
+    """Arrange one development event outside the measured invocation."""
+    if case.shape == "worktree":
+        measure(binary, repo.parent / "linked", backend, flags)
+    elif case.shape == "config":
+        git(repo, "config", "core.editor", f"unused-editor-{token}")
+    elif case.shape in ("attributes", "inactive"):
+        directory = repo / ".git/info"
+        directory.mkdir(exist_ok=True)
+        path = "layer-000" if case.shape == "attributes" else "layer-001"
+        if case.shape == "inactive":
+            git(repo, "update-ref", "refs/heads/topic-001", "refs/benchmark/inactive-tip")
+        previous = "diff" if token % 2 else "-diff"
+        (directory / "attributes").write_text(f"{path} {previous}\n")
+        measure(binary, repo, backend, flags)
+        if case.shape == "inactive":
+            git(repo, "update-ref", "-d", "refs/heads/topic-001")
+            measure(binary, repo, backend, flags)
+        current = "-diff" if token % 2 else "diff"
+        (directory / "attributes").write_text(f"{path} {current}\n")
+    elif case.shape in ("amend", "edit", "new_path", "new_topic"):
+        branch = "added-topic" if case.shape == "new_topic" else "topic-000"
+        if case.shape == "new_topic":
+            git(repo, "update-ref", "-d", f"refs/heads/{branch}")
+            measure(binary, repo, backend, flags)
+        parent = git(repo, "rev-parse", "main").decode().strip()
+        if case.shape == "amend":
+            path, content = "layer-000", b"changed\n"
+        elif case.shape == "new_path":
+            path, content = f"changed-{token}", b"changed\n"
+        else:
+            path, content = "layer-000", f"changed {token}\n".encode()
+        record = (
+            f"commit refs/heads/{branch}\n"
+            f"committer Benchmark <benchmark@example.invalid> {1700000500 + token} +0000\n"
+            f"data 6\nlayer\nfrom {parent}\nM 100644 inline {path}\ndata {len(content)}\n"
+        ).encode()
+        git(repo, "fast-import", "--quiet", "--force", data=record + content + b"\n")
 
 
 def measure(
@@ -138,6 +219,7 @@ def measure(
     flags: list[str],
     trace: pathlib.Path | None = None,
     width: int | None = None,
+    colour: str = "never",
 ) -> tuple[Sample, bytes, str]:
     command = [
         str(binary),
@@ -147,7 +229,7 @@ def measure(
         "--layout",
         "columns",
         "--color",
-        "never",
+        colour,
         "--no-cache-maintenance",
         *flags,
     ]
@@ -160,6 +242,9 @@ def measure(
         import termios
 
         master, slave = pty.openpty()
+        attributes = termios.tcgetattr(slave)
+        attributes[1] &= ~termios.OPOST
+        termios.tcsetattr(slave, termios.TCSANOW, attributes)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
         started = time.perf_counter()
@@ -200,6 +285,30 @@ def measure(
     return {"elapsed_ms": elapsed, "peak_rss_bytes": rss, "cpu_ms": cpu}, stdout, debug
 
 
+def visible_style_digest(output: bytes) -> str:
+    """Fingerprint non-space glyphs and their styles, ignoring invisible control changes."""
+    digest = hashlib.sha256()
+    state: list[bytes] = []
+    position = 0
+
+    def record(text: bytes) -> None:
+        for char in text.decode():
+            if not char.isspace():
+                digest.update(char.encode())
+                digest.update(repr(state).encode())
+
+    for match in re.finditer(rb"\x1b\[[0-9;]*m", output):
+        record(output[position : match.start()])
+        code = match.group()
+        if code in (b"\x1b[0m", b"\x1b[m"):
+            state.clear()
+        else:
+            state.append(code)
+        position = match.end()
+    record(output[position:])
+    return digest.hexdigest()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=pathlib.Path, required=True)
@@ -235,7 +344,7 @@ def main() -> None:
                 continue
             repos = {name: fixture(pathlib.Path(scratch) / name, case) for name in binaries}
             modes = {
-                name: flags
+                name: [*flags, *(["all()"] if case.shape == "branchless" else [])]
                 for name, flags in MODES.items()
                 if case.shape != "metadata" or name.endswith("off")
             }
@@ -249,41 +358,94 @@ def main() -> None:
                     outputs[mode] = output
                     samples[f"{name}.{mode}"] = []
             order = [(name, mode) for name in binaries for mode in modes]
+            changing_outputs: dict[str, bytes] = {}
             for repetition in range(args.repeats):
                 random.Random(repetition).shuffle(order)
                 for name, mode in order:
                     if mode == "cold_on":
                         shutil.rmtree(repos[name] / ".git/git-ls/cache", ignore_errors=True)
+                    token = repetition * len(modes) + list(modes).index(mode)
+                    prepare_sample(
+                        binaries[name], repos[name], case, args.backend, modes[mode], token
+                    )
                     sample, output, _ = measure(
                         binaries[name], repos[name], args.backend, modes[mode]
                     )
-                    if output != outputs[mode]:
+                    if case.shape in (
+                        "amend",
+                        "edit",
+                        "new_path",
+                        "new_topic",
+                        "attributes",
+                        "inactive",
+                    ):
+                        key = f"{repetition}.{mode}"
+                        expected = changing_outputs.setdefault(key, output)
+                    else:
+                        expected = outputs[mode]
+                    if output != expected:
                         raise AssertionError(f"unstable output: {case.name} {name}.{mode}")
                     samples[f"{name}.{mode}"].append(sample)
             probes = {}
             probe_outputs: dict[str, bytes] = {}
+            probe_styles: dict[str, str] = {}
             for name, binary in binaries.items():
-                for mode in [*modes, *(["narrow_on"] if os.name == "posix" else [])]:
+                terminal_modes = (
+                    ["narrow_on", "wide_colour_on", "wide_colour_off"] if os.name == "posix" else []
+                )
+                for mode in [*modes, *terminal_modes]:
                     if mode == "cold_on":
                         shutil.rmtree(repos[name] / ".git/git-ls/cache", ignore_errors=True)
                     trace = (args.directory / f"{case.name}.{name}.{mode}.trace.jsonl").resolve()
                     trace.unlink(missing_ok=True)
+                    probe_flags = modes.get(
+                        mode, ["--no-diff-stat"] if mode.endswith("off") else ["--diff-stat"]
+                    )
+                    if mode not in modes and case.shape == "branchless":
+                        probe_flags = [*probe_flags, "all()"]
+                    prepare_sample(
+                        binary,
+                        repos[name],
+                        case,
+                        args.backend,
+                        probe_flags,
+                        100000 + [*modes, *terminal_modes].index(mode),
+                    )
                     probe_sample, probe_output, debug = measure(
                         binary,
                         repos[name],
                         args.backend,
-                        [*modes.get(mode, ["--diff-stat"]), "--debug"],
+                        [*probe_flags, "--debug"],
                         trace,
-                        width=20 if mode == "narrow_on" else None,
+                        width=20
+                        if mode == "narrow_on"
+                        else 120
+                        if mode.startswith("wide_colour")
+                        else None,
+                        colour="always" if mode.startswith("wide_colour") else "never",
                     )
-                    if mode in probe_outputs and probe_outputs[mode] != probe_output:
+                    visible = re.sub(rb"\x1b\[[0-9;]*m", b"", probe_output)
+                    if mode in probe_outputs and probe_outputs[mode] != visible:
                         raise AssertionError(f"probe output mismatch: {case.name} {mode}")
-                    probe_outputs[mode] = probe_output
+                    probe_outputs[mode] = visible
+                    style_digest = (
+                        visible_style_digest(probe_output)
+                        if mode.startswith("wide_colour")
+                        else None
+                    )
+                    if style_digest is not None:
+                        if mode in probe_styles and probe_styles[mode] != style_digest:
+                            raise AssertionError(f"visible colour mismatch: {case.name} {mode}")
+                        probe_styles[mode] = style_digest
                     (args.directory / f"{case.name}.{name}.{mode}.debug.txt").write_text(debug)
                     events = [json.loads(line) for line in trace.read_text().splitlines()]
                     probes[f"{name}.{mode}"] = {
                         "sample": probe_sample,
                         "stdout_sha256": hashlib.sha256(probe_output).hexdigest(),
+                        "visible_stdout_sha256": hashlib.sha256(visible).hexdigest(),
+                        "visible_style_sha256": style_digest,
+                        "stdout_bytes": len(probe_output),
+                        "ansi_sequences": probe_output.count(b"\x1b["),
                         "git_argv": [
                             event["argv"] for event in events if event.get("event") == "start"
                         ],

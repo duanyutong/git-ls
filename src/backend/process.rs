@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 use crate::error::{GitLsError, Result};
@@ -10,6 +12,7 @@ pub(crate) struct ProcessGit {
     config: RefCell<Option<String>>,
     context_captured: Cell<bool>,
     empty_tree: RefCell<Option<String>>,
+    worktree: RefCell<Option<PathBuf>>,
 }
 
 impl GitCommand for ProcessGit {
@@ -53,12 +56,21 @@ impl GitCommand for ProcessGit {
     }
 
     fn diff_context(&self, paths: &[String]) -> Option<u64> {
+        self.diff_snapshot(paths)
+            .map(|context| crate::cache::hash(&(context.scope, context.fingerprint(paths))))
+    }
+
+    fn diff_snapshot(&self, paths: &[String]) -> Option<super::DiffContext> {
         let _perf = crate::diagnostics::stage("diff_context");
         if paths.iter().any(|path| path.contains('\u{fffd}')) {
             return None;
         }
-        let repo = gix::discover_with_environment_overrides(".").ok()?;
-        let root = repo.workdir()?.canonicalize().ok()?;
+        if self.worktree.borrow().is_none() {
+            let repo = gix::discover_with_environment_overrides(".").ok()?;
+            self.worktree
+                .replace(Some(repo.workdir()?.canonicalize().ok()?));
+        }
+        let root = self.worktree.borrow().as_ref()?.clone();
         let config = if self.context_captured.replace(true) || self.config.borrow().is_none() {
             self.run(&["config", "--null", "--list"], false).ok()?
         } else {
@@ -85,15 +97,34 @@ impl GitCommand for ProcessGit {
             .map(|directory| directory.join(format!("git{}", std::env::consts::EXE_SUFFIX)))
             .find(|path| path.is_file())?;
         let metadata = executable.metadata().ok()?;
-        Some(crate::cache::hash(&(
-            "diff-v1",
+        let scope = crate::cache::hash(&(
+            "diff-v2",
             root,
-            config,
-            attributes,
             executable.canonicalize().ok()?,
             metadata.len(),
             metadata.modified().ok()?,
-        )))
+        ));
+        let mut values: BTreeMap<_, Vec<(&str, &str)>> = paths
+            .iter()
+            .map(|path| (path.clone(), Vec::new()))
+            .collect();
+        let mut fields = attributes.split_terminator('\0');
+        while let Some(path) = fields.next() {
+            let attribute = fields.next()?;
+            let value = fields.next()?;
+            values.get_mut(path)?.push((attribute, value));
+        }
+        Some(super::DiffContext {
+            scope,
+            configuration: super::diff::configuration_fingerprint(&config),
+            attributes: values
+                .into_iter()
+                .map(|(path, mut attributes)| {
+                    attributes.sort_unstable();
+                    (path, crate::cache::hash(&attributes))
+                })
+                .collect(),
+        })
     }
 
     fn run(&self, args: &[&str], allow_failure: bool) -> Result<String> {

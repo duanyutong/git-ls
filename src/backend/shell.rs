@@ -19,6 +19,80 @@ impl<T: GitCommand + ?Sized> BranchlessQueries for T {
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_branch_names(self, revset, hidden)
     }
+
+    fn query_rewrites(
+        &self,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        shell_query_rewrites(self, oids, targets)
+    }
+
+    fn query_rewrites_in_path(
+        &self,
+        base: Option<&str>,
+        head: &str,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        shell_path_rewrites(self, base, head, oids, targets)
+    }
+}
+
+pub(super) fn shell_path_rewrites<G: GitCommand + ?Sized>(
+    git: &G,
+    base: Option<&str>,
+    head: &str,
+    oids: &[String],
+    targets: &[String],
+) -> Result<HashMap<String, String>> {
+    if oids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let range = base.map_or_else(
+        || format!("ancestors({head})"),
+        |base| format!("(range({base}, {head}) - {base})"),
+    );
+    let mut targets = targets.to_vec();
+    targets.sort_unstable();
+    let expression = format!("current(({range}) - ({}))", targets.join(" | "));
+    if !targets.is_empty() && expression.len() <= 8192 {
+        let current = shell_query_revset(git, &expression, true)?;
+        if !current.iter().any(|id| targets.contains(id)) {
+            return Ok(HashMap::new());
+        }
+    }
+    shell_query_rewrites(git, oids, &targets)
+}
+
+pub(super) fn shell_query_rewrites<G: GitCommand + ?Sized>(
+    git: &G,
+    oids: &[String],
+    targets: &[String],
+) -> Result<HashMap<String, String>> {
+    let mut result = HashMap::new();
+    for batch in oids.chunks(128) {
+        let mut pending = vec![batch];
+        while let Some(group) = pending.pop() {
+            let expression = format!("current({})", group.join(" | "));
+            let current = shell_query_revset(git, &expression, true)?;
+            if !current.iter().any(|oid| targets.contains(oid)) {
+                continue;
+            }
+            if let [oid] = group {
+                if let [replacement] = current.as_slice()
+                    && replacement != oid
+                {
+                    result.insert(oid.clone(), replacement.clone());
+                }
+            } else {
+                let (left, right) = group.split_at(group.len() / 2);
+                pending.push(right);
+                pending.push(left);
+            }
+        }
+    }
+    Ok(result)
 }
 
 impl<T: GitCommand + ?Sized> CommitMetadataBackend for T {

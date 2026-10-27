@@ -570,12 +570,14 @@ fn render_session_supplies_shared_context_to_populated_plan() {
             true,
         )],
     )];
+    let topology = PreparedTopology::new(&[]);
     let session = RenderSession::new(
         &args,
         &repository,
         Some(&main_meta),
         RenderEnvironment::new(TEST_NOW, None, false),
         &colours,
+        &topology,
     );
 
     let plan = render_populated_selection(&groups, &session);

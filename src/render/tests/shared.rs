@@ -510,3 +510,98 @@ fn display_settings_and_checkout_state_preserve_colours_and_plain_graph_shape() 
         }
     }
 }
+
+#[test]
+fn prepared_clipped_graphs_preserve_visible_cells_and_avoid_hidden_colour_sequences() {
+    use crate::render::PreparedTopology;
+    use crate::terminal::{RenderEnvironment, write_rendered_line};
+    let lanes: Vec<_> = (0..128)
+        .map(|index| lane(&[&format!("topic-{index}"), "shared"]))
+        .collect();
+    let mut groups = vec![LaneGroup::new(Some("main".into()), None, Some(0), lanes)];
+    groups[0].lanes[0]
+        .rewritten_commits
+        .push(RewrittenCommit::new(meta("old", "old"), meta("new", "new")));
+    let prepared = PreparedTopology::new(&groups);
+    let colours = test_colours(true).prepare(&groups, &prepared);
+    let full = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::High,
+        MetadataWidths::default(),
+        &colours,
+    )
+    .with_layout(Layout::Columns);
+    let clipped = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::High,
+        MetadataWidths::default(),
+        &colours,
+    )
+    .with_layout(Layout::Columns)
+    .with_topology(&prepared, Some(40));
+    let environment = RenderEnvironment::new(TEST_NOW, Some(40), true);
+    let mut expected = Vec::new();
+    let mut actual = Vec::new();
+    for line in render_lane_groups(&groups, &full) {
+        write_rendered_line(&mut expected, &line, environment).unwrap();
+    }
+    for line in render_lane_groups(&groups, &clipped) {
+        write_rendered_line(&mut actual, &line, environment).unwrap();
+    }
+    let expected = String::from_utf8(expected).unwrap();
+    let actual = String::from_utf8(actual).unwrap();
+    assert_eq!(
+        console::strip_ansi_codes(&actual),
+        console::strip_ansi_codes(&expected)
+    );
+    assert!(actual.len() < 100_000, "{}", actual.len());
+    // A prepared layout remains safe when called with a different lane structure.
+    let empty: Vec<LaneGroup> = vec![LaneGroup::new(
+        Some("main".into()),
+        None,
+        Some(0),
+        vec![lane(&["different"])],
+    )];
+    assert_ne!(
+        render_lane_groups(&empty, &clipped),
+        Vec::<crate::render::RenderLine>::new()
+    );
+}
+
+#[test]
+fn stale_prepared_rows_fall_back_when_lanes_or_rewrite_positions_disappear() {
+    use crate::render::PreparedTopology;
+    let mut original = lane(&["point"]);
+    original
+        .rewritten_commits
+        .push(RewrittenCommit::new(meta("old", "old"), meta("new", "new")));
+    let groups = vec![LaneGroup::new(None, None, Some(0), vec![original])];
+    let prepared = PreparedTopology::new(&groups);
+    let colours = test_colours(false);
+    let context = RenderContext::new(
+        "main",
+        None,
+        None,
+        None,
+        TEST_NOW,
+        Verbosity::Low,
+        MetadataWidths::default(),
+        &colours,
+    )
+    .with_topology(&prepared, Some(40));
+    for lanes in [Vec::new(), vec![lane(&["point"])]] {
+        let changed = vec![LaneGroup::new(None, None, Some(0), lanes)];
+        assert_ne!(
+            render_lane_groups(&changed, &context),
+            Vec::<crate::render::RenderLine>::new()
+        );
+    }
+}

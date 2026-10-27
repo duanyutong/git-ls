@@ -23,8 +23,21 @@ impl Colours {
     pub(super) fn for_groups(&self, groups: &[LaneGroup]) -> Self {
         Self {
             enabled: self.enabled,
-            assignment: if self.enabled {
+            assignment: if !self.assignment.is_empty() {
+                self.assignment.clone()
+            } else if self.enabled {
                 assignment::assign(groups)
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    pub(crate) fn prepare(self, groups: &[LaneGroup], topology: &super::PreparedTopology) -> Self {
+        Self {
+            enabled: self.enabled,
+            assignment: if self.enabled {
+                assignment::assign_prepared(groups, Some(topology))
             } else {
                 Vec::new()
             },

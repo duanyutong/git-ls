@@ -1,6 +1,7 @@
 use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, LaneGroup};
 
+use super::ancestry::{PreparedAncestry, PreparedTopology};
 use super::colours::Colours;
 use super::diff::DiffStatWidths;
 use super::metadata::MetadataWidths;
@@ -16,6 +17,9 @@ pub(crate) struct RenderContext<'a> {
     pub(super) layout: Layout,
     pub(super) colours: &'a Colours,
     pub(super) diff_stat_widths: DiffStatWidths,
+    pub(super) topology: Option<&'a PreparedTopology>,
+    pub(super) ancestry: Option<&'a PreparedAncestry>,
+    pub(super) terminal_width: Option<usize>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -40,6 +44,9 @@ impl<'a> RenderContext<'a> {
             layout: Layout::default(),
             colours,
             diff_stat_widths: DiffStatWidths::default(),
+            topology: None,
+            ancestry: None,
+            terminal_width: None,
         }
     }
 
@@ -50,6 +57,16 @@ impl<'a> RenderContext<'a> {
 
     pub(crate) fn with_diff_stats(mut self, groups: &[LaneGroup]) -> Self {
         self.diff_stat_widths = DiffStatWidths::from_groups(groups);
+        self
+    }
+
+    pub(crate) const fn with_topology(
+        mut self,
+        topology: &'a PreparedTopology,
+        width: Option<usize>,
+    ) -> Self {
+        self.topology = Some(topology);
+        self.terminal_width = width;
         self
     }
 }

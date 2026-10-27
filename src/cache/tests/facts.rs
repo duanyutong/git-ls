@@ -17,7 +17,7 @@ fn answer_comparison_ignores_recency_but_detects_each_fact_category() {
         .insert("meta".into(), CommitMeta::new("meta", 0, "subject"));
     assert!(!facts.same_answers(&original));
     facts.metadata.clear();
-    facts.diff.context = Some(1);
+    facts.diff.scopes.insert(1, DiffScope::default());
     assert!(!facts.same_answers(&original));
 }
 
@@ -25,16 +25,23 @@ fn answer_comparison_ignores_recency_but_detects_each_fact_category() {
 fn statistics_have_bounded_retention_and_are_discarded_before_graph_facts() {
     let mut facts = Facts::default();
     facts.bases.insert("base".into(), None);
-    facts.diff.context = Some(1);
-    facts.diff.paths = vec!["file".into()];
-    for key in ["old", "new"] {
-        facts.diff.values.insert(key.into(), DiffStat::default());
-        facts.touch(key);
+    for (used, key) in [(1, "old"), (2, "new")] {
+        facts.diff.scopes.entry(1).or_default().values.insert(
+            key.into(),
+            DiffValue {
+                stat: DiffStat::default(),
+                paths: vec!["file".into()],
+                fingerprint: 1,
+                used,
+            },
+        );
     }
     facts.compact(1);
-    assert_eq!(facts.diff.values.keys().collect::<Vec<_>>(), vec!["new"]);
-    assert!(facts.recency.contains_key("new"));
-    facts.fit(1, &|value| value.diff.values.is_empty());
+    assert_eq!(
+        facts.diff.scopes[&1].values.keys().collect::<Vec<_>>(),
+        vec!["new"]
+    );
+    facts.fit(1, &|value| value.diff.scopes.is_empty());
     assert_eq!(facts.diff, DiffFacts::default());
     assert!(facts.bases.contains_key("base"));
 }
@@ -98,4 +105,73 @@ fn byte_admission_prefers_graph_facts_and_recent_metadata() {
     assert!(facts.distances.is_empty());
     facts.fit(0, &|_| false);
     assert!(facts.recency.is_empty());
+}
+
+#[test]
+fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
+    let mut facts = Facts::default();
+    for scope in 0..6 {
+        let used = facts.diff.tick();
+        facts.diff.scopes.insert(
+            scope,
+            DiffScope {
+                used,
+                values: HashMap::from([(
+                    format!("tree-{scope}"),
+                    DiffValue {
+                        stat: DiffStat::default(),
+                        paths: vec![format!("path-{scope}")],
+                        fingerprint: scope,
+                        used,
+                    },
+                )]),
+            },
+        );
+        facts
+            .diff
+            .trees
+            .insert(format!("commit-{scope}"), format!("tree-{scope}"));
+        facts.touch(&format!("commit-{scope}"));
+    }
+    let mut touched = facts.clone();
+    touched.diff.clock += 100;
+    touched.diff.scopes.get_mut(&5).unwrap().used = 100;
+    touched
+        .diff
+        .scopes
+        .get_mut(&5)
+        .unwrap()
+        .values
+        .get_mut("tree-5")
+        .unwrap()
+        .used = 100;
+    assert!(facts.same_answers(&touched));
+    touched
+        .diff
+        .scopes
+        .get_mut(&5)
+        .unwrap()
+        .values
+        .get_mut("tree-5")
+        .unwrap()
+        .fingerprint = 99;
+    assert!(!facts.same_answers(&touched));
+    facts.compact(3);
+    assert_eq!(facts.diff.trees.len(), 3);
+    assert_eq!(
+        facts
+            .diff
+            .scopes
+            .values()
+            .map(|scope| scope.values.len())
+            .sum::<usize>(),
+        3
+    );
+    assert!(!facts.diff.scopes.contains_key(&0));
+    let mut changed = facts.clone();
+    changed.diff.trees.insert("new".into(), "tree".into());
+    assert!(!changed.same_answers(&facts));
+    facts.fit(3, &|value| value.diff.scopes.len() <= 1);
+    assert_eq!(facts.diff.scopes.len(), 1);
+    assert!(facts.diff.scopes.contains_key(&5));
 }

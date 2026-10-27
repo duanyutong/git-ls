@@ -11,6 +11,7 @@ mod orphan;
 mod rewrite;
 mod trunk;
 
+pub(crate) use ancestry::PreparedTopology;
 pub(crate) use colours::Colours;
 pub(crate) use context::RenderContext;
 pub(crate) use diff::fit_diff_stats;

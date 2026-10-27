@@ -103,3 +103,20 @@ fn redundant_parents_and_hidden_history_are_handled_without_revisiting_boundarie
     assert_eq!(descendants(&nodes, 0), [true, true, true, false]);
     assert_eq!(descendants::<usize>(&[], 0), Vec::<bool>::new());
 }
+
+#[test]
+fn summarises_shared_linear_corridors_and_rejects_ambiguous_graphs() {
+    use std::collections::HashSet;
+    let nodes = vec![(5, vec![3]), (4, vec![3]), (3, vec![2]), (2, vec![1])];
+    let paths = crate::backend::graph::linear_paths(&nodes, &HashSet::from([2, 4, 5])).unwrap();
+    assert_eq!(paths.summary(&4), Some((Some(1), vec![(4, 2), (2, 1)])));
+    assert_eq!(paths.summary(&5), Some((Some(1), vec![(5, 2), (2, 1)])));
+    assert!(paths.summary(&99).is_none());
+    assert!(
+        crate::backend::graph::linear_paths(&[(1, vec![2]), (2, vec![1])], &HashSet::new())
+            .is_none()
+    );
+    assert!(crate::backend::graph::linear_paths(&[(3, vec![1, 2])], &HashSet::new()).is_none());
+    let orphan = crate::backend::graph::linear_paths(&[(1, vec![])], &HashSet::from([1])).unwrap();
+    assert_eq!(orphan.summary(&1), Some((None, vec![(1, 1)])));
+}

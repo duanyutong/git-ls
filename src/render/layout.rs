@@ -26,8 +26,11 @@ pub(super) fn render_group(
     main_spine: MainSpine,
 ) -> Vec<RenderLine> {
     let lane_count = lanes.len();
-    let layout = LaneRenderLayout::new(lane_count, lane_field_width, *next_colour);
-    let ancestry = shared_ancestry(lanes);
+    let layout = LaneRenderLayout::new(lane_count, lane_field_width, *next_colour)
+        .with_width(ctx.terminal_width);
+    let ancestry = ctx
+        .ancestry
+        .map_or_else(|| shared_ancestry(lanes), |prepared| prepared.bind(lanes));
     let mut active = vec![false; lane_count];
     let mut lane_colours = vec![0; lane_count];
     let mut output = Vec::new();
@@ -225,7 +228,12 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
     let mut previous_main_distance = 0;
     let lane_field_width = connected_lane_field_width(groups);
 
-    for group in groups {
+    for (index, group) in groups.iter().enumerate() {
+        let group_context = RenderContext {
+            ancestry: ctx.topology.and_then(|topology| topology.groups.get(index)),
+            ..*ctx
+        };
+        let ctx = &group_context;
         if let Some(main_distance) = group.main_distance {
             if !connected_started {
                 output.push(render_top_spacer(

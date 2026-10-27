@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
+mod diff;
 mod graph;
 
 use gix::bstr::ByteSlice as _;
@@ -23,6 +24,7 @@ pub(crate) struct GixBackend {
     command: ProcessGit,
     parents: RefCell<HashMap<gix::ObjectId, Vec<gix::ObjectId>>>,
     selection: RefCell<Option<graph::TipAnalysis>>,
+    summaries: RefCell<Option<super::graph::LinearPaths<gix::ObjectId>>>,
     shallow: HashSet<gix::ObjectId>,
 }
 
@@ -47,6 +49,7 @@ impl GixBackend {
             command: ProcessGit::default(),
             parents: RefCell::default(),
             selection: RefCell::default(),
+            summaries: RefCell::default(),
         })
     }
 
@@ -103,6 +106,24 @@ impl BranchlessQueries for GixBackend {
     fn query_branch_names(&self, revset: &str, hidden: bool) -> Result<Vec<String>> {
         shell_query_branch_names(&self.command, revset, hidden)
     }
+
+    fn query_rewrites(
+        &self,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        super::shell::shell_query_rewrites(&self.command, oids, targets)
+    }
+
+    fn query_rewrites_in_path(
+        &self,
+        base: Option<&str>,
+        head: &str,
+        oids: &[String],
+        targets: &[String],
+    ) -> Result<HashMap<String, String>> {
+        super::shell::shell_path_rewrites(&self.command, base, head, oids, targets)
+    }
 }
 
 impl DiffStatBackend for GixBackend {
@@ -123,6 +144,40 @@ impl DiffStatBackend for GixBackend {
 
     fn diff_context(&self, paths: &[String]) -> Option<u64> {
         super::GitCommand::diff_context(&self.command, paths)
+    }
+
+    fn diff_snapshot(&self, paths: &[String]) -> Option<super::DiffContext> {
+        super::GitCommand::diff_snapshot(&self.command, paths)
+    }
+
+    fn diff_tree_pairs(
+        &self,
+        pairs: &[super::DiffPair],
+        trees: &mut HashMap<String, String>,
+    ) -> Result<Option<Vec<super::DiffPair>>> {
+        for id in super::diff::commit_ids(pairs) {
+            if trees.contains_key(id) {
+                continue;
+            }
+            let commit = self
+                .repo
+                .find_commit(Self::object_id(id)?)
+                .map_err(|error| GitLsError::gix("find diff endpoint", error))?;
+            let tree = commit
+                .tree_id()
+                .map_err(|error| GitLsError::gix("read endpoint tree", error))?;
+            trees.insert(id.to_string(), tree.detach().to_string());
+        }
+        let empty = gix::ObjectId::empty_tree(self.repo.object_hash()).to_string();
+        super::diff::resolved_pairs(pairs, trees, &empty).map(Some)
+    }
+
+    fn diff_paths(&self, pairs: &[super::DiffPair]) -> Result<Vec<Vec<String>>> {
+        pairs.iter().map(|pair| self.tree_paths(pair)).collect()
+    }
+
+    fn diff_tree_stats(&self, pairs: &[super::DiffPair]) -> Result<super::DiffBatch> {
+        super::diff::tree_stats(&self.command, pairs)
     }
 }
 
@@ -191,10 +246,58 @@ impl RepositoryStateBackend for GixBackend {
 }
 
 impl AncestryBackend for GixBackend {
+    fn prepare_ancestry(&self, main: &str, points: &[&str]) -> Result<()> {
+        self.summaries.replace(None);
+        let selection = self.selection.borrow();
+        let Some(analysis) = selection.as_ref().filter(|analysis| analysis.main == main) else {
+            return Ok(());
+        };
+        let Some(nodes) = &analysis.nodes else {
+            return Ok(());
+        };
+        let points: HashSet<_> = points
+            .iter()
+            .map(|id| Self::object_id(id))
+            .collect::<Result<_>>()?;
+        crate::diagnostics::count("shared_ancestry_preparations", 1);
+        if let Some(paths) = super::graph::linear_paths(nodes, &points) {
+            crate::diagnostics::count("shared_ancestry_vertices", nodes.len());
+            self.summaries.replace(Some(paths));
+        }
+        Ok(())
+    }
+
+    fn ancestry_summary(&self, main: &str, head: &str) -> Result<Option<super::AncestrySummary>> {
+        if self
+            .selection
+            .borrow()
+            .as_ref()
+            .is_none_or(|selection| selection.main != main)
+        {
+            return Ok(None);
+        }
+        let summary = self
+            .summaries
+            .borrow()
+            .as_ref()
+            .and_then(|paths| paths.summary(&Self::object_id(head).ok()?));
+        Ok(summary.map(|(base, points)| {
+            crate::diagnostics::count("lane_summary_hits", 1);
+            super::AncestrySummary {
+                base: base.map(|id| id.to_string()),
+                points: points
+                    .into_iter()
+                    .map(|(id, count)| (id.to_string(), count))
+                    .collect(),
+            }
+        }))
+    }
+
     fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
         let analysis = self.analyse_tips(main, tips)?;
         let result = analysis.unmerged.clone();
         *self.selection.borrow_mut() = Some(analysis);
+        self.summaries.replace(None);
         Ok(result)
     }
 

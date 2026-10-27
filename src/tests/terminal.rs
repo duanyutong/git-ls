@@ -122,3 +122,25 @@ fn propagates_output_write_errors() {
 
     assert_eq!(error.to_string(), "failed to write output: closed");
 }
+
+#[test]
+fn truncation_removes_colour_changes_for_hidden_columns_and_preserves_resets() {
+    let hidden = "\x1b[32mhidden\x1b[0m".repeat(512);
+    let line = format!("\x1b[31mvisible\x1b[0m {hidden}");
+    let fitted = fit_line_to_terminal_width(&line, Some(12));
+    assert_eq!(console::strip_ansi_codes(&fitted), "visible h...");
+    assert!(fitted.ends_with("\x1b[0m"));
+    assert!(fitted.len() < 100, "{}", fitted.len());
+    let suffix = RenderLine::with_fixed_suffix(line, "\x1b[34mabc\x1b[0m");
+    let fitted = fit_line_with_fixed_suffix(&suffix, Some(18));
+    assert_eq!(console::measure_text_width(&fitted), 18);
+    assert!(fitted.len() < 150);
+    assert_eq!(compact_styles("plain"), "plain");
+    assert_eq!(compact_styles("\x1b[31mred\x1b[0m"), "\x1b[31mred\x1b[0m");
+    assert_eq!(compact_styles("\x1b[31m\x1b[mtext"), "\x1b[mtext");
+    assert_eq!(
+        compact_styles("\x1b[31m\x1b[1mbold red"),
+        "\x1b[31m\x1b[1mbold red"
+    );
+    assert_eq!(compact_styles("\x1b[31m\x1b[2Jtext"), "\x1b[31m\x1b[2Jtext");
+}

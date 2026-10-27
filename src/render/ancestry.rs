@@ -1,6 +1,74 @@
 use std::collections::HashMap;
 
-use crate::model::{BranchPoint, Lane, RewrittenCommit};
+use crate::model::{BranchPoint, Lane, LaneGroup, RewrittenCommit};
+
+pub(crate) struct PreparedTopology {
+    pub(super) groups: Vec<PreparedAncestry>,
+}
+
+pub(super) struct PreparedAncestry {
+    rows: Vec<(usize, usize, bool, Vec<usize>)>,
+    roots: Vec<usize>,
+}
+
+impl PreparedTopology {
+    pub(crate) fn new(groups: &[LaneGroup]) -> Self {
+        crate::diagnostics::count("topology_preparations", 1);
+        Self {
+            groups: groups
+                .iter()
+                .map(|group| {
+                    let ancestry = shared_ancestry(&group.lanes);
+                    PreparedAncestry {
+                        roots: ancestry.roots,
+                        rows: ancestry
+                            .rows
+                            .into_iter()
+                            .map(|row| {
+                                (
+                                    row.lane,
+                                    row.position,
+                                    matches!(row.content, Content::Rewritten(_)),
+                                    row.children,
+                                )
+                            })
+                            .collect(),
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+impl PreparedAncestry {
+    pub(super) fn bind<'a>(&self, lanes: &'a [Lane]) -> Ancestry<'a> {
+        let rows: Option<Vec<_>> = self
+            .rows
+            .iter()
+            .map(|(lane, position, rewritten, children)| {
+                let path = lanes.get(*lane)?;
+                let content = if *rewritten {
+                    Content::Rewritten(path.rewritten_commits.get(*position)?)
+                } else {
+                    Content::Branch(path.branch_points.get(*position)?)
+                };
+                Some(AncestryRow {
+                    content,
+                    lane: *lane,
+                    children: children.clone(),
+                    position: *position,
+                })
+            })
+            .collect();
+        rows.map_or_else(
+            || shared_ancestry(lanes),
+            |rows| Ancestry {
+                rows,
+                roots: self.roots.clone(),
+            },
+        )
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum Content<'a> {
@@ -21,6 +89,7 @@ pub(super) struct AncestryRow<'a> {
     pub(super) content: Content<'a>,
     pub(super) lane: usize,
     pub(super) children: Vec<usize>,
+    position: usize,
 }
 
 pub(super) struct Ancestry<'a> {
@@ -32,6 +101,7 @@ struct Node<'a> {
     content: Content<'a>,
     lane: usize,
     children: Vec<usize>,
+    position: usize,
 }
 
 /// Share identical downstack paths.
@@ -45,10 +115,17 @@ pub(super) fn shared_ancestry(lanes: &[Lane]) -> Ancestry<'_> {
         let contents = path
             .rewritten_commits
             .iter()
+            .enumerate()
             .rev()
-            .map(Content::Rewritten)
-            .chain(path.branch_points.iter().rev().map(Content::Branch));
-        for content in contents {
+            .map(|(index, commit)| (index, Content::Rewritten(commit)))
+            .chain(
+                path.branch_points
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(index, point)| (index, Content::Branch(point))),
+            );
+        for (position, content) in contents {
             let key = (parent, content.identity());
             let index = *identities.entry(key).or_insert_with(|| {
                 let index = nodes.len();
@@ -56,6 +133,7 @@ pub(super) fn shared_ancestry(lanes: &[Lane]) -> Ancestry<'_> {
                     content,
                     lane,
                     children: Vec::new(),
+                    position,
                 });
                 if let Some(parent) = parent {
                     nodes[parent].children.push(index);
@@ -86,6 +164,7 @@ pub(super) fn shared_ancestry(lanes: &[Lane]) -> Ancestry<'_> {
                     .iter()
                     .map(|&child| nodes[child].lane)
                     .collect(),
+                position: node.position,
             });
         } else {
             pending.push((index, true));
