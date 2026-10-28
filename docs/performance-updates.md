@@ -120,6 +120,54 @@ The initial investigation's projections are not guarantees of the candidate's ev
 Git process startup, attribute resolution, expensive content or rename comparisons, cache-capacity limits and terminal-consumer behaviour remain workload-dependent costs.
 Replacing Git's effective attribute query and redesigning general-DAG distance analysis remain conditional on semantic parity and residual profiling evidence, as specified in the plan.
 
+## Shallow repository reuse
+
+A subsequent local update addresses the conservative shallow-history bypass in version 0.16.1.
+A shallow boundary changes ancestry semantics independently of branch tips: fetching additional history may reveal parents of a previously truncated commit without changing its object ID.
+The earlier compatibility key did not represent that mutable graph boundary, so both graph and statistics persistence were disabled for shallow repositories.
+
+The compatibility key now includes the sorted, deduplicated shallow-boundary object IDs for both facts and topology snapshots.
+An unchanged boundary permits normal cache admission and warm reuse, while deepening, unshallowing or changing boundary contents establishes a distinct compatibility context.
+The native backend's captured boundary must agree with the live cache context before any persisted result is read.
+Publication revalidates the live context after analysis and discards results if the boundary changed during execution.
+Boundary identity derives from parsed content rather than modification times; reordering or duplicating equivalent boundary records does not invalidate results.
+Linked worktrees share the common repository's boundary while retaining their existing worktree-specific statistics validation.
+Malformed boundary data and unsupported graph overrides continue to bypass reuse or fail through the existing Git error handling.
+
+Diagnostics now identify `cache_graph=shallow shallow_boundaries=N` when a shallow repository is eligible.
+An unchanged warmed invocation should additionally report `cache=hit` and statistics hits without selection traversal or a numeric diff subprocess.
+Tests cover real shallow fetches followed by deepening and unshallowing with unchanged local refs, linked worktrees, malformed metadata, stale native handles and boundary changes during execution.
+The maintained benchmark adds shallow clones at depths 1, 2,500 and 5,000, using isolated object stores and baseline-equivalent output checks.
+The long-main fixture includes four merged branch tips and reproduces the reported selection dimensions: 22 local tips, 17 selected commits and eight independent heads.
+
+The following medians compare the committed version 0.16.1 with the local candidate.
+Native cases use nine fresh-process samples per mode; the shell case uses three.
+Invocation order is reproducibly shuffled within each fixture.
+Baseline shallow invocations bypass persistence, while candidate warm invocations reuse previously admitted entries.
+
+| Fixture | Backend | Baseline repeated statistics | Candidate warm statistics | Candidate cold statistics |
+| --- | --- | ---: | ---: | ---: |
+| 32 independent shallow branches, depth 1 | Native | 131.65 ms | 73.62 ms | 196.93 ms |
+| Shared 5,000-commit source history, depth 2,500 | Native | 135.56 ms | 102.42 ms | 201.01 ms |
+| Long main history with 22 tips and 17 selected commits, depth 5,000 | Native | 77.37 ms | 69.92 ms | 153.44 ms |
+| 32 independent shallow branches, depth 1 | Shell | 1,668.35 ms | 300.61 ms | 1,526.17 ms |
+| 32 independent branches with complete history, control | Native | 79.72 ms | 80.70 ms | 226.18 ms |
+
+The first eligible invocation may cost more because it captures validity context and publishes reusable results.
+The benefit applies to subsequent invocations with unchanged inputs.
+Host load varied substantially between batches, including observed load averages between approximately 14 and 35, so these elapsed values remain exploratory.
+The complete-history control shows similar warm latency, and the fixture matching the reported selection counts does not reproduce the remote repository's content-comparison or object-loading costs.
+These measurements therefore do not establish a latency forecast for `av`.
+
+Deterministic probes establish the intended change independently of timing noise.
+All three native shallow fixtures report warm topology hits, reuse every requested statistic and execute no selection traversal or numeric diff.
+The 22-tip fixture reuses all 17 statistics.
+The shell fixture reduces Git processes from 75 to six and executes no numeric diff after warming.
+Both backends retain baseline-equivalent visible text and glyph colours.
+`just check` passes all 363 Rust acceptance tests, and `just coverage` retains 100% line, region and function coverage across the 39 designated unit modules.
+The additional benchmark fixtures pass formatting, lint, type and output-parity checks.
+Retained evidence resides in `.agents/plans/shallow-cache-20261027/`.
+
 ## Local trial
 
 Build with `just build-release` from this project's root, then invoke the resulting `target/release/git-ls` by its absolute path from the repository being evaluated, with the usual command-line options.

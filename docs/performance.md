@@ -81,7 +81,8 @@ The admitted data bound is therefore 35 MiB, plus bounded bookkeeping, even with
 Publication is atomic and uses non-blocking locks.
 Slot collisions, corrupt or incompatible entries, oversized results, contention, and unavailable storage cause a miss or skipped publication rather than command failure.
 
-Persistent reuse bypasses custom or hidden branchless selections, shallow history, replacement refs, grafts, alternate stores, promisor or partial-clone configurations, and unsupported graph-related environment overrides.
+Persistent reuse bypasses custom or hidden branchless selections, replacement refs, grafts, alternate stores, promisor or partial-clone configurations, and unsupported graph-related environment overrides.
+Shallow repositories retain graph and statistics caches keyed by their canonical boundary object IDs, with invalidation following deepening or unshallowing even when branch tips remain unchanged.
 These cases retain the applicable uncached optimisations.
 Replacement refs, grafts and their environment overrides select Git subprocess graph semantics when the native backend is requested; debug output records this delegation.
 Repacking alone does not invalidate logical analysis.

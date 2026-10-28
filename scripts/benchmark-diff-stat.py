@@ -34,6 +34,9 @@ class Case:
     renames: int = 0
     trunk: int = 16
     paths: int = 0
+    depth: int = 0
+    main_commits: int = 0
+    merged_branches: int = 0
 
 
 CASES = [
@@ -64,6 +67,17 @@ CASES = [
     Case("inactive-path-attributes", 2, "inactive"),
     Case("alternating-worktrees", 32, "worktree"),
     Case("branchless-interior-32", 1, "branchless", trunk=32),
+    Case("shallow-32", 32, depth=1),
+    Case("shallow-shared-5000", 32, "shared_deep", trunk=5000, depth=2500),
+    Case(
+        "shallow-main-10000",
+        8,
+        "shared",
+        trunk=9,
+        depth=5000,
+        main_commits=10000,
+        merged_branches=4,
+    ),
 ]
 MODES = {
     "warm_off": ["--no-diff-stat"],
@@ -121,6 +135,14 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
     if case.shape == "large":
         initial = [("data", b"stable content\n" * 200000)]
     base = commit("main", 0, initial or [("data", b"base\n")])
+    spacing = max(1, case.main_commits // (2 * (case.merged_branches + 1)))
+    merged = {
+        case.main_commits - (index + 1) * spacing: index for index in range(case.merged_branches)
+    }
+    for index in range(case.main_commits):
+        base = commit("main", base, [])
+        if (alias := merged.get(index + 1)) is not None:
+            records.extend(f"reset refs/heads/merged-{alias:03}\nfrom :{base}\n\n".encode())
     trunk = base
     if case.shape.startswith("shared") or case.shape == "branchless":
         for index in range(case.trunk):
@@ -161,6 +183,28 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
         if case.shape == "stack":
             trunk = tip
     git(repo, "fast-import", "--quiet", data=bytes(records))
+    if case.depth:
+        source = repo.with_name(f"{case.name}-source")
+        repo.rename(source)
+        git(
+            source,
+            "-c",
+            "init.templateDir=",
+            "clone",
+            "--no-local",
+            "--no-single-branch",
+            "--depth",
+            str(case.depth),
+            str(source),
+            str(repo),
+        )
+        refs = git(source, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/")
+        updates = b"".join(b"update " + record + b"\n" for record in refs.splitlines())
+        git(repo, "update-ref", "--stdin", data=updates)
+        git(repo, "config", "gc.auto", "0")
+        git(repo, "config", "core.attributesFile", os.devnull)
+        if git(repo, "rev-parse", "--is-shallow-repository").strip() != b"true":
+            raise AssertionError(f"Expected a shallow clone: {case.name}")
     if case.shape == "worktree":
         git(repo, "worktree", "add", "--detach", str(repo.parent / "linked"), "main")
     elif case.shape == "inactive":
@@ -458,6 +502,9 @@ def main() -> None:
                 "layers": case.layers,
                 "shape": case.shape,
                 "renamed_files": case.renames,
+                "shallow_depth": case.depth,
+                "main_commits": case.main_commits,
+                "merged_branches": case.merged_branches,
                 "configuration": git(
                     next(iter(repos.values())), "config", "--null", "--list"
                 ).decode(),

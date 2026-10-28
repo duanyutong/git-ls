@@ -35,7 +35,7 @@ impl GixBackend {
         Ok(backend)
     }
 
-    pub(super) fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
+    pub(crate) fn discover_from(directory: impl AsRef<std::path::Path>) -> Result<Self> {
         let mut repo = gix::discover_with_environment_overrides(directory)
             .map_err(|source| GitLsError::gix("discover repository", source))?;
         repo.object_cache_size_if_unset(4 * 1024 * 1024);
@@ -197,6 +197,12 @@ impl CommitMetadataBackend for GixBackend {
 }
 
 impl RepositoryStateBackend for GixBackend {
+    fn captured_shallow_boundary(&self) -> Option<Vec<String>> {
+        let mut boundary: Vec<_> = self.shallow.iter().map(ToString::to_string).collect();
+        boundary.sort_unstable();
+        Some(boundary)
+    }
+
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
         let mut result: HashMap<String, Vec<String>> = HashMap::new();
         for reference in self

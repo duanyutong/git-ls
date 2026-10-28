@@ -630,6 +630,7 @@ fn optional_backend_capabilities_have_conservative_defaults() {
         omitted: "none",
     };
     assert!(adapter.diff_snapshot(&[]).is_none());
+    assert_eq!(adapter.captured_shallow_boundary(), None);
     assert!(
         adapter
             .diff_tree_pairs(&[], &mut HashMap::new())
@@ -647,6 +648,7 @@ fn optional_backend_capabilities_have_conservative_defaults() {
         },
         crate::cache::Facts::default(),
     );
+    assert_eq!(session.captured_shallow_boundary(), None);
     assert_eq!(
         session.diff_stats(&[]).unwrap().stats,
         Vec::<crate::model::DiffStat>::new()

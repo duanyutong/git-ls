@@ -44,7 +44,7 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
         let compatibility: serde_json::Value =
             serde_json::from_str(entry["key"].as_str().expect("structured key"))
                 .expect("JSON compatibility key");
-        assert_eq!(compatibility["analysis"], "analysis-4");
+        assert_eq!(compatibility["analysis"], "analysis-5");
         assert_eq!(compatibility["backend"], backend);
         assert_eq!(compatibility["object_format"], "sha1");
         for order in ["newest", "oldest"] {
@@ -105,7 +105,7 @@ fn changes_recompute_dependent_analysis_and_retain_immutable_facts() {
 }
 
 #[test]
-fn corrupt_entries_refresh_clear_and_unsupported_graphs_are_safe() {
+fn corrupt_entries_refresh_clear_and_shallow_history_are_safe() {
     let repo = fixture();
     let (expected, _) = run(&repo, &[]);
     let root = repo.path().join(".git/git-ls/cache/v1");
@@ -130,7 +130,11 @@ fn corrupt_entries_refresh_clear_and_unsupported_graphs_are_safe() {
     let boundary = repo.git(&["rev-parse", "main"]);
     std::fs::write(repo.path().join(".git/shallow"), format!("{boundary}\n")).expect("shallow");
     let (_, debug) = run(&repo, &[]);
-    assert!(debug.contains("cache=bypass reason=unsupported_graph_or_store"));
+    assert!(
+        debug.contains("cache_graph=shallow shallow_boundaries=1"),
+        "{debug}"
+    );
+    assert!(run(&repo, &[]).1.contains("cache=hit"));
 }
 
 #[test]
@@ -151,6 +155,210 @@ fn malformed_shallow_metadata_cannot_reuse_cached_analysis() {
     let diagnostics = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(!diagnostics.contains("cache=hit"), "{diagnostics}");
     assert!(diagnostics.contains("shallow"), "{diagnostics}");
+}
+
+fn shallow_repository(source: &TestRepo) -> TestRepo {
+    let repo = TestRepo::new();
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        source.path().to_str().expect("source path"),
+    ]);
+    repo.git(&[
+        "fetch",
+        "--depth=1",
+        "origin",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    repo.git(&["reset", "--hard", "origin/main"]);
+    repo.git(&["branch", "topic", "origin/topic"]);
+    assert_eq!(repo.git(&["rev-parse", "--is-shallow-repository"]), "true");
+    repo
+}
+
+#[test]
+fn shallow_caches_follow_deepening_and_unshallowing_without_ref_changes() {
+    let source = TestRepo::new();
+    std::fs::write(source.path().join("base"), "base\n").expect("base file");
+    for index in 0..5 {
+        source.commit(&format!("common {index}"));
+    }
+    source.git(&["branch", "topic"]);
+    source.commit("main update");
+    source.git(&["checkout", "topic"]);
+    for index in 0..2 {
+        std::fs::write(source.path().join("topic-data"), format!("topic {index}\n"))
+            .expect("topic file");
+        source.commit(&format!("topic {index}"));
+    }
+    source.git(&["checkout", "main"]);
+
+    for backend in ["gix", "shell"] {
+        let repo = shallow_repository(&source);
+        let refs = repo.git(&[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads/",
+        ]);
+        let options = [
+            "--backend",
+            backend,
+            "-vv",
+            "--diff-stat",
+            "--no-cache-maintenance",
+        ];
+        let (mut previous, cold) = run(&repo, &options);
+        assert!(cold.contains("cache_graph=shallow"), "{cold}");
+        for fetch in [None, Some("--deepen=1"), Some("--unshallow")] {
+            if let Some(flag) = fetch {
+                repo.git(&["fetch", flag, "origin"]);
+                assert_eq!(
+                    repo.git(&[
+                        "for-each-ref",
+                        "--format=%(refname) %(objectname)",
+                        "refs/heads/"
+                    ]),
+                    refs
+                );
+                let (changed, debug) = run(&repo, &options);
+                assert!(!debug.contains("cache=hit"), "{debug}");
+                assert_ne!(changed, previous);
+                previous = changed;
+            }
+            let (warm, debug) = run(&repo, &options);
+            assert_eq!(warm, previous);
+            assert!(debug.contains("cache=hit"), "{debug}");
+            assert!(!debug.contains("operation=select_tips"), "{debug}");
+            assert!(!debug.contains("operation=subprocess_diff"), "{debug}");
+            let mut uncached = options.to_vec();
+            uncached.push("--no-cache");
+            assert_eq!(warm, run(&repo, &uncached).0);
+        }
+        assert_eq!(repo.git(&["rev-parse", "--is-shallow-repository"]), "false");
+    }
+}
+
+#[test]
+fn shallow_linked_worktrees_reuse_topology_and_keep_live_markers() {
+    let repo = fixture();
+    let root = repo.git(&["rev-parse", "main~1"]);
+    std::fs::write(repo.path().join(".git/shallow"), format!("{root}\n"))
+        .expect("shallow boundary");
+    let linked = tempfile::tempdir().expect("linked worktree");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        linked.path().to_str().expect("worktree path"),
+        "main",
+    ]);
+    for backend in ["gix", "shell"] {
+        run(&repo, &["--backend", backend, "-vv", "--diff-stat"]);
+        let invoke = |flags: &[&str]| {
+            repo.command(assert_cmd::cargo::cargo_bin!("git-ls"))
+                .current_dir(linked.path())
+                .args([
+                    "--backend",
+                    backend,
+                    "--debug",
+                    "--color",
+                    "never",
+                    "-vv",
+                    "--diff-stat",
+                    "--no-cache-maintenance",
+                ])
+                .args(flags)
+                .assert()
+                .success()
+        };
+        let first = invoke(&[]);
+        let warm = invoke(&[]);
+        let diagnostics = String::from_utf8_lossy(&warm.get_output().stderr);
+        assert!(diagnostics.contains("cache=hit"), "{diagnostics}");
+        assert!(diagnostics.contains("cache_graph=shallow"), "{diagnostics}");
+        assert!(
+            !diagnostics.contains("operation=subprocess_diff"),
+            "{diagnostics}"
+        );
+        assert_eq!(first.get_output().stdout, warm.get_output().stdout);
+        assert_eq!(
+            warm.get_output().stdout,
+            invoke(&["--no-cache"]).get_output().stdout
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn boundary_changes_during_analysis_prevent_cache_publication() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = fixture();
+    std::fs::write(repo.path().join("topic-data"), "changed\n").expect("topic file");
+    repo.commit("topic data");
+    let root = repo.git(&["rev-parse", "main~1"]);
+    let topic = repo.git(&["rev-parse", "topic"]);
+    let shallow = repo.path().join(".git/shallow");
+    let helper = tempfile::tempdir().expect("Git wrapper directory");
+    let wrapper = helper.path().join("git");
+    let original_path = std::env::var_os("PATH").expect("PATH");
+    let real_git = std::env::split_paths(&original_path)
+        .map(|directory| directory.join("git"))
+        .find(|path| path.is_file())
+        .expect("Git executable");
+    std::fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+if [ "$1" = diff-tree ]; then
+    printf '%s\n' "$LS_TEST_BOUNDARY" > "$LS_TEST_SHALLOW"
+fi
+exec "$LS_TEST_REAL_GIT" "$@"
+"#,
+    )
+    .expect("Git wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("executable wrapper");
+    let path = std::env::join_paths(
+        std::iter::once(helper.path().to_path_buf()).chain(std::env::split_paths(&original_path)),
+    )
+    .expect("wrapper PATH");
+
+    for backend in ["gix", "shell"] {
+        std::fs::write(&shallow, format!("{root}\n")).expect("initial boundary");
+        let output = repo
+            .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+            .env("PATH", &path)
+            .env("LS_TEST_REAL_GIT", &real_git)
+            .env("LS_TEST_SHALLOW", &shallow)
+            .env("LS_TEST_BOUNDARY", &topic)
+            .args([
+                "--backend",
+                backend,
+                "--debug",
+                "--color",
+                "never",
+                "-vv",
+                "--diff-stat",
+                "--no-cache-maintenance",
+            ])
+            .assert()
+            .success();
+        let diagnostics = String::from_utf8_lossy(&output.get_output().stderr);
+        assert!(
+            diagnostics.contains("cache_publication=discarded reason=inputs_changed"),
+            "{diagnostics}"
+        );
+        assert!(
+            !std::fs::read_dir(repo.path().join(".git/git-ls/cache/v1"))
+                .expect("cache directory")
+                .any(|entry| {
+                    let name = entry.expect("cache entry").file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with("snapshot-") || name.starts_with("facts-")
+                })
+        );
+    }
 }
 
 #[test]

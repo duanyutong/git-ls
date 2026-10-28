@@ -7,16 +7,26 @@ fn canonical_keys_include_compatibility_and_every_selection_dependency() {
         branches: BTreeMap::from([("oid".into(), vec!["topic".into()])]),
         configured_main: "main".into(),
     };
-    let native = FactsKey::new(BackendSemantics::Gix, Path::new("/repo"), "sha1");
+    let native = FactsKey::new(BackendSemantics::Gix, Path::new("/repo"), "sha1", &[]);
     let key = native.snapshot(&inputs).unwrap();
     let json: serde_json::Value = serde_json::from_str(&key).unwrap();
     assert_eq!(json["compatibility"]["analysis"], ANALYSIS_SEMANTICS);
     assert_eq!(json["compatibility"]["backend"], "gix");
+    assert_eq!(
+        json["compatibility"]["shallow_boundary"],
+        serde_json::json!([])
+    );
     assert_eq!(json["inputs"]["configured_main"], "main");
     for alternative in [
-        FactsKey::new(BackendSemantics::Shell, Path::new("/repo"), "sha1"),
-        FactsKey::new(BackendSemantics::Gix, Path::new("/other"), "sha1"),
-        FactsKey::new(BackendSemantics::Gix, Path::new("/repo"), "sha256"),
+        FactsKey::new(BackendSemantics::Shell, Path::new("/repo"), "sha1", &[]),
+        FactsKey::new(BackendSemantics::Gix, Path::new("/other"), "sha1", &[]),
+        FactsKey::new(BackendSemantics::Gix, Path::new("/repo"), "sha256", &[]),
+        FactsKey::new(
+            BackendSemantics::Gix,
+            Path::new("/repo"),
+            "sha1",
+            &["boundary".into()],
+        ),
     ] {
         assert_ne!(alternative.encode(), native.encode());
         assert_ne!(alternative.snapshot(&inputs), Some(key.clone()));
@@ -37,7 +47,7 @@ fn canonical_keys_include_compatibility_and_every_selection_dependency() {
 fn unrepresentable_paths_bypass_keys_without_lossy_aliasing() {
     use std::os::unix::ffi::OsStringExt;
     let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![255]));
-    let key = FactsKey::new(BackendSemantics::Gix, &path, "sha1");
+    let key = FactsKey::new(BackendSemantics::Gix, &path, "sha1", &[]);
     assert_eq!(key.encode(), None);
     assert_eq!(
         key.snapshot(&Inputs {

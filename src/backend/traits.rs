@@ -123,6 +123,12 @@ pub(crate) trait DiffStatBackend {
 }
 
 pub(crate) trait RepositoryStateBackend {
+    /// Native adapters expose the boundary captured when opening their graph.
+    /// Live command adapters do not retain a boundary between queries.
+    fn captured_shallow_boundary(&self) -> Option<Vec<String>> {
+        None
+    }
+
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>>;
     fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)>;
     fn main_branch_name(&self) -> Result<String>;

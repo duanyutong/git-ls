@@ -158,6 +158,10 @@ impl CommitMetadataBackend for Session<'_> {
 }
 
 impl RepositoryStateBackend for Session<'_> {
+    fn captured_shallow_boundary(&self) -> Option<Vec<String>> {
+        self.inner.captured_shallow_boundary()
+    }
+
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
         if let Some(inputs) = &self.inputs {
             return Ok(inputs.branches.clone().into_iter().collect());

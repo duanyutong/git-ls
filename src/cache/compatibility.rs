@@ -8,7 +8,7 @@ use crate::backend::Inputs;
 // Increment when graph interpretation, backend behaviour, or stored answers
 // change incompatibly, including relevant dependency upgrades. Storage schema
 // versioning is separate; dependency version strings are not a validity proof.
-pub(super) const ANALYSIS_SEMANTICS: &str = "analysis-4";
+pub(super) const ANALYSIS_SEMANTICS: &str = "analysis-5";
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +23,7 @@ pub(crate) struct FactsKey<'a> {
     backend: BackendSemantics,
     object_format: &'a str,
     repository: &'a Path,
+    shallow_boundary: &'a [String],
 }
 
 impl<'a> FactsKey<'a> {
@@ -30,12 +31,14 @@ impl<'a> FactsKey<'a> {
         backend: BackendSemantics,
         repository: &'a Path,
         object_format: &'a str,
+        shallow_boundary: &'a [String],
     ) -> Self {
         Self {
             analysis: ANALYSIS_SEMANTICS,
             backend,
             object_format,
             repository,
+            shallow_boundary,
         }
     }
 

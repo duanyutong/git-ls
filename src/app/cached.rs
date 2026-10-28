@@ -100,9 +100,24 @@ impl Snapshot {
     }
 }
 
-/// Eligibility is intentionally conservative. Unusual graph interpretation must
-/// never reuse answers established against the ordinary object graph.
-fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, String)> {
+#[derive(Debug, Eq, PartialEq)]
+struct CacheLocation {
+    common: PathBuf,
+    object_format: String,
+    configured_main: String,
+    shallow_boundary: Vec<String>,
+}
+
+impl CacheLocation {
+    fn matches_backend(&self, git: &dyn GitBackend) -> bool {
+        git.captured_shallow_boundary()
+            .is_none_or(|boundary| boundary == self.shallow_boundary)
+    }
+}
+
+/// Graph facts are valid only for the captured shallow boundary.
+/// Other unsupported graph interpretations continue to bypass persistent reuse.
+fn location(directory: impl AsRef<std::path::Path>) -> Option<CacheLocation> {
     for name in [
         "GIT_NAMESPACE",
         "GIT_REPLACE_REF_BASE",
@@ -120,10 +135,7 @@ fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, 
     }
     let repo = gix::discover_with_environment_overrides(directory).ok()?;
     let common = repo.common_dir().canonicalize().ok()?;
-    if repo.is_shallow().ok()?
-        || common.join("info/grafts").exists()
-        || common.join("objects/info/alternates").exists()
-    {
+    if common.join("info/grafts").exists() || common.join("objects/info/alternates").exists() {
         return None;
     }
     let config = repo.config_snapshot();
@@ -154,10 +166,24 @@ fn location(directory: impl AsRef<std::path::Path>) -> Option<(PathBuf, String, 
         || "main".to_string(),
         |value| value.to_str_lossy().into_owned(),
     );
-    Some((common, repo.object_hash().to_string(), configured_main))
+    let mut shallow_boundary: Vec<_> = repo.shallow_commits().ok()?.map_or_else(Vec::new, |ids| {
+        ids.iter().map(ToString::to_string).collect()
+    });
+    shallow_boundary.sort_unstable();
+    shallow_boundary.dedup();
+    Some(CacheLocation {
+        common,
+        object_format: repo.object_hash().to_string(),
+        configured_main,
+        shallow_boundary,
+    })
 }
 
-fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, String)> {
+fn prepare_cache(
+    raw: &Args,
+    args: &RuntimeOptions,
+    git: &dyn GitBackend,
+) -> Option<(Store, CacheLocation)> {
     if raw.clear_cache {
         let cleared = gix::discover_with_environment_overrides(".")
             .ok()
@@ -185,13 +211,17 @@ fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, S
         let _perf = crate::diagnostics::stage("cache_validation");
         location(".")
     };
-    let Some((common, object_format, _)) = context else {
+    let Some(context) = context else {
         crate::diagnostics::event(format_args!(
             "cache=bypass reason=unsupported_graph_or_store"
         ));
         return None;
     };
-    let Some(store) = Store::open(&common) else {
+    if !context.matches_backend(git) {
+        crate::diagnostics::event(format_args!("cache=bypass reason=shallow_boundary_changed"));
+        return None;
+    }
+    let Some(store) = Store::open(&context.common) else {
         crate::diagnostics::event(format_args!("cache=bypass reason=unavailable"));
         return None;
     };
@@ -200,7 +230,16 @@ fn prepare_cache(raw: &Args, args: &RuntimeOptions) -> Option<(Store, PathBuf, S
         store.root.display(),
         crate::cache::ENTRY_LIMIT
     ));
-    Some((store, common, object_format))
+    crate::diagnostics::event(format_args!(
+        "cache_graph={} shallow_boundaries={}",
+        if context.shallow_boundary.is_empty() {
+            "complete"
+        } else {
+            "shallow"
+        },
+        context.shallow_boundary.len()
+    ));
+    Some((store, context))
 }
 
 fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
@@ -248,7 +287,7 @@ pub(super) fn execute_cached<W: Write>(
     stdout: &mut W,
     environment: RenderEnvironment,
 ) -> Result<()> {
-    let Some((store, common, object_format)) = prepare_cache(raw, args) else {
+    let Some((store, context)) = prepare_cache(raw, args, git) else {
         return execute(args, git, stdout, environment);
     };
     let inputs = Inputs::capture(git)?;
@@ -260,7 +299,12 @@ pub(super) fn execute_cached<W: Write>(
         Backend::Gix => BackendSemantics::Gix,
         Backend::Shell => BackendSemantics::Shell,
     };
-    let compatibility = FactsKey::new(backend, &common, &object_format);
+    let compatibility = FactsKey::new(
+        backend,
+        &context.common,
+        &context.object_format,
+        &context.shallow_boundary,
+    );
     let Some((facts_key, key)) = compatibility.encode().zip(compatibility.snapshot(&inputs)) else {
         crate::diagnostics::event(format_args!("cache=bypass reason=unrepresentable_key"));
         return execute(args, git, stdout, environment);
@@ -324,7 +368,8 @@ pub(super) fn execute_cached<W: Write>(
         let unchanged = {
             let _perf = crate::diagnostics::stage("cache_revalidation");
             Inputs::capture(git).is_ok_and(|current| current == inputs)
-                && location(".").as_ref() == Some(&(common, object_format, inputs.configured_main))
+                && context.configured_main == inputs.configured_main
+                && location(".").as_ref() == Some(&context)
         };
         if unchanged {
             if let Some(bytes) = encoded {
