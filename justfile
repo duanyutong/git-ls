@@ -20,6 +20,7 @@ typecheck:
 
 test:
     uv run --locked scripts/test_version.py
+    uv run --locked scripts/test_workflows.py
     uv run scripts/test_coverage.py
     prek run acceptance-tests --all-files --hook-stage manual --verbose
     uv run scripts/measure.py doctests cargo test --workspace --doc --all-features --locked

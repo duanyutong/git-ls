@@ -52,6 +52,6 @@ The whitespace and end-of-file hooks apply automatic fixes at pre-commit and use
 It invokes `uv run --locked scripts/version.py pre-push`; version verification requires no Rust compilation.
 The Python versioning implementation reads package identity from the relevant local manifest snapshot.
 Existing hook installations read `prek.toml` on invocation and require no reinstallation for this policy change.
-Successful CI on `main` triggers annotated version tags, as specified in [versioning](versioning.md).
+After successful Linux and macOS validation for a push to `main`, CI publishes annotated version tags through its dependent Release job, as specified in [versioning](versioning.md).
 
 The engineering policy is specified in [engineering conventions](conventions.md).

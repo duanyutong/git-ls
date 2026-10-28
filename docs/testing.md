@@ -25,6 +25,9 @@ Plain `just check` and `prek` require no repository-specific `PATH` overrides af
 The `scripts/test_version.py` suite exercises Conventional Commit policy, generated increments, formatting preservation, staged and unstaged changes, initial commits, amendments, push revisions and annotated tags in disposable repositories.
 Tag-publication tests use private local bare remotes, including failed publication, repeated invocation, published baselines, unrelated tags and conflicts.
 The tests use standard-library `unittest` and form part of `just test`.
+The `scripts/test_workflows.py` suite verifies publication dependencies, event eligibility, exact revision selection, permissions, concurrency and the single automatic publication path.
+Its disposable Git repositories exercise the actual publication shell guard against descendant advances and history rewrites, and verify that command-scoped authentication does not persist credentials.
+Workflow tests also form part of `just test`; they publish no production tags.
 The `just coverage-versioning` sanity guard uses coverage.py to require at least 95% line coverage of `scripts/version.py`, including its command subprocesses.
 A passing guard reports its result without displaying its measured percentage; failure displays missing-line diagnostics, and detailed reports remain available under `coverage/`.
 The guard forms part of `just coverage` and does not contribute to the Rust unit percentage.
