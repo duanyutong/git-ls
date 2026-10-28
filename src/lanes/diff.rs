@@ -25,6 +25,9 @@ pub(crate) fn populate_diff_stats(
                     head: point.oid.clone(),
                 };
                 base = Some(point.oid.clone());
+                if point.main_history {
+                    continue;
+                }
                 let next = pairs.len();
                 let index = *indices.entry(pair.clone()).or_insert_with(|| {
                     pairs.push(pair);

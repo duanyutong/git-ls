@@ -8,11 +8,27 @@ use crate::error::{GitLsError, Result};
 pub(crate) const TEST_NOW: i64 = 1_700_000_120;
 pub(crate) const TEST_COMMIT_TIME: i64 = 1_700_000_000;
 
-#[derive(Default)]
 pub(crate) struct MockGit {
     responses: HashMap<Vec<String>, String>,
     calls: RefCell<Vec<Vec<String>>>,
     failures: std::collections::HashSet<Vec<String>>,
+}
+
+impl Default for MockGit {
+    fn default() -> Self {
+        Self {
+            responses: HashMap::from([(
+                vec![
+                    "for-each-ref".into(),
+                    "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)"
+                        .into(),
+                ],
+                String::new(),
+            )]),
+            calls: RefCell::default(),
+            failures: std::collections::HashSet::new(),
+        }
+    }
 }
 
 impl MockGit {

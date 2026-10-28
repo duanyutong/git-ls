@@ -44,7 +44,7 @@ fn repeats_reuse_analysis_and_presentation_remains_live() {
         let compatibility: serde_json::Value =
             serde_json::from_str(entry["key"].as_str().expect("structured key"))
                 .expect("JSON compatibility key");
-        assert_eq!(compatibility["analysis"], "analysis-5");
+        assert_eq!(compatibility["analysis"], "analysis-6");
         assert_eq!(compatibility["backend"], backend);
         assert_eq!(compatibility["object_format"], "sha1");
         for order in ["newest", "oldest"] {

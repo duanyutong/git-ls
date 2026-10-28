@@ -8,7 +8,7 @@ use crate::backend::Inputs;
 // Increment when graph interpretation, backend behaviour, or stored answers
 // change incompatibly, including relevant dependency upgrades. Storage schema
 // versioning is separate; dependency version strings are not a validity proof.
-pub(super) const ANALYSIS_SEMANTICS: &str = "analysis-5";
+pub(super) const ANALYSIS_SEMANTICS: &str = "analysis-6";
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]

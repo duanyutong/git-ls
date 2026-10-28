@@ -185,6 +185,7 @@ fn session(git: &Statistics, facts: Facts) -> Session<'_> {
     Session::with_facts(
         git,
         Inputs {
+            upstreams: std::collections::BTreeMap::new(),
             branches: std::collections::BTreeMap::default(),
             configured_main: "main".into(),
         },

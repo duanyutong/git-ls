@@ -2,7 +2,7 @@ use super::observer::{AnalysisObserver, AnalysisStage};
 use crate::backend::{GitBackend, get_commit_meta};
 use crate::cli::Order;
 use crate::error::Result;
-use crate::model::{CommitMeta, Lane, LaneGroup};
+use crate::model::{CommitMeta, Lane, LaneGroup, RepositorySnapshot};
 use std::collections::HashMap;
 pub(crate) fn ordered_lanes(mut lanes: Vec<Lane>, order: Order) -> Vec<Lane> {
     lanes.sort_by(|lhs, rhs| {
@@ -91,6 +91,48 @@ pub(crate) fn build_lane_groups(
 
 pub(crate) fn sort_lane_groups(groups: &mut [LaneGroup], order: Order) {
     groups.sort_by_cached_key(|group| lane_group_key(group, order));
+}
+
+/// Reference endpoints remain visible even without an attached feature lane.
+pub(crate) fn include_mainline_groups(
+    git: &dyn GitBackend,
+    groups: &mut Vec<LaneGroup>,
+    main_oid: &str,
+    repository: &RepositorySnapshot,
+    order: Order,
+    meta_cache: &mut HashMap<String, CommitMeta>,
+) -> Result<()> {
+    let mut ids: Vec<_> = repository
+        .main_refs
+        .iter()
+        .map(|reference| reference.oid.clone())
+        .filter(|oid| oid != main_oid)
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    ids.sort();
+    ids.dedup();
+    let distances = git.main_distances(main_oid, &ids)?;
+    for oid in ids {
+        if groups
+            .iter()
+            .any(|group| group.base_oid.as_ref() == Some(&oid))
+        {
+            continue;
+        }
+        if let Some(distance) = distances.get(&oid).copied().flatten() {
+            let meta = get_commit_meta(git, &oid, meta_cache)?;
+            groups.push(LaneGroup::new(
+                Some(oid),
+                Some(meta),
+                Some(distance),
+                Vec::new(),
+            ));
+        }
+    }
+    sort_lane_groups(groups, order);
+    Ok(())
 }
 
 pub(super) fn lane_group_key(group: &LaneGroup, order: Order) -> (bool, usize, i128, String) {

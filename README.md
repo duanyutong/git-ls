@@ -39,6 +39,19 @@ The following example uses synthetic branch names:
 | `─┴` | Intermediate connection into a stack lane. |
 | `─┘` | Final connection into a stack lane. |
 
+## Mainline references
+
+When the selected local main branch has an available remote upstream, the graph displays both reference positions.
+The upstream is labelled `origin/main (cached)`, or the corresponding configured reference name, to identify locally recorded remote state without asserting that it is current.
+The command performs no fetch.
+Coincident references share one node, such as `main, origin/main (cached)`.
+Different reference positions remain visible even when no feature branch attaches to either position.
+Collapsed history between local main and an upstream ahead of it is labelled with the upstream name, for example `(2 commits on origin/main)`.
+When local main is ahead, the corresponding segment retains the label `(2 commits on main)`.
+Divergent histories retain separate ancestry paths, and feature counts and tree comparisons begin at recognised mainline or preceding stack boundaries.
+Displayed ages denote commit ages and do not indicate remote freshness.
+Repositories without an available configured remote upstream retain the local-main display.
+
 ## Integration Support
 
 Supported VCS backends are:

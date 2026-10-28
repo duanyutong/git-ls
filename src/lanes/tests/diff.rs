@@ -130,3 +130,32 @@ fn calculates_each_layer_once_across_shared_lanes_and_handles_orphans() {
         .is_err()
     );
 }
+
+#[test]
+fn main_history_points_bound_feature_diffs_without_requesting_mainline_statistics() {
+    let git = Statistics::default();
+    let mut history = BranchPoint::new("main-fork", std::iter::empty::<String>(), None);
+    history.main_history = true;
+    let feature = BranchPoint::new("feature", ["feature/topic"], None);
+    let mut groups = vec![LaneGroup::new(
+        Some("root".into()),
+        None,
+        Some(1),
+        vec![Lane::new(
+            "feature",
+            Some("root".into()),
+            vec![feature, history],
+            0,
+            false,
+        )],
+    )];
+    populate_diff_stats(&mut groups, &git, true).unwrap();
+    assert_eq!(
+        git.calls.borrow().as_slice(),
+        &[vec![DiffPair {
+            base: Some("main-fork".into()),
+            head: "feature".into()
+        }]]
+    );
+    assert!(groups[0].lanes[0].branch_points[1].diff_stat.is_none());
+}

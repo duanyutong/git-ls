@@ -8,11 +8,13 @@ mod selection;
 
 pub(crate) use construction::build_lanes;
 pub(crate) use diff::populate_diff_stats;
-pub(crate) use grouping::{build_lane_groups, ordered_lanes, sort_lane_groups};
+pub(crate) use grouping::{
+    build_lane_groups, include_mainline_groups, ordered_lanes, sort_lane_groups,
+};
 pub(crate) use observer::AnalysisObserver;
 #[cfg(test)]
 pub(crate) use observer::AnalysisStage;
-pub(crate) use selection::plain_git_main_branch;
+pub(crate) use selection::{mainline_repository, plain_git_main_branch};
 
 #[cfg(test)]
 use construction::*;

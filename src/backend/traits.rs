@@ -132,6 +132,10 @@ pub(crate) trait RepositoryStateBackend {
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>>;
     fn current_head_and_branch(&self) -> Result<(Option<String>, Option<String>)>;
     fn main_branch_name(&self) -> Result<String>;
+
+    fn upstream_branches(&self) -> Result<HashMap<String, crate::model::MainReference>> {
+        Ok(HashMap::new())
+    }
 }
 
 pub(crate) trait AncestryBackend {

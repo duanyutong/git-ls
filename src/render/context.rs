@@ -1,5 +1,5 @@
 use crate::cli::{Layout, Verbosity};
-use crate::model::{CommitMeta, LaneGroup};
+use crate::model::{CommitMeta, LaneGroup, MainReference, RepositorySnapshot};
 
 use super::ancestry::{PreparedAncestry, PreparedTopology};
 use super::colours::Colours;
@@ -20,6 +20,9 @@ pub(crate) struct RenderContext<'a> {
     pub(super) topology: Option<&'a PreparedTopology>,
     pub(super) ancestry: Option<&'a PreparedAncestry>,
     pub(super) terminal_width: Option<usize>,
+    pub(super) main_refs: &'a [MainReference],
+    pub(super) main_oid: Option<&'a str>,
+    pub(super) main_history_name: Option<&'a str>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -47,11 +50,20 @@ impl<'a> RenderContext<'a> {
             topology: None,
             ancestry: None,
             terminal_width: None,
+            main_refs: &[],
+            main_oid: None,
+            main_history_name: None,
         }
     }
 
     pub(crate) const fn with_layout(mut self, layout: Layout) -> Self {
         self.layout = layout;
+        self
+    }
+
+    pub(crate) fn with_mainline(mut self, repository: &'a RepositorySnapshot) -> Self {
+        self.main_refs = &repository.main_refs;
+        self.main_oid = repository.main_oid.as_deref();
         self
     }
 

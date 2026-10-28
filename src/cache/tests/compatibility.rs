@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 #[test]
 fn canonical_keys_include_compatibility_and_every_selection_dependency() {
     let inputs = Inputs {
+        upstreams: std::collections::BTreeMap::new(),
         branches: BTreeMap::from([("oid".into(), vec!["topic".into()])]),
         configured_main: "main".into(),
     };
@@ -51,9 +52,35 @@ fn unrepresentable_paths_bypass_keys_without_lossy_aliasing() {
     assert_eq!(key.encode(), None);
     assert_eq!(
         key.snapshot(&Inputs {
+            upstreams: std::collections::BTreeMap::new(),
             branches: BTreeMap::new(),
             configured_main: "main".into()
         }),
         None
     );
+}
+
+#[test]
+fn upstream_identity_and_target_participate_in_snapshot_compatibility() {
+    let mut inputs = Inputs {
+        upstreams: BTreeMap::new(),
+        branches: BTreeMap::new(),
+        configured_main: "main".into(),
+    };
+    let key = FactsKey::new(BackendSemantics::Gix, Path::new("/repo"), "sha1", &[]);
+    let absent = key.snapshot(&inputs);
+    inputs.upstreams.insert(
+        "main".into(),
+        crate::model::MainReference {
+            name: "origin/main".into(),
+            oid: "remote".into(),
+            cached: true,
+        },
+    );
+    let original = key.snapshot(&inputs);
+    assert_ne!(original, absent);
+    inputs.upstreams.get_mut("main").unwrap().oid = "new-remote".into();
+    assert_ne!(key.snapshot(&inputs), original);
+    inputs.upstreams.get_mut("main").unwrap().name = "upstream/trunk".into();
+    assert_ne!(key.snapshot(&inputs), original);
 }

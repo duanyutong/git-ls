@@ -117,6 +117,57 @@ impl<T: GitCommand + ?Sized> RepositoryStateBackend for T {
     fn main_branch_name(&self) -> Result<String> {
         shell_main_branch_name(self)
     }
+
+    fn upstream_branches(&self) -> Result<HashMap<String, crate::model::MainReference>> {
+        let output = self.run(
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)",
+            ],
+            false,
+        )?;
+        Ok(parse_upstream_branches(&output))
+    }
+}
+
+fn parse_upstream_branches(output: &str) -> HashMap<String, crate::model::MainReference> {
+    let records: Vec<_> = output
+        .lines()
+        .map(|line| line.split('\0').collect::<Vec<_>>())
+        .collect();
+    let targets: HashMap<_, _> = records
+        .iter()
+        .filter_map(|fields| {
+            let [name, oid, _, _] = fields.as_slice() else {
+                return None;
+            };
+            Some((*name, *oid))
+        })
+        .collect();
+    records
+        .iter()
+        .filter_map(|fields| {
+            let [name, _, upstream, remote] = fields.as_slice() else {
+                return None;
+            };
+            let branch = name.strip_prefix("refs/heads/")?;
+            if remote.is_empty() || *remote == "." {
+                return None;
+            }
+            let oid = targets.get(upstream)?;
+            Some((
+                branch.to_string(),
+                crate::model::MainReference {
+                    name: upstream
+                        .strip_prefix("refs/remotes/")
+                        .unwrap_or(upstream)
+                        .to_string(),
+                    oid: (*oid).to_string(),
+                    cached: true,
+                },
+            ))
+        })
+        .collect()
 }
 
 impl<T: GitCommand + ?Sized> AncestryBackend for T {

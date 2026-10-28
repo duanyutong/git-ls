@@ -22,6 +22,11 @@ struct FakeLaneBackend {
     current_head: Option<String>,
     current_branch: Option<String>,
     main_name: String,
+    upstreams: HashMap<String, crate::model::MainReference>,
+    upstream_error: bool,
+    unmerged_failure: Option<usize>,
+    unmerged_calls: std::cell::Cell<usize>,
+    heads_error: bool,
     local_branches_error: Option<String>,
     current_state_error: Option<String>,
     main_name_error: Option<String>,
@@ -145,6 +150,12 @@ impl BranchlessQueries for FakeLaneBackend {
 }
 
 impl RepositoryStateBackend for FakeLaneBackend {
+    fn upstream_branches(&self) -> Result<HashMap<String, crate::model::MainReference>> {
+        if self.upstream_error {
+            return Err(missing_fixture("upstream", "forced failure"));
+        }
+        Ok(self.upstreams.clone())
+    }
     fn local_branches_by_oid(&self) -> Result<HashMap<String, Vec<String>>> {
         if let Some(message) = self.local_branches_error.as_ref() {
             return Err(GitLsError::TestFixture(message.clone()));
@@ -170,6 +181,8 @@ impl RepositoryStateBackend for FakeLaneBackend {
         }
     }
 }
+
+mod mainline;
 
 impl CommitMetadataBackend for FakeLaneBackend {
     fn cache_commit_metas(
@@ -220,10 +233,17 @@ impl AncestryBackend for FakeLaneBackend {
             }))
     }
     fn unmerged_tips(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        self.unmerged_calls.set(self.unmerged_calls.get() + 1);
+        if self.unmerged_failure == Some(self.unmerged_calls.get()) {
+            return Err(missing_fixture("unmerged tips", "forced failure"));
+        }
         crate::test_support::reference_unmerged(self, main, tips)
     }
 
     fn independent_heads(&self, main: &str, tips: &[String]) -> Result<Vec<String>> {
+        if self.heads_error {
+            return Err(missing_fixture("heads", "forced failure"));
+        }
         crate::test_support::reference_heads(self, main, tips)
     }
     fn main_distances(

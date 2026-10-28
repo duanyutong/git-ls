@@ -25,6 +25,7 @@ pub(crate) struct Session<'a> {
 pub(crate) struct Inputs {
     pub(crate) branches: std::collections::BTreeMap<String, Vec<String>>,
     pub(crate) configured_main: String,
+    pub(crate) upstreams: std::collections::BTreeMap<String, crate::model::MainReference>,
 }
 
 impl Inputs {
@@ -37,6 +38,7 @@ impl Inputs {
         Ok(Self {
             branches,
             configured_main: git.main_branch_name()?,
+            upstreams: git.upstream_branches()?.into_iter().collect(),
         })
     }
 }
@@ -158,6 +160,13 @@ impl CommitMetadataBackend for Session<'_> {
 }
 
 impl RepositoryStateBackend for Session<'_> {
+    fn upstream_branches(&self) -> Result<HashMap<String, crate::model::MainReference>> {
+        if let Some(inputs) = &self.inputs {
+            return Ok(inputs.upstreams.clone().into_iter().collect());
+        }
+        self.inner.upstream_branches()
+    }
+
     fn captured_shallow_boundary(&self) -> Option<Vec<String>> {
         self.inner.captured_shallow_boundary()
     }

@@ -643,6 +643,7 @@ fn optional_backend_capabilities_have_conservative_defaults() {
     let session = Session::with_facts(
         &adapter,
         Inputs {
+            upstreams: std::collections::BTreeMap::new(),
             branches: std::collections::BTreeMap::new(),
             configured_main: "main".into(),
         },
@@ -742,4 +743,34 @@ fn scoped_rewrite_discovery_uses_one_live_query_for_unchanged_interiors() {
             .query_rewrites_in_path(None, "tip", &["old".into()], &["target".into()])
             .is_err()
     );
+}
+
+#[test]
+fn upstream_records_follow_configured_remote_refspecs_and_ignore_missing_or_local_tracking() {
+    let git = RepositoryCommandStub::output(concat!(
+        "refs/heads/main\0local\0refs/remotes/company/trunk\0company\n",
+        "refs/remotes/company/trunk\0remote\0\0\n",
+        "refs/heads/custom\0custom\0refs/cache/trunk\0company\n",
+        "refs/cache/trunk\0cached\0\0\n",
+        "refs/heads/missing\0missing\0refs/remotes/company/missing\0company\n",
+        "refs/heads/local\0local\0refs/heads/main\0.\n",
+        "refs/heads/unconfigured\0local\0\0\n",
+        "malformed\n",
+    ));
+    let branches = git.upstream_branches().unwrap();
+    assert_eq!(branches.len(), 2);
+    assert_eq!(branches["main"].name, "company/trunk");
+    assert_eq!(branches["main"].oid, "remote");
+    assert_eq!(branches["custom"].name, "refs/cache/trunk");
+    assert!(branches.values().all(|reference| reference.cached));
+    assert!(
+        RepositoryCommandStub::failing()
+            .upstream_branches()
+            .is_err()
+    );
+    let adapter = crate::test_support::OmitMetadata {
+        inner: &git,
+        omitted: "none",
+    };
+    assert!(adapter.upstream_branches().unwrap().is_empty());
 }

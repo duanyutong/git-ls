@@ -7,7 +7,9 @@ use clap::Parser;
 use crate::backend::{CommitMetadataBackend, GitBackend, get_commit_meta};
 use crate::cli::{Args, Layout, RuntimeOptions, Verbosity};
 use crate::error::Result;
-use crate::lanes::{build_lane_groups, build_lanes, ordered_lanes, populate_diff_stats};
+use crate::lanes::{
+    build_lane_groups, build_lanes, include_mainline_groups, ordered_lanes, populate_diff_stats,
+};
 use crate::model::{BuiltLanes, CommitMeta, LaneGroup, RepositorySnapshot};
 use crate::render::{
     Colours, PreparedTopology, RenderContext, RenderLine, calculate_metadata_widths,
@@ -100,6 +102,7 @@ impl<'a> RenderSession<'a> {
             self.colours,
         )
         .with_layout(self.layout)
+        .with_mainline(self.repository)
         .with_diff_stats(groups)
         .with_topology(self.topology, self.terminal_width)
     }
@@ -183,12 +186,20 @@ fn build_analysis(args: &RuntimeOptions, git: &dyn GitBackend) -> Result<Analysi
         ids.dedup();
         git.cache_commit_metas(&ids, &mut meta_cache)?;
     }
-    let groups = build_lane_groups(
+    let mut groups = build_lane_groups(
         git,
         lanes,
         &main_oid,
         args.order,
         &observer,
+        &mut meta_cache,
+    )?;
+    include_mainline_groups(
+        git,
+        &mut groups,
+        &main_oid,
+        &repository,
+        args.order,
         &mut meta_cache,
     )?;
     let main_meta = main_metadata(args, git, &main_oid, &mut meta_cache)?;

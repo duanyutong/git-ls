@@ -16,13 +16,67 @@ pub(super) fn main_is_current(main_name: &str, current_branch: Option<&str>) -> 
 }
 
 pub(super) fn main_label(ctx: &RenderContext<'_>) -> String {
+    if let Some(label) = reference_label(ctx.main_oid.unwrap_or_default(), ctx.main_meta, ctx) {
+        return label;
+    }
     let name = if main_is_current(ctx.main_name, ctx.current_branch) {
         ctx.colours.current_stack(0, ctx.main_name)
     } else {
         ctx.colours.stack(0, ctx.main_name)
     };
+    named_trunk_label(name, ctx.main_meta, ctx)
+}
 
-    let Some(meta) = ctx.main_meta.filter(|_| ctx.verbosity.includes_metadata()) else {
+pub(super) fn reference_label(
+    oid: &str,
+    meta: Option<&CommitMeta>,
+    ctx: &RenderContext<'_>,
+) -> Option<String> {
+    let names: Vec<_> = ctx
+        .main_refs
+        .iter()
+        .filter(|reference| reference.oid == oid)
+        .map(|reference| {
+            let mut name =
+                if ctx.current_branch == Some(reference.name.as_str()) && !reference.cached {
+                    ctx.colours.current_stack(0, &reference.name)
+                } else {
+                    ctx.colours.stack(0, &reference.name)
+                };
+            if reference.cached {
+                name.push_str(&ctx.colours.dim(" (cached)"));
+            }
+            name
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    Some(named_trunk_label(names.join(", "), meta, ctx))
+}
+
+pub(super) fn trunk_is_current(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> bool {
+    if ctx.main_refs.is_empty() {
+        return matches!(label, TrunkLabel::Main)
+            && main_is_current(ctx.main_name, ctx.current_branch);
+    }
+    let oid = match label {
+        TrunkLabel::Main => ctx.main_oid,
+        TrunkLabel::Commit(meta) => Some(meta.oid.as_str()),
+    };
+    oid.is_some_and(|oid| reference_is_current(oid, ctx))
+}
+
+pub(super) fn reference_is_current(oid: &str, ctx: &RenderContext<'_>) -> bool {
+    ctx.main_refs.iter().any(|reference| {
+        !reference.cached
+            && reference.oid == oid
+            && ctx.current_branch == Some(reference.name.as_str())
+    })
+}
+
+fn named_trunk_label(name: String, meta: Option<&CommitMeta>, ctx: &RenderContext<'_>) -> String {
+    let Some(meta) = meta.filter(|_| ctx.verbosity.includes_metadata()) else {
         return name;
     };
 
@@ -127,6 +181,9 @@ pub(super) fn trunk_label(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> Str
     match label {
         TrunkLabel::Main => main_label(ctx),
         TrunkLabel::Commit(meta) => {
+            if let Some(label) = reference_label(&meta.oid, Some(meta), ctx) {
+                return label;
+            }
             let subject = ctx.colours.commit_title(&meta.subject);
             if !ctx.verbosity.includes_metadata() {
                 return subject;
@@ -180,7 +237,7 @@ pub(super) fn trunk_age(label: TrunkLabel<'_>, ctx: &RenderContext<'_>) -> Optio
 }
 
 pub(super) fn render_main_tip(ctx: &RenderContext<'_>) -> RenderLine {
-    let current_main = main_is_current(ctx.main_name, ctx.current_branch);
+    let current_main = trunk_is_current(TrunkLabel::Main, ctx);
     let gutter = age_gutter(ctx, trunk_age(TrunkLabel::Main, ctx));
     let line = format!(
         "{}{BRANCH_LABEL_GAP}{}",
@@ -227,7 +284,10 @@ pub(super) fn render_collapsed_main_segment(
     } else {
         "commits"
     };
-    let label = format!("({commit_count} {noun} on {})", ctx.main_name);
+    let label = format!(
+        "({commit_count} {noun} on {})",
+        ctx.main_history_name.unwrap_or(ctx.main_name)
+    );
     let gutter = age_gutter(ctx, None);
     [
         render_row(

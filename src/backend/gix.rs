@@ -197,6 +197,57 @@ impl CommitMetadataBackend for GixBackend {
 }
 
 impl RepositoryStateBackend for GixBackend {
+    fn upstream_branches(&self) -> Result<HashMap<String, crate::model::MainReference>> {
+        let mut result = HashMap::new();
+        for reference in self
+            .repo
+            .references()
+            .map_err(|error| GitLsError::gix("open references", error))?
+            .local_branches()
+            .map_err(|error| GitLsError::gix("iterate local branches", error))?
+        {
+            let reference =
+                reference.map_err(|error| GitLsError::gix("read local branch", error))?;
+            let direction = gix::remote::Direction::Fetch;
+            if reference
+                .remote_name(direction)
+                .is_none_or(|name| name.as_bstr() == ".")
+            {
+                continue;
+            }
+            let Some(name) = reference
+                .remote_tracking_ref_name(direction)
+                .transpose()
+                .map_err(|error| GitLsError::gix("resolve upstream name", error))?
+            else {
+                continue;
+            };
+            let Some(mut upstream) = self
+                .repo
+                .try_find_reference(name.as_ref())
+                .map_err(|error| GitLsError::gix("find upstream reference", error))?
+            else {
+                continue;
+            };
+            let name = upstream.name().as_bstr().to_str_lossy().into_owned();
+            let oid = upstream
+                .follow_to_object()
+                .map_err(|error| GitLsError::gix("resolve upstream reference", error))?;
+            result.insert(
+                reference.name().shorten().to_str_lossy().into_owned(),
+                crate::model::MainReference {
+                    name: name
+                        .strip_prefix("refs/remotes/")
+                        .unwrap_or(&name)
+                        .to_string(),
+                    oid: oid.detach().to_string(),
+                    cached: true,
+                },
+            );
+        }
+        Ok(result)
+    }
+
     fn captured_shallow_boundary(&self) -> Option<Vec<String>> {
         let mut boundary: Vec<_> = self.shallow.iter().map(ToString::to_string).collect();
         boundary.sort_unstable();

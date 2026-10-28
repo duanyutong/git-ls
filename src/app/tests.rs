@@ -1020,6 +1020,10 @@ fn run_renders_empty_selection_as_trunk() {
                 "--symbolic-full-name".to_string(),
                 "HEAD".to_string()
             ],
+            owned_args(&[
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)"
+            ]),
             vec![
                 "show".to_string(),
                 "-s".to_string(),
@@ -1077,4 +1081,14 @@ where
         stdout,
         RenderEnvironment::new(crate::test_support::TEST_NOW, None, false),
     )
+}
+
+#[test]
+fn upstream_reference_group_failures_prevent_rendering_partial_analysis() {
+    let git = empty_selection_git(TEST_NOW)
+        .with(&["for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)"],
+            "refs/heads/main\0main-oid\0refs/remotes/origin/main\0origin\nrefs/remotes/origin/main\0remote\0\0")
+        .with(&["merge-base", "main-oid", "remote"], "main-oid")
+        .with(&["rev-list", "--stdin"], "");
+    assert!(build_analysis(&runtime_options("draft()", Verbosity::Low), &git).is_err());
 }

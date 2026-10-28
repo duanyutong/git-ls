@@ -12,6 +12,7 @@ impl GitCommand for Failure {
 
 fn inputs() -> Inputs {
     Inputs {
+        upstreams: std::collections::BTreeMap::new(),
         branches: std::collections::BTreeMap::from([(
             "main".to_string(),
             vec!["trunk".to_string()],
@@ -170,4 +171,33 @@ fn errors_are_not_memoised_and_storage_limits_do_not_change_answers() {
     // Main-name failures are exercised through a command adapter which fails
     // after a successful reference enumeration.
     assert!(Inputs::capture(&MainFailure(&missing_main)).is_err());
+}
+
+#[test]
+fn captured_upstreams_remain_stable_and_capture_failures_are_preserved() {
+    let git = MockGit::default().with(
+        &[
+            "for-each-ref",
+            "--format=%(objectname)%00%(refname:lstrip=2)",
+            "refs/heads",
+        ],
+        "local\0main",
+    );
+    let mut captured = Inputs::capture(&git).unwrap();
+    captured.upstreams.insert(
+        "main".into(),
+        crate::model::MainReference {
+            name: "origin/main".into(),
+            oid: "remote".into(),
+            cached: true,
+        },
+    );
+    let session = Session::with_facts(&git, captured, Facts::default());
+    assert_eq!(session.upstream_branches().unwrap()["main"].oid, "remote");
+    assert!(Session::new(&git).upstream_branches().unwrap().is_empty());
+    let git = git.with_error(&[
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:remotename)",
+    ]);
+    assert!(Inputs::capture(&git).is_err());
 }

@@ -2,7 +2,7 @@ use super::observer::{AnalysisObserver, AnalysisStage};
 use crate::backend::{BranchlessQueries, GitBackend, RepositoryStateBackend};
 use crate::cli::DEFAULT_REVSET;
 use crate::error::{GitLsError, Result};
-use crate::model::{BranchPointRef, RepositorySnapshot};
+use crate::model::{BranchPointRef, MainReference, RepositorySnapshot};
 use std::collections::{HashMap, HashSet};
 pub(super) fn branch_revset(user_revset: &str) -> String {
     format!("(({user_revset}) & branches()) - public()")
@@ -113,18 +113,20 @@ pub(super) fn query_branchless_lane_selection(
             ));
             return Ok(None);
         }
-        let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
         let main_name = RepositoryStateBackend::main_branch_name(git)?;
-        let repository = RepositorySnapshot::new(current_branch, head, main_name);
-        return Ok(Some(LaneSelection::Empty {
+        let (main_oid, repository) = mainline_repository(git, &main_name, &main_oid)?;
+        return Ok(Some(branchless_mainline_selection(
+            git,
             main_oid,
             repository,
-        }));
+            HashMap::new(),
+            Vec::new(),
+            observer,
+        )?));
     }
 
-    let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
     let main_name = RepositoryStateBackend::main_branch_name(git)?;
-    let repository = RepositorySnapshot::new(current_branch, head, main_name);
+    let (main_oid, repository) = mainline_repository(git, &main_name, &main_oid)?;
     let branch_oid_map = RepositoryStateBackend::local_branches_by_oid(git)?;
     let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     let heads_revset = format!("heads({revset})");
@@ -146,13 +148,42 @@ pub(super) fn query_branchless_lane_selection(
         main_oid
     ));
 
-    Ok(Some(LaneSelection::Populated {
+    Ok(Some(branchless_mainline_selection(
+        git,
         main_oid,
-        head_oids,
-        points_by_oid,
         repository,
-        detect_rewritten_commits: true,
-    }))
+        points_by_oid,
+        head_oids,
+        observer,
+    )?))
+}
+
+pub(super) fn branchless_mainline_selection(
+    git: &dyn GitBackend,
+    main_oid: String,
+    repository: RepositorySnapshot,
+    mut points_by_oid: HashMap<String, BranchPointRef>,
+    mut head_oids: Vec<String>,
+    observer: &dyn AnalysisObserver,
+) -> Result<LaneSelection> {
+    if !repository.main_refs.is_empty() {
+        include_mainline_points(git, &main_oid, &repository, &mut points_by_oid)?;
+        head_oids = plain_git_stack_heads(git, &main_oid, points_by_oid.keys(), observer)?;
+    }
+    if points_by_oid.is_empty() {
+        Ok(LaneSelection::Empty {
+            main_oid,
+            repository,
+        })
+    } else {
+        Ok(LaneSelection::Populated {
+            main_oid,
+            repository,
+            points_by_oid,
+            head_oids,
+            detect_rewritten_commits: true,
+        })
+    }
 }
 
 pub(super) fn query_plain_git_lane_selection(
@@ -174,12 +205,11 @@ pub(super) fn query_plain_git_lane_selection(
         branch_oid_map.len()
     ));
     let configured_main_name = RepositoryStateBackend::main_branch_name(git)?;
-    let (main_name, main_oid) = plain_git_main_branch(&branch_oid_map, &configured_main_name)?;
+    let (main_name, local_oid) = plain_git_main_branch(&branch_oid_map, &configured_main_name)?;
+    let (main_oid, repository) = mainline_repository(git, &main_name, &local_oid)?;
     observer.progress(format_args!(
         "plain Git fallback: main branch={main_name} oid={main_oid}"
     ));
-    let (head, current_branch) = RepositoryStateBackend::current_head_and_branch(git)?;
-    let repository = RepositorySnapshot::new(current_branch, head, main_name.clone());
     let branch_names =
         plain_git_branch_names(git, &branch_oid_map, &main_name, &main_oid, observer)?;
     observer.progress(format_args!(
@@ -187,14 +217,15 @@ pub(super) fn query_plain_git_lane_selection(
         branch_names.len()
     ));
 
-    if branch_names.is_empty() {
+    let mut points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
+    include_mainline_points(git, &main_oid, &repository, &mut points_by_oid)?;
+    if points_by_oid.is_empty() {
         return Ok(LaneSelection::Empty {
             main_oid,
             repository,
         });
     }
 
-    let points_by_oid = branch_points_by_oid(&branch_names, &branch_oid_map);
     observer.count("selected_tips", points_by_oid.len());
     observer.count("selected_branches", branch_names.len());
     let head_oids = plain_git_stack_heads(git, &main_oid, points_by_oid.keys(), observer)?;
@@ -211,6 +242,91 @@ pub(super) fn query_plain_git_lane_selection(
         repository,
         detect_rewritten_commits: false,
     })
+}
+
+pub(crate) fn mainline_repository(
+    git: &dyn GitBackend,
+    main_name: &str,
+    local_oid: &str,
+) -> Result<(String, RepositorySnapshot)> {
+    let (head, current_branch) = git.current_head_and_branch()?;
+    let mut repository = RepositorySnapshot::new(current_branch, head, main_name);
+    let Some(upstream) = git.upstream_branches()?.remove(main_name) else {
+        return Ok((local_oid.to_string(), repository));
+    };
+    // Comparable tips use their descendant as the spine. Divergence preserves
+    // the upstream spine and displays local main as a separate ancestry path.
+    let main_oid = if local_oid == upstream.oid
+        || git.merge_base(local_oid, &upstream.oid)?.as_deref() == Some(upstream.oid.as_str())
+    {
+        local_oid.to_string()
+    } else {
+        upstream.oid.clone()
+    };
+    repository.main_refs = vec![
+        MainReference {
+            name: main_name.to_string(),
+            oid: local_oid.to_string(),
+            cached: false,
+        },
+        upstream,
+    ];
+    repository.main_oid = Some(main_oid.clone());
+    Ok((main_oid, repository))
+}
+
+pub(super) fn include_mainline_points(
+    git: &dyn GitBackend,
+    main_oid: &str,
+    repository: &RepositorySnapshot,
+    points: &mut HashMap<String, BranchPointRef>,
+) -> Result<()> {
+    if repository.main_refs.is_empty() {
+        return Ok(());
+    }
+    let mut candidates: Vec<_> = points.keys().cloned().collect();
+    candidates.extend(
+        repository
+            .main_refs
+            .iter()
+            .map(|reference| reference.oid.clone()),
+    );
+    candidates.sort();
+    candidates.dedup();
+    let unmerged: HashSet<_> = git
+        .unmerged_tips(main_oid, &candidates)?
+        .into_iter()
+        .collect();
+    points.retain(|oid, _| unmerged.contains(oid));
+    let tips: Vec<_> = points.keys().cloned().collect();
+    let mut bases = Vec::new();
+    for reference in &repository.main_refs {
+        if !unmerged.contains(&reference.oid) {
+            continue;
+        }
+        for tip in &tips {
+            if let Some(base) = git.merge_base(&reference.oid, tip)? {
+                bases.push(base);
+            }
+        }
+    }
+    bases.sort();
+    bases.dedup();
+    for base in git.unmerged_tips(main_oid, &bases)? {
+        points
+            .entry(base.clone())
+            .or_insert_with(|| BranchPointRef::new(base, std::iter::empty::<String>()))
+            .main_history = true;
+    }
+    for reference in &repository.main_refs {
+        if unmerged.contains(&reference.oid) {
+            points
+                .entry(reference.oid.clone())
+                .or_insert_with(|| BranchPointRef::new(&reference.oid, [&reference.name]))
+                .main_history = true;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn plain_git_main_branch(

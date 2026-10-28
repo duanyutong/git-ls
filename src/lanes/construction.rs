@@ -174,7 +174,7 @@ pub(super) fn build_branch_point(
     meta_cache: &mut HashMap<String, CommitMeta>,
 ) -> Result<BranchPoint> {
     let point = &branch_point.point;
-    let annotation = if verbosity.includes_metadata() {
+    let annotation = if verbosity.includes_metadata() || point.main_history {
         Some(BranchAnnotation::new(
             get_commit_meta(git, &point.oid, meta_cache)?,
             branch_point.commit_count,
@@ -185,6 +185,7 @@ pub(super) fn build_branch_point(
 
     let mut result = BranchPoint::new(point.oid.clone(), point.names.clone(), annotation);
     result.commit_count = branch_point.commit_count;
+    result.main_history = point.main_history;
     Ok(result)
 }
 

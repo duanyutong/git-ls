@@ -13,8 +13,9 @@ use super::metadata::{age_gutter, format_age};
 use super::orphan::render_orphaned_group;
 use super::rewrite::display_rewritten_commit;
 use super::trunk::{
-    TrunkLabel, main_is_current, render_collapsed_main_segment, render_main_tip,
-    render_omitted_main_past, render_top_spacer, trunk_age, trunk_label, trunk_prefix_with_roots,
+    TrunkLabel, reference_is_current, reference_label, render_collapsed_main_segment,
+    render_main_tip, render_omitted_main_past, render_top_spacer, trunk_age, trunk_is_current,
+    trunk_label, trunk_prefix_with_roots,
 };
 
 pub(super) fn render_group(
@@ -61,7 +62,17 @@ pub(super) fn render_group(
         active[row.lane] = true;
         let spine = row_main_spine(main_spine, index + 1, ancestry.rows.len());
         let marker = match row.content {
-            Content::Branch(point) => marker_for(point, ctx.current_branch, ctx.head),
+            Content::Branch(point) => {
+                if point.main_history {
+                    if reference_is_current(&point.oid, ctx) {
+                        super::graph::CURRENT_MAIN_COMMIT_GLYPH
+                    } else {
+                        super::graph::MAIN_COMMIT_GLYPH
+                    }
+                } else {
+                    marker_for(point, ctx.current_branch, ctx.head)
+                }
+            }
             Content::Rewritten(_) => REWRITTEN_COMMIT_GLYPH,
         };
         let prefix = row_prefix_with_marker(
@@ -113,16 +124,29 @@ fn render_branch_point_row(
     prefix: &str,
     ctx: &RenderContext<'_>,
 ) -> RenderLine {
-    let label = display_names(
-        point,
-        ctx.current_branch,
-        colour_index,
-        ctx.now_timestamp,
-        ctx.verbosity,
-        ctx.metadata_widths,
-        ctx.layout,
-        ctx.colours,
+    let reference = reference_label(
+        &point.oid,
+        point.annotation.as_ref().map(|annotation| &annotation.meta),
+        ctx,
     );
+    let is_main_reference = reference.is_some() || point.main_history;
+    let label = reference.unwrap_or_else(|| {
+        if point.main_history
+            && let Some(annotation) = &point.annotation
+        {
+            return trunk_label(TrunkLabel::Commit(&annotation.meta), ctx);
+        }
+        display_names(
+            point,
+            ctx.current_branch,
+            colour_index,
+            ctx.now_timestamp,
+            ctx.verbosity,
+            ctx.metadata_widths,
+            ctx.layout,
+            ctx.colours,
+        )
+    });
     let gutter = age_gutter(
         ctx,
         branch_age(point.annotation.as_ref().map(|a| a.meta.timestamp), ctx),
@@ -131,7 +155,11 @@ fn render_branch_point_row(
     let rendered = render_row(
         &gutter,
         &current_row_indicator(
-            is_current_branch_point(point, ctx.current_branch),
+            if is_main_reference {
+                reference_is_current(&point.oid, ctx)
+            } else {
+                is_current_branch_point(point, ctx.current_branch)
+            },
             colour_index,
             ctx.colours,
         ),
@@ -146,7 +174,11 @@ fn render_branch_point_row(
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
         None => RenderLine::plain(rendered),
     };
-    with_diff_stat(line, point, ctx)
+    if is_main_reference {
+        line
+    } else {
+        with_diff_stat(line, point, ctx)
+    }
 }
 
 fn render_rewritten_row(
@@ -173,8 +205,7 @@ fn render_trunk_row(
     lane_colours: &[usize],
     ctx: &RenderContext<'_>,
 ) -> RenderLine {
-    let current_main =
-        matches!(label, TrunkLabel::Main) && main_is_current(ctx.main_name, ctx.current_branch);
+    let current_main = trunk_is_current(label, ctx);
     let gutter = age_gutter(ctx, trunk_age(label, ctx));
     let rendered = trunk_label(label, ctx);
     let line = format!(
@@ -226,6 +257,11 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
     let mut connected_started = false;
     let mut rendered_connected_group = false;
     let mut previous_main_distance = 0;
+    let mut history_name = ctx
+        .main_refs
+        .iter()
+        .find(|reference| Some(reference.oid.as_str()) == ctx.main_oid)
+        .map_or(ctx.main_name, |reference| reference.name.as_str());
     let lane_field_width = connected_lane_field_width(groups);
 
     for (index, group) in groups.iter().enumerate() {
@@ -246,9 +282,13 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
                 connected_started = true;
             }
             if connected_started && main_distance > previous_main_distance {
+                let gap_context = RenderContext {
+                    main_history_name: Some(history_name),
+                    ..*ctx
+                };
                 output.extend(render_collapsed_main_segment(
                     main_distance - previous_main_distance,
-                    ctx,
+                    &gap_context,
                 ));
             }
 
@@ -271,6 +311,13 @@ pub(crate) fn render_lane_groups(groups: &[LaneGroup], ctx: &RenderContext<'_>) 
             ));
             rendered_connected_group = true;
             previous_main_distance = main_distance;
+            if let Some(reference) = ctx
+                .main_refs
+                .iter()
+                .find(|reference| Some(&reference.oid) == group.base_oid.as_ref())
+            {
+                history_name = &reference.name;
+            }
             connected_started = true;
         } else {
             if !rendered_connected_group && !connected_started {

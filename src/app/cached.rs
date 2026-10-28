@@ -9,7 +9,7 @@ use crate::backend::{GitBackend, Inputs, Session, get_commit_meta};
 use crate::cache::{BackendSemantics, Facts, FactsKey, Store};
 use crate::cli::{Args, Backend, DEFAULT_REVSET, RuntimeOptions};
 use crate::error::Result;
-use crate::lanes::{ordered_lanes, plain_git_main_branch, sort_lane_groups};
+use crate::lanes::{mainline_repository, ordered_lanes, plain_git_main_branch, sort_lane_groups};
 use crate::model::{BranchAnnotation, LaneGroup, RepositorySnapshot};
 use crate::terminal::RenderEnvironment;
 
@@ -50,10 +50,13 @@ impl Snapshot {
         }
         for group in &self.groups {
             ids.extend(group.base_oid.as_deref().filter(|base| *base != main));
-            if args.verbosity.includes_metadata() {
-                for lane in &group.lanes {
-                    ids.extend(lane.branch_points.iter().map(|point| point.oid.as_str()));
-                }
+            for lane in &group.lanes {
+                ids.extend(
+                    lane.branch_points
+                        .iter()
+                        .filter(|point| args.verbosity.includes_metadata() || point.main_history)
+                        .map(|point| point.oid.as_str()),
+                );
             }
         }
         if !ids.is_empty() {
@@ -67,8 +70,8 @@ impl Snapshot {
                 group.base_meta = Some(get_commit_meta(git, base, &mut metadata)?);
             }
             for lane in &mut group.lanes {
-                if args.verbosity.includes_metadata() {
-                    for point in &mut lane.branch_points {
+                for point in &mut lane.branch_points {
+                    if args.verbosity.includes_metadata() || point.main_history {
                         point.annotation = Some(BranchAnnotation::new(
                             get_commit_meta(git, &point.oid, &mut metadata)?,
                             point.commit_count,
@@ -291,7 +294,7 @@ pub(super) fn execute_cached<W: Write>(
         return execute(args, git, stdout, environment);
     };
     let inputs = Inputs::capture(git)?;
-    let (main_name, main_oid) = plain_git_main_branch(
+    let (main_name, local_oid) = plain_git_main_branch(
         &inputs.branches.clone().into_iter().collect(),
         &inputs.configured_main,
     )?;
@@ -327,8 +330,7 @@ pub(super) fn execute_cached<W: Write>(
     };
     let original_facts = facts.clone();
     let session = Session::with_facts(git, inputs.clone(), facts);
-    let (head, current_branch) = git.current_head_and_branch()?;
-    let repository = RepositorySnapshot::new(current_branch, head, main_name);
+    let (main_oid, repository) = mainline_repository(&session, &main_name, &local_oid)?;
     let (analysis, computed, prepared) = if let Some(snapshot) = snapshot {
         crate::diagnostics::event(format_args!("cache=hit"));
         let mut analysis = snapshot.live(args, repository, &main_oid, &session)?;

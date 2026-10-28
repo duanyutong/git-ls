@@ -32,6 +32,7 @@ pub(crate) struct BranchPoint {
     pub(crate) names: Vec<String>,
     pub(crate) annotation: Option<BranchAnnotation>,
     pub(crate) commit_count: usize,
+    pub(crate) main_history: bool,
     #[serde(skip)]
     pub(crate) diff_stat: Option<DiffStat>,
 }
@@ -50,6 +51,7 @@ impl BranchPoint {
             oid: oid.into(),
             names: names.into_iter().map(Into::into).collect(),
             commit_count: annotation.as_ref().map_or(0, |value| value.commit_count),
+            main_history: false,
             annotation,
             diff_stat: None,
         }
@@ -72,6 +74,7 @@ impl BranchAnnotation {
 pub(crate) struct BranchPointRef {
     pub(crate) oid: String,
     pub(crate) names: Vec<String>,
+    pub(crate) main_history: bool,
 }
 
 impl BranchPointRef {
@@ -83,6 +86,7 @@ impl BranchPointRef {
         Self {
             oid: oid.into(),
             names: names.into_iter().map(Into::into).collect(),
+            main_history: false,
         }
     }
 }
@@ -159,10 +163,19 @@ impl LaneGroup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MainReference {
+    pub(crate) name: String,
+    pub(crate) oid: String,
+    pub(crate) cached: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RepositorySnapshot {
     pub(crate) current_branch: Option<String>,
     pub(crate) head: Option<String>,
     pub(crate) main_name: String,
+    pub(crate) main_refs: Vec<MainReference>,
+    pub(crate) main_oid: Option<String>,
 }
 
 impl RepositorySnapshot {
@@ -175,6 +188,8 @@ impl RepositorySnapshot {
             current_branch,
             head,
             main_name: main_name.into(),
+            main_refs: Vec::new(),
+            main_oid: None,
         }
     }
 }
