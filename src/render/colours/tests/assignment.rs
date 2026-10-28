@@ -19,8 +19,10 @@ fn group(lanes: Vec<Lane>) -> LaneGroup {
     LaneGroup::new(Some("main".to_string()), None, Some(0), lanes)
 }
 
-fn weighted_lane(prefix: &str, weight: usize) -> Lane {
-    let names: Vec<_> = (0..weight).map(|i| format!("{prefix}/{i:03}")).collect();
+fn layered_lane(prefix: &str, layer_count: usize) -> Lane {
+    let names: Vec<_> = (0..layer_count)
+        .map(|i| format!("{prefix}/{i:03}"))
+        .collect();
     lane(&names.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
@@ -28,7 +30,7 @@ fn assert_neighbours_differ(segments: &[Segment], colours: &[usize]) {
     for (index, segment) in segments.iter().enumerate() {
         for &neighbour in &segment.neighbours {
             assert_ne!(colours[index], colours[neighbour]);
-            assert!(PALETTE[colours[index]].1 != PALETTE[colours[neighbour]].1);
+            assert!(PALETTE[colours[index]].family != PALETTE[colours[neighbour]].family);
         }
     }
 }
@@ -46,11 +48,11 @@ fn built_in_palette_contains_the_seven_selected_colours() {
 fn empty_and_orphaned_histories_leave_only_the_fixed_main_colour() {
     assert_eq!(assign(&[]), [0]);
     assert_eq!(assign(&[group(Vec::new())]), [0]);
-    let mut orphan = group(vec![weighted_lane("orphan", 100)]);
+    let mut orphan = group(vec![layered_lane("orphan", 100)]);
     orphan.main_distance = None;
     assert_eq!(assign(&[orphan.clone()]), [0]);
     let groups = [
-        group(vec![weighted_lane("first", 15)]),
+        group(vec![layered_lane("first", 15)]),
         group(vec![lane(&["last"])]),
     ];
     assert_eq!(
@@ -60,38 +62,223 @@ fn empty_and_orphaned_histories_leave_only_the_fixed_main_colour() {
 }
 
 #[test]
+fn lone_segments_use_sky_independently_of_names_size_and_orphaned_histories() {
+    let mut orphan = group(vec![layered_lane("orphan", 12)]);
+    orphan.main_distance = None;
+    for name in ["a", "z", "dyt/async-capture", "dyt/credential-keys"] {
+        for weight in [1, 2, 9, 32] {
+            let connected = group(vec![layered_lane(name, weight)]);
+            for groups in [
+                vec![connected.clone()],
+                vec![orphan.clone(), connected, orphan.clone()],
+            ] {
+                let colours = assign(&groups);
+                assert_eq!(
+                    colours.iter().copied().map(ansi_colour).collect::<Vec<_>>(),
+                    [47, 39]
+                );
+                let prepared = crate::render::PreparedTopology::new(&groups);
+                assert_eq!(assign_prepared(&groups, Some(&prepared)), colours);
+            }
+        }
+    }
+}
+
+#[test]
+fn footprint_counts_markers_aliases_and_unicode_display_cells_with_shared_rows_once() {
+    let mut left = lane(&["a", "base"]);
+    left.branch_points[1].names = vec!["界界".to_string(), "e\u{301}".to_string()];
+    let mut right = lane(&["bbbb", "base"]);
+    right.branch_points[1] = left.branch_points[1].clone();
+    let groups = [group(vec![left, right])];
+
+    let segments = topology::segments(&groups);
+
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.weight)
+            .collect::<Vec<_>>(),
+        [2, 5, 6]
+    );
+    let prepared = crate::render::PreparedTopology::new(&groups);
+    let prepared_segments = topology::segments_prepared(&groups, Some(&prepared));
+    assert_eq!(
+        prepared_segments
+            .iter()
+            .map(|segment| segment.weight)
+            .collect::<Vec<_>>(),
+        [2, 5, 6]
+    );
+}
+
+#[test]
+fn coloured_label_area_can_outweigh_a_greater_layer_count() {
+    let groups = [group(vec![
+        layered_lane("s", 3),
+        lane(&["a-branch-with-a-much-larger-coloured-label"]),
+    ])];
+    let segments = topology::segments(&groups);
+    let colours = assign(&groups);
+    let larger = segments
+        .iter()
+        .position(|segment| segment.identity.starts_with("a-branch"));
+
+    assert_eq!(
+        segments.iter().map(|segment| segment.weight).min(),
+        Some(18)
+    );
+    assert_eq!(
+        larger.map(|index| ansi_colour(colours[index + 1])),
+        Some(39)
+    );
+}
+
+#[test]
+fn readable_shades_win_within_equally_eligible_families() {
+    for (neighbour, expected) in [(3, 39), (2, 220)] {
+        let segments = [
+            Segment {
+                weight: 1,
+                identity: "left".to_string(),
+                neighbours: vec![2],
+            },
+            Segment {
+                weight: 1,
+                identity: "right".to_string(),
+                neighbours: vec![2],
+            },
+            Segment {
+                weight: 1,
+                identity: "target".to_string(),
+                neighbours: vec![0, 1],
+            },
+        ];
+        let mut assignment = Assignment::new(&segments);
+        assignment.place(0, neighbour);
+        assignment.place(1, 4); // Orchid leaves only the other non-semantic family eligible.
+
+        assert_eq!(ansi_colour(assignment.best_colour(2)), expected);
+    }
+}
+
+#[test]
+fn shade_preferences_yield_to_nearby_reuse_and_individual_exposure() {
+    let segments: Vec<_> = (0..8)
+        .map(|i| Segment {
+            weight: if i == 0 { 10 } else { 1 },
+            identity: format!("stack-{i}"),
+            neighbours: Vec::new(),
+        })
+        .collect();
+    for (preferred, alternate) in [(2, 5), (3, 6)] {
+        let mut assignment = Assignment::new(&segments);
+        assignment.place(0, preferred);
+
+        let near_preferred = assignment.cost(1, preferred);
+        let near_alternate = assignment.cost(1, alternate);
+        assert!(near_alternate.nearby_reuse < near_preferred.nearby_reuse);
+        assert!(near_alternate < near_preferred);
+
+        let distant_preferred = assignment.cost(7, preferred);
+        let distant_alternate = assignment.cost(7, alternate);
+        assert_eq!(
+            distant_preferred.nearby_reuse,
+            distant_alternate.nearby_reuse
+        );
+        assert!(distant_alternate.colour_exposure < distant_preferred.colour_exposure);
+        assert!(distant_alternate < distant_preferred);
+    }
+}
+
+#[test]
+fn larger_segments_receive_preferred_shades_without_changing_separation_or_exposure() {
+    let segments: Vec<_> = [1, 10, 1, 11, 1, 1, 1, 2, 2]
+        .into_iter()
+        .enumerate()
+        .map(|(i, weight)| Segment {
+            weight,
+            identity: format!("stack-{i}"),
+            neighbours: (0..9).filter(|&other| i.abs_diff(other) == 1).collect(),
+        })
+        .collect();
+    let mut colours = [2, 5, 3, 6, 4, 1, 0, 5, 6];
+    let order = [3, 1, 7, 8, 0, 2, 4, 5, 6];
+    let costs = |colours: &[usize]| {
+        let mut assignment = Assignment::new(&segments);
+        for (segment, &colour) in colours.iter().enumerate() {
+            assignment.place(segment, colour);
+        }
+        colours
+            .iter()
+            .enumerate()
+            .map(|(segment, &colour)| {
+                let cost = assignment.cost(segment, colour);
+                (
+                    cost.identical,
+                    cost.related,
+                    cost.semantic_excess,
+                    cost.nearby_reuse,
+                    cost.family_exposure,
+                    cost.colour_exposure,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = costs(&colours);
+
+    prefer_readable_shades(&mut colours, &order);
+
+    assert_eq!(colours, [5, 2, 6, 3, 4, 1, 0, 2, 3]);
+    assert_eq!(costs(&colours), before);
+    prefer_readable_shades(&mut colours, &order);
+    assert_eq!(colours, [5, 2, 6, 3, 4, 1, 0, 2, 3]);
+}
+
+#[test]
+fn a_family_using_only_its_alternate_shade_is_relabelled_consistently() {
+    let mut colours = [5, 4, 5, 6];
+
+    prefer_readable_shades(&mut colours, &[0, 3, 1, 2]);
+
+    assert_eq!(colours, [2, 4, 2, 3]);
+}
+
+#[test]
 fn large_stacks_avoid_coral_and_green_independently_of_display_order() {
     for weights in [[15, 10, 3, 1], [1, 3, 10, 15], [10, 1, 15, 3]] {
         let groups = [group(
             weights
                 .iter()
                 .enumerate()
-                .map(|(i, &weight)| weighted_lane(&format!("stack-{i}"), weight))
+                .map(|(i, &weight)| layered_lane(&format!("stack-{i}"), weight))
                 .collect(),
         )];
         let segments = topology::segments(&groups);
         let colours = assign(&groups);
         let colours = &colours[1..];
-        let mut semantic_rows = 0;
-        for (segment, &colour) in segments.iter().zip(colours) {
-            if is_semantic(PALETTE[colour].1) {
-                assert!(segment.weight <= 3);
-                semantic_rows += segment.weight;
-            }
+        let budget = segments.iter().map(|segment| segment.weight).sum::<usize>() / 5;
+        for family in [Family::Coral, Family::Green] {
+            let exposure: usize = segments
+                .iter()
+                .zip(colours)
+                .filter(|(_, colour)| PALETTE[**colour].family == family)
+                .map(|(segment, _)| segment.weight)
+                .sum();
+            assert!(exposure <= budget);
         }
-        assert!(semantic_rows <= 29 / 5);
         assert_neighbours_differ(&segments, colours);
     }
     for count in 1..=2 {
         let groups = [group(
             (0..count)
-                .map(|i| weighted_lane(&i.to_string(), 10))
+                .map(|i| layered_lane(&i.to_string(), 10))
                 .collect(),
         )];
         assert!(
             assign(&groups)[1..]
                 .iter()
-                .all(|&colour| !is_semantic(PALETTE[colour].1))
+                .all(|&colour| !is_semantic(PALETTE[colour].family))
         );
     }
 }
@@ -110,11 +297,11 @@ fn shared_paths_are_weighted_once_and_every_junction_gets_distinct_colours() {
             .iter()
             .map(|segment| segment.weight)
             .collect::<Vec<_>>(),
-        [1, 1, 1, 1, 2, 1]
+        [6, 5, 6, 6, 12, 12]
     );
     assert_eq!(
         segments.iter().map(|segment| segment.weight).sum::<usize>(),
-        7
+        47
     );
     assert_neighbours_differ(&segments, &assign(&groups)[1..]);
 }
@@ -139,10 +326,15 @@ fn persistent_lanes_and_consecutive_groups_are_visual_neighbours() {
 
 #[test]
 fn metadata_checkout_alias_order_and_rebased_object_ids_do_not_change_assignment() {
-    let groups = [group(vec![
+    let mut groups = [group(vec![
         lane(&["alpha", "shared"]),
         lane(&["beta", "shared"]),
     ])];
+    for lane in &mut groups[0].lanes {
+        for point in &mut lane.branch_points {
+            point.names.push(format!("z-alias/{}", point.names[0]));
+        }
+    }
     let mut changed = groups.clone();
     for lane in &mut changed[0].lanes {
         lane.contains_current = true;
@@ -155,7 +347,6 @@ fn metadata_checkout_alias_order_and_rebased_object_ids_do_not_change_assignment
                 CommitMeta::new(&point.oid, 999, "subject"),
                 100,
             ));
-            point.names.push(format!("z-alias/{}", point.names[0]));
             point.names.reverse();
         }
     }
@@ -194,14 +385,14 @@ fn rewritten_only_segments_and_distinct_replacements_remain_deterministic() {
             .iter()
             .map(|segment| segment.weight)
             .sum::<usize>(),
-        4
+        14
     );
     groups[0].lanes[2].rewritten_commits[0].replacement = CommitMeta::new("third", 0, "third");
     let segments = topology::segments(&groups);
     assert_eq!(segments.len(), 3);
     assert_eq!(
         segments.iter().map(|segment| segment.weight).sum::<usize>(),
-        5
+        15
     );
     assert_neighbours_differ(&segments, &assign(&groups)[1..]);
 }
@@ -233,18 +424,23 @@ fn small_stacks_use_all_hue_families_without_repetition_or_semantic_dominance() 
         Family::Coral,
         Family::Green,
     ] {
-        assert!(colours.iter().any(|&colour| PALETTE[colour].1 == family));
+        assert!(
+            colours
+                .iter()
+                .any(|&colour| PALETTE[colour].family == family)
+        );
         if is_semantic(family) {
-            let rows: usize = segments
+            let exposure: usize = segments
                 .iter()
                 .zip(colours)
-                .filter(|(_, colour)| PALETTE[**colour].1 == family)
+                .filter(|(_, colour)| PALETTE[**colour].family == family)
                 .map(|(segment, _)| segment.weight)
                 .sum();
-            assert!(rows <= 2);
+            let budget = segments.iter().map(|segment| segment.weight).sum::<usize>() / 5;
+            assert!(exposure <= budget);
         }
     }
-    assert!(!is_semantic(PALETTE[colours[0]].1));
+    assert!(!is_semantic(PALETTE[colours[0]].family));
 }
 
 #[test]
@@ -260,8 +456,8 @@ fn nearby_reuse_spreads_colours_and_expires_after_one_palette_cycle() {
     for colour in 0..PALETTE.len() {
         assignment.place(colour, colour);
     }
-    assignment.place(8, 0); // Fill green's independent row budget.
-    assignment.place(9, 1); // Fill coral's independent row budget.
+    assignment.place(8, 0); // Fill green's independent footprint budget.
+    assignment.place(9, 1); // Fill coral's independent footprint budget.
 
     // Sky is the most distant eligible colour, despite higher blue-family exposure.
     assert_eq!(ansi_colour(assignment.best_colour(7)), 39);
@@ -273,7 +469,7 @@ fn nearby_reuse_spreads_colours_and_expires_after_one_palette_cycle() {
 fn large_selections_reuse_colours_without_adjacent_hue_repetition() {
     let groups = [group(
         (0..128)
-            .map(|i| weighted_lane(&format!("topic-{i}"), 1 + i % 9))
+            .map(|i| layered_lane(&format!("topic-{i}"), 1 + i % 9))
             .collect(),
     )];
     let segments = topology::segments(&groups);
@@ -281,6 +477,22 @@ fn large_selections_reuse_colours_without_adjacent_hue_repetition() {
     assert_neighbours_differ(&segments, &colours[1..]);
     for colour in 0..PALETTE.len() {
         assert!(colours[1..].contains(&colour));
+    }
+    for (family, preferred) in [(Family::Blue, 39), (Family::Warm, 220)] {
+        let largest = segments
+            .iter()
+            .zip(&colours[1..])
+            .filter(|(_, colour)| PALETTE[**colour].family == family)
+            .min_by(|(left, _), (right, _)| {
+                right
+                    .weight
+                    .cmp(&left.weight)
+                    .then_with(|| left.identity.cmp(&right.identity))
+            });
+        assert_eq!(
+            largest.map(|(_, &colour)| ansi_colour(colour)),
+            Some(preferred)
+        );
     }
 }
 
@@ -328,7 +540,7 @@ fn repair_reduces_conflicts_and_degrades_gracefully_when_seven_colours_cannot_su
     let unique: std::collections::BTreeSet<_> = assignment.colours.iter().copied().collect();
     assert_eq!(unique.len(), 7);
     assert!(!unique.contains(&None));
-    let semantic_rows = assignment.family_load[Family::Coral as usize]
+    let semantic_exposure = assignment.family_load[Family::Coral as usize]
         + assignment.family_load[Family::Green as usize];
-    assert!(semantic_rows < segments.iter().map(|segment| segment.weight).sum());
+    assert!(semantic_exposure < segments.iter().map(|segment| segment.weight).sum());
 }

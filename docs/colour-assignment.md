@@ -28,9 +28,14 @@ Added and deleted line counts retain the terminal's standard ANSI green and red.
 The policy is implemented in `src/render/colours/assignment.rs`, with topology extraction in its `topology` submodule.
 Assignment operates on the displayed named ancestry and requires no repository commands, terminal queries or persistent state.
 
-Each segment is weighted by its displayed ancestry-row count, including rewritten-commit rows.
+Each segment is weighted by its logical coloured footprint: its ancestry-row count plus the sum of the terminal display widths of all branch names on those rows.
+Each row contributes one marker cell, including rewritten-commit rows; branch names contribute their complete, untruncated display width, accounting for wide and combining Unicode characters.
+All aliases contribute their coloured name cells, whilst their uncoloured separators are excluded.
+Shared rows and their labels are counted once.
+Layout-dependent connectors and current-checkout indicators are excluded so that layout and checkout changes do not affect size.
 Commit counts, LOC, metadata, object identifiers, checkout state, timestamps, layout and terminal width do not contribute to the assignment objective.
-Branch names provide canonical identities for deterministic size ties and colour preferences; segments without branch names use structural order to resolve remaining ties.
+Branch names provide canonical identities for deterministic size ties in processing order; segments without branch names use structural order to resolve remaining ties.
+Colour preferences are fixed palette properties and are independent of branch names.
 
 Visual neighbours comprise consecutive segment blocks, neighbouring active lanes and child segments meeting a shared parent at a junction.
 The graph includes adjacency between consecutive connected groups, whilst orphaned groups are excluded from the calculation.
@@ -41,16 +46,29 @@ Candidate colours are compared using the following lexicographic priorities:
 
 1. Minimise identical-colour adjacency, weighted by the smaller neighbouring segment.
 2. Minimise adjacency within a hue family using the same weights.
-3. Minimise excess exposure within either coral or green above a separate target of one fifth of ancestry rows per hue, rounded down.
+3. Minimise excess exposure within either coral or green above a separate target of one fifth of the total coloured footprint per hue, rounded down.
 4. Minimise nearby reuse of the same colour within six segment positions in render order.
-5. Minimise concentration of row exposure within each hue family.
-6. Minimise concentration of row exposure within each individual colour.
-7. Resolve remaining ties using a stable preference derived from the segment's canonical branch name.
+5. Minimise concentration of footprint exposure within each hue family.
+6. Minimise concentration of footprint exposure within each individual colour.
+7. Resolve remaining ties using the fixed preference order: sky, gold, orchid, blue, orange, coral, then green.
+
+The final preference favours sky over blue within the blue family and gold over orange within the warm family.
+Both shades retain their shared family for adjacency and exposure calculations; shade preference applies only when every preceding cost is equal.
+Consequently, a single uninterrupted connected segment always receives sky, independently of its branch names or footprint, without requiring a separate assignment rule.
+Main history and orphaned histories remain excluded from this segment count.
+For multiple segments, separation, the independent coral and green exposure targets, nearby reuse and exposure balance may require a less-preferred shade.
+
+After the repair passes, shades within each family are consistently relabelled so that the family's largest segment receives its preferred shade.
+Equal-sized segments use the existing canonical processing order to resolve precedence.
+Where both shades are present, all occurrences are exchanged together; individual segments are never recoloured independently at this stage.
+This permutation preserves colour equality, family membership, nearby reuse and both exposure-concentration measures, whilst leaving coral and green unchanged.
+Accordingly, the larger of two blue segments receives sky and the larger of two warm segments receives gold.
+Where several segments reuse the family's shades, the largest segment determines the orientation; their existing shade partition remains intact.
 
 The reuse window spans one seven-colour palette cycle and uses each segment's first appearance in render order, including across connected groups.
 Each repeated pair contributes the smaller segment weight multiplied by seven minus their positional distance; nearby repetitions therefore carry a greater penalty.
 This preference favours unused colours over finer exposure balancing, whilst preserving immediate hue separation and the separate coral and green exposure targets.
-Exposure concentration is measured by the incremental change in squared row totals.
+Exposure concentration is measured by the incremental change in squared footprint totals.
 Coral and green have independent allowances; using green does not reduce the allowance for coral, or vice versa.
 Family exposure balancing favours a missing hue over a second shade of an already prominent blue or warm family when the preceding priorities permit either choice.
 The coral and green exposure preferences are soft design targets rather than accessibility thresholds.

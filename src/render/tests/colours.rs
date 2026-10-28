@@ -101,11 +101,7 @@ fn main_reserves_first_palette_colour() {
 
     let output = render_lane_groups(&groups, &ctx);
 
-    assert!(
-        [39, 220, 177, 33, 208]
-            .into_iter()
-            .any(|code| { output[1].contains(&format!("\x1b[38;5;{code}m●\x1b[0m")) })
-    );
+    assert!(output[1].contains("\x1b[38;5;39m●\x1b[0m"));
     assert!(output[2].contains("\x1b[38;5;47m◇\x1b[0m"));
     assert!(output[2].contains("\x1b[38;5;47mmain\x1b[0m"));
 }

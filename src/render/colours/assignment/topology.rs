@@ -50,6 +50,7 @@ pub(super) fn segments_prepared(
             node.weight += 1;
             if let Content::Branch(point) = row.content {
                 for name in &point.names {
+                    node.weight += console::measure_text_width(name);
                     if node.identity.is_empty() || name < &node.identity {
                         node.identity.clone_from(name);
                     }

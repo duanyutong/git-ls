@@ -9,7 +9,7 @@
 The graph uses `git-branchless` glyphs for equivalent concepts, with branch heads arranged above their ancestors.
 Stacks with a common downstack path share that path and connect through a junction above the shared branch point.
 Each uninterrupted stack segment retains one colour, and a shared downstack segment receives its own colour after its child stacks join.
-The built-in palette is assigned according to segment size, visual adjacency and colour-family exposure, with larger stacks preferentially avoiding coral and green.
+The built-in palette is assigned according to coloured footprint, visual adjacency and colour-family exposure, with larger stacks preferentially avoiding coral and green.
 The [colour-assignment policy](docs/colour-assignment.md) specifies the deterministic heuristic and its limitations.
 The following example uses synthetic branch names:
 
