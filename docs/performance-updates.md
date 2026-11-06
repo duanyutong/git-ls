@@ -47,7 +47,8 @@ An isolated hook-enabled repository verifies baseline-equivalent rendering after
 
 ## Presentation and publication
 
-Terminal width preflight and final output reuse one prepared topology and colour assignment.
+The measured implementation reused one prepared topology and colour assignment for terminal-width preflight and final output.
+The subsequent adaptive display policy removes that preflight and retains prepared topology and colour assignment for final output, including per-layer continuation lines.
 The renderer styles only lane cells which can contribute to the visible prefix, retaining spacing required for the established layout and width rules.
 Hidden lane cells avoid redundant colour instructions, and truncation removes overwritten style changes which contain no visible text.
 Visible padding retains its established style so that truncation markers preserve their original colour.

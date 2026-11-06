@@ -1,6 +1,6 @@
 use crate::model::{BranchPoint, LaneGroup};
 
-use super::{RenderContext, RenderLine};
+use super::RenderContext;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct DiffStatWidths {
@@ -33,49 +33,37 @@ const fn count_width(mut count: u64) -> usize {
     width
 }
 
-pub(super) fn with_diff_stat(
-    line: RenderLine,
+pub(super) fn format_diff_stat(
     point: &BranchPoint,
     ctx: &RenderContext<'_>,
-) -> RenderLine {
+    aligned: bool,
+) -> String {
     let Some(stat) = point.diff_stat else {
-        return line;
+        return String::new();
     };
     let added = format!("+{}", stat.added);
     let deleted = format!("-{}", stat.deleted);
-    let added = format!("{added:>width$}", width = ctx.diff_stat_widths.added);
-    let deleted = format!("{deleted:>width$}", width = ctx.diff_stat_widths.deleted);
-    let stats = format!(
+    let added = format!(
+        "{added:>width$}",
+        width = if aligned {
+            ctx.diff_stat_widths.added
+        } else {
+            0
+        }
+    );
+    let deleted = format!(
+        "{deleted:>width$}",
+        width = if aligned {
+            ctx.diff_stat_widths.deleted
+        } else {
+            0
+        }
+    );
+    format!(
         "{} {}",
         ctx.colours.diff_added(&added),
         ctx.colours.diff_deleted(&deleted)
-    );
-    let prefix = line
-        .fixed_suffix()
-        .map_or(line.as_str(), |(prefix, _)| prefix);
-    let subject_width = point
-        .annotation
-        .as_ref()
-        .filter(|_| ctx.verbosity.includes_title())
-        .map_or(0, |annotation| {
-            console::measure_text_width(&annotation.meta.subject) + 1
-        });
-    let minimum_prefix_width = console::measure_text_width(prefix).saturating_sub(subject_width)
-        + if subject_width > 1 { 4 } else { 0 };
-    line.with_diff_stat(&stats, minimum_prefix_width)
-}
-
-pub(crate) fn fit_diff_stats(lines: &mut [RenderLine], terminal_width: Option<usize>) {
-    if let Some(width) = terminal_width
-        && lines
-            .iter()
-            .filter_map(RenderLine::diff_stat_minimum_width)
-            .any(|minimum| minimum > width)
-    {
-        for line in lines {
-            line.hide_diff_stat();
-        }
-    }
+    )
 }
 
 #[cfg(test)]

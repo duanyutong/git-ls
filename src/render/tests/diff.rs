@@ -90,57 +90,14 @@ fn supports_low_verbosity_inline_and_orphaned_rows() {
             &colours,
         )
         .with_diff_stats(&groups);
-        let mut lines = render_lane_groups(&groups, &ctx);
-        let original = lines.clone();
+        let lines = render_lane_groups(&groups, &ctx);
         let topic = lines.iter().find(|line| line.contains("topic")).unwrap();
         assert!(topic.ends_with("+128  -3"));
         assert!(!topic.contains("long subject"));
-        fit_diff_stats(&mut lines, None);
-        assert_eq!(lines, original);
-        fit_diff_stats(&mut lines, Some(200));
-        assert_eq!(lines, original);
-        fit_diff_stats(&mut lines, Some(1));
-        assert!(
-            !lines
-                .iter()
-                .any(|line| line.contains("+128") || line.contains("-45"))
+        assert_eq!(
+            format_diff_stat(&groups[0].lanes[0].branch_points[0], &ctx, false),
+            "+2 -45"
         );
-    }
-}
-
-#[test]
-fn hides_all_stats_when_any_branch_would_be_truncated() {
-    let mut lines = vec![
-        RenderLine::with_fixed_suffix("branch with subject", "abcdef0")
-            .with_diff_stat("+128 -3", 12),
-        RenderLine::plain("short").with_diff_stat("+2 -45", 5),
-        RenderLine::plain("main"),
-    ];
-    let original = lines.clone();
-    fit_diff_stats(&mut lines, Some(28));
-    assert_eq!(lines, original);
-    fit_diff_stats(&mut lines, Some(27));
-    assert_eq!(lines[0].as_str(), "branch with subject abcdef0");
-    assert_eq!(
-        lines[0].fixed_suffix(),
-        Some(("branch with subject", "abcdef0"))
-    );
-    assert_eq!(lines[1].as_str(), "short");
-}
-
-#[test]
-fn restores_empty_prefixes_and_plain_rows_without_retaining_duplicate_lines() {
-    for original in [
-        RenderLine::with_fixed_suffix("", "oid"),
-        RenderLine::plain(""),
-        RenderLine::plain("日本語"),
-    ] {
-        let mut line = original.clone().with_diff_stat("\x1b[32m+2\x1b[0m -0", 4);
-        assert!(line.diff_stat_minimum_width().is_some());
-        line.hide_diff_stat();
-        assert_eq!(line, original);
-        line.hide_diff_stat();
-        assert_eq!(line, original);
     }
     assert_eq!(count_width(u64::MAX), 21);
 }

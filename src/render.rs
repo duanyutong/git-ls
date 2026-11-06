@@ -14,7 +14,6 @@ mod trunk;
 pub(crate) use ancestry::PreparedTopology;
 pub(crate) use colours::Colours;
 pub(crate) use context::RenderContext;
-pub(crate) use diff::fit_diff_stats;
 pub(crate) use layout::{render_empty_selection, render_lane_groups};
 pub(crate) use line::RenderLine;
 pub(crate) use metadata::calculate_metadata_widths;

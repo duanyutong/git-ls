@@ -32,7 +32,7 @@ For 128 independent layers, warm execution is approximately 39.6 times faster in
 With persistence disabled, the same fixture changes from 2534.50 ms to 62.25 ms.
 Its original warm trace contains 128 diff processes; the revised warm trace contains one configuration query and one attribute query, with no diff process.
 The revised uncached trace contains one diff batch; initial cache population contains two batches for dependency discovery and validation.
-The narrow-terminal trace contains neither a diff nor an attribute query.
+The historical narrow-terminal trace contains neither a diff nor an attribute query, reflecting the former width-based suppression policy.
 The equal-tree fixture launches no diff process even without persistence, and eight orphan roots require only one empty-tree resolution per uncached invocation.
 
 The 600-branch metadata probe records one repeated facts-entry write in the original binary and none in the revised binary.
@@ -59,11 +59,11 @@ The parser validates framing, object formats, numeric conversion, and addition o
 Orphan roots share one repository-format-specific empty-tree resolution per invocation, using null standard input without a temporary spool file.
 SHA-256 repositories retain the shell backend's existing support.
 
-An explicit terminal-width preflight renders minimum-width placeholder counts before hydration.
-If even those counts cannot fit under the existing all-or-nothing visibility rule, the application issues no statistics request.
-The final width check remains necessary because actual counts may require more digits.
-Piped output retains statistics because its width is unknown.
-Decimal-width discovery does not allocate strings, and hiding statistics restores the original row without retaining a boxed duplicate of the complete line.
+The measured implementation used a terminal-width preflight to suppress statistics acquisition when minimum-width placeholder counts could not fit.
+The adaptive display policy supersedes that optimisation: requested statistics are acquired at every terminal width and retained on a right-aligned continuation where necessary.
+This changes the work performed by narrow-terminal invocations; the historical timings do not quantify the revised behaviour.
+Piped output retains complete single-line statistics because its width is unknown.
+Decimal-width discovery does not allocate strings.
 
 ## Persistent statistics
 
@@ -101,7 +101,7 @@ NUL-delimited command input and output retain their framing.
 The `diff_stats` stage includes acquisition and persistence decisions.
 Counters distinguish requested commit pairs, distinct commit pairs, distinct tree pairs, equal-tree skips, batch launches, and persistent hits and misses.
 Diff, attribute, empty-tree, metadata, and configuration subprocesses have separate diagnostic families.
-Bypass and terminal-suppression events identify why reusable or visible statistics were unavailable.
+Bypass events identify why reusable statistics were unavailable; terminal width no longer suppresses requested statistics.
 
 Unit tests exercise batch framing, malformed and overflowing records, directional deduplication, bounded persistence, partial hits, changing dependencies, and both rendering layouts.
 Integration tests exercise actual Git across both backends, including merges, equivalent trees at distinct commits, reverted changes within a layer, aliases, edited and unusual rename paths, binary files, orphan roots, nested invocation directories, SHA-256 identifiers, attribute sources, linked worktrees, and configuration changes.

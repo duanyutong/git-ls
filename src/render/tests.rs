@@ -1,3 +1,4 @@
+mod adaptive;
 mod colours;
 mod columns;
 mod graph;

@@ -1,7 +1,7 @@
 use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
-use crate::render::branch::display_names;
+use crate::render::branch::BranchLabel;
 use crate::render::layout::render_lane_groups;
 use crate::render::metadata::{
     MetadataWidths, calculate_metadata_widths, format_age, format_metadata_prefix,
@@ -146,16 +146,17 @@ fn renders_branch_metadata_with_commit_count_for_multi_commit_branch() {
     let colours = test_colours(false);
     let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
 
-    let label = display_names(
-        &point,
+    let ctx = RenderContext::new(
+        "main",
+        None,
         Some("other"),
-        0,
+        None,
         TEST_NOW,
         Verbosity::High,
         MetadataWidths::default(),
-        Layout::Inline,
         &colours,
     );
+    let label = BranchLabel::new(&point, 0, false, &ctx).full();
 
     assert_eq!(label, "2m (3, branch-) feature/topic finish topic");
 }
@@ -165,16 +166,17 @@ fn renders_summary_branch_metadata_without_commit_title() {
     let colours = test_colours(false);
     let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
 
-    let label = display_names(
-        &point,
+    let ctx = RenderContext::new(
+        "main",
+        None,
         Some("other"),
-        0,
+        None,
         TEST_NOW,
         Verbosity::Medium,
         MetadataWidths::default(),
-        Layout::Inline,
         &colours,
     );
+    let label = BranchLabel::new(&point, 0, false, &ctx).full();
 
     assert_eq!(label, "2m (3) feature/topic");
 }

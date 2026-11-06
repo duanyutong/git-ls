@@ -112,7 +112,11 @@ fn fit_line_with_fixed_suffix(line: &RenderLine, terminal_width: Option<usize>) 
 
     let suffix_width = console::measure_text_width(suffix);
     if width <= suffix_width {
-        return fit_line_to_terminal_width(suffix, Some(width));
+        return if line.preserves_suffix() {
+            Cow::Borrowed(suffix)
+        } else {
+            fit_line_to_terminal_width(suffix, Some(width))
+        };
     }
 
     let prefix_width = width - suffix_width - 1;

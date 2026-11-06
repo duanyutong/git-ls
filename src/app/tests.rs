@@ -632,7 +632,7 @@ fn run_uses_git_config_verbosity_in_mocked_workflow() {
 }
 
 #[test]
-fn preflight_avoids_invisible_statistics_and_preserves_both_layouts() {
+fn acquires_requested_statistics_at_every_terminal_width() {
     for layout in [Layout::Columns, Layout::Inline] {
         for width in [None, Some(1), Some(1000)] {
             let git = populated_workflow_git("2");
@@ -645,15 +645,11 @@ fn preflight_avoids_invisible_statistics_and_preserves_both_layouts() {
                 .calls()
                 .iter()
                 .any(|call| call.first().is_some_and(|arg| arg == "diff-tree"));
-            assert_eq!(computed, width != Some(1));
+            assert!(computed);
             assert_eq!(
                 plan.lines.iter().any(|line| line.contains("+2 -1")),
                 computed
             );
-            if !computed {
-                args.diff_stat = false;
-                assert_eq!(plan, build_render_plan(&args, &git, environment).unwrap());
-            }
         }
     }
     let mut args = runtime_options("draft()", Verbosity::High);

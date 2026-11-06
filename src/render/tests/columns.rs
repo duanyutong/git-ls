@@ -7,12 +7,11 @@
 use crate::cli::{Layout, Verbosity};
 use crate::model::{CommitMeta, Lane, LaneGroup, RewrittenCommit};
 use crate::render::RenderContext;
-use crate::render::branch::display_names;
+use crate::render::branch::BranchLabel;
 use crate::render::layout::render_lane_groups;
 use crate::render::metadata::{
     MetadataWidths, age_gutter, calculate_metadata_widths, columns_count,
 };
-use crate::render::orphan::display_orphaned_names;
 use crate::render::rewrite::display_rewritten_commit;
 use crate::render::trunk::{TrunkLabel, trunk_age, trunk_label};
 use crate::test_support::{TEST_COMMIT_TIME, TEST_NOW};
@@ -81,32 +80,23 @@ fn display_names_promotes_count_and_trails_the_identifier() {
     let colours = test_colours(false);
     let point = point_with_count("branch-head", &["feature/topic"], 3, "finish topic");
 
-    assert_eq!(
-        display_names(
-            &point,
+    for (verbosity, expected) in [
+        (Verbosity::High, " 3 feature/topic finish topic branch-"),
+        (Verbosity::Medium, " 3 feature/topic"),
+    ] {
+        let ctx = RenderContext::new(
+            "main",
+            None,
             Some("other"),
-            0,
+            None,
             TEST_NOW,
-            Verbosity::High,
+            verbosity,
             MetadataWidths { age: 2, count: 2 },
-            Layout::Columns,
             &colours,
-        ),
-        " 3 feature/topic finish topic branch-"
-    );
-    assert_eq!(
-        display_names(
-            &point,
-            Some("other"),
-            0,
-            TEST_NOW,
-            Verbosity::Medium,
-            MetadataWidths { age: 2, count: 2 },
-            Layout::Columns,
-            &colours,
-        ),
-        " 3 feature/topic"
-    );
+        )
+        .with_layout(Layout::Columns);
+        assert_eq!(BranchLabel::new(&point, 0, false, &ctx).full(), expected);
+    }
 }
 
 #[test]
@@ -208,28 +198,16 @@ fn orphaned_names_promote_count_and_trail_the_identifier() {
     let point = point_with_count("backup-oid", &["backup"], 2, "backup tip");
     let widths = MetadataWidths { age: 2, count: 2 };
 
-    assert_eq!(
-        display_orphaned_names(
-            &point,
-            TEST_NOW,
-            Verbosity::High,
-            widths,
-            Layout::Columns,
-            &colours,
-        ),
-        " 2 backup (orphaned) backup tip backup-"
-    );
-    assert_eq!(
-        display_orphaned_names(
-            &point,
-            TEST_NOW,
-            Verbosity::Medium,
-            widths,
-            Layout::Columns,
-            &colours,
-        ),
-        " 2 backup (orphaned)"
-    );
+    for (verbosity, expected) in [
+        (Verbosity::High, " 2 backup (orphaned) backup tip backup-"),
+        (Verbosity::Medium, " 2 backup (orphaned)"),
+    ] {
+        let ctx = RenderContext::new(
+            "main", None, None, None, TEST_NOW, verbosity, widths, &colours,
+        )
+        .with_layout(Layout::Columns);
+        assert_eq!(BranchLabel::new(&point, 0, true, &ctx).full(), expected);
+    }
 }
 
 #[test]

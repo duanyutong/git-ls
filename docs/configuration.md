@@ -51,13 +51,22 @@ Intermediate edits within a layer are not accumulated separately.
 Counts include changed text files, recognise renames, and exclude binary line counts.
 External diff commands and text-conversion drivers are disabled.
 Both repository backends delegate the diff calculation to Git, preserving its attribute-based text and binary classification.
-Diffs are calculated only when requested and are recalculated for each invocation, including when topology is obtained from the cache.
+Diffs are acquired only when requested, independently of terminal width; validated cached statistics may satisfy that request.
 
 Additions use the terminal's standard ANSI green and deletions use standard ANSI red, independently of the graph palette.
 The signs and alignment are retained when colour is disabled.
 The columns layout places counts immediately before the abbreviated object identifier; the inline layout appends counts while retaining its existing metadata prefix.
 Main-history and rewritten-commit rows carry no layer statistics.
-Where the terminal cannot accommodate the complete branch labels and statistic columns, statistics are omitted consistently from every row before branch labels are truncated.
+Terminal space is allocated to branch identity and requested statistics before commit subjects.
+Subjects are truncated or omitted before any branch label is shortened.
+Where complete branch labels and the protected statistics and identifier fields cannot share one row, that layer uses two logical lines.
+The first retains the graph and metadata gutters followed by branch names; the second right-justifies statistics and the identifier against the terminal edge, with continuing graph lanes where space permits.
+The subject is omitted in this representation.
+Names remain comma-separated on one line, with at most three names in the compact representation and an ellipsis when names are omitted or truncated.
+The checked-out branch is retained preferentially if compact selection would otherwise omit it.
+Each layer chooses its representation independently; a long label cannot suppress statistics on other layers.
+At widths smaller than the exact statistics and identifier fields alone, optional count padding is removed and complete values may soft-wrap rather than being truncated.
+Unknown-width output retains complete single-line content.
 
 ## Persistent analysis reuse
 

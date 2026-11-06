@@ -512,7 +512,7 @@ fn display_settings_and_checkout_state_preserve_colours_and_plain_graph_shape() 
 }
 
 #[test]
-fn prepared_clipped_graphs_preserve_visible_cells_and_avoid_hidden_colour_sequences() {
+fn prepared_narrow_graphs_match_unprepared_output_without_excessive_styles() {
     use crate::render::PreparedTopology;
     use crate::terminal::{RenderEnvironment, write_rendered_line};
     let lanes: Vec<_> = (0..128)
@@ -524,7 +524,7 @@ fn prepared_clipped_graphs_preserve_visible_cells_and_avoid_hidden_colour_sequen
         .push(RewrittenCommit::new(meta("old", "old"), meta("new", "new")));
     let prepared = PreparedTopology::new(&groups);
     let colours = test_colours(true).prepare(&groups, &prepared);
-    let full = RenderContext::new(
+    let mut full = RenderContext::new(
         "main",
         None,
         None,
@@ -535,6 +535,7 @@ fn prepared_clipped_graphs_preserve_visible_cells_and_avoid_hidden_colour_sequen
         &colours,
     )
     .with_layout(Layout::Columns);
+    full.terminal_width = Some(40);
     let clipped = RenderContext::new(
         "main",
         None,

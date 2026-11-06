@@ -1,9 +1,8 @@
 use crate::model::{BranchPoint, Lane, LaneGroup, RewrittenCommit};
 
 use super::ancestry::{Content, shared_ancestry};
-use super::branch::display_names;
+use super::branch::BranchLabel;
 use super::context::RenderContext;
-use super::diff::with_diff_stat;
 use super::graph::{
     BRANCH_LABEL_GAP, LaneRenderLayout, MainSpine, REWRITTEN_COMMIT_GLYPH, current_row_indicator,
     is_current_branch_point, junction_prefix, marker_for, render_row, row_prefix_with_marker,
@@ -85,10 +84,29 @@ pub(super) fn render_group(
             ctx.colours,
         );
         let colour_index = lane_colours[row.lane];
-        output.push(match row.content {
-            Content::Branch(point) => render_branch_point_row(point, colour_index, &prefix, ctx),
-            Content::Rewritten(commit) => render_rewritten_row(commit, colour_index, &prefix, ctx),
-        });
+        match row.content {
+            Content::Branch(point) => output.extend(render_branch_point_row(
+                point,
+                colour_index,
+                &prefix,
+                &|| {
+                    let graph = row_prefix_with_marker(
+                        row.lane,
+                        layout,
+                        "│",
+                        spine,
+                        &active,
+                        &lane_colours,
+                        ctx.colours,
+                    );
+                    render_row(&age_gutter(ctx, None), " ", &graph)
+                },
+                ctx,
+            )),
+            Content::Rewritten(commit) => {
+                output.push(render_rewritten_row(commit, colour_index, &prefix, ctx));
+            }
+        }
     }
 
     output.push(render_trunk_row(
@@ -122,37 +140,21 @@ fn render_branch_point_row(
     point: &BranchPoint,
     colour_index: usize,
     prefix: &str,
+    continuation: &dyn Fn() -> String,
     ctx: &RenderContext<'_>,
-) -> RenderLine {
+) -> Vec<RenderLine> {
     let reference = reference_label(
         &point.oid,
         point.annotation.as_ref().map(|annotation| &annotation.meta),
         ctx,
     );
     let is_main_reference = reference.is_some() || point.main_history;
-    let label = reference.unwrap_or_else(|| {
-        if point.main_history
-            && let Some(annotation) = &point.annotation
-        {
-            return trunk_label(TrunkLabel::Commit(&annotation.meta), ctx);
-        }
-        display_names(
-            point,
-            ctx.current_branch,
-            colour_index,
-            ctx.now_timestamp,
-            ctx.verbosity,
-            ctx.metadata_widths,
-            ctx.layout,
-            ctx.colours,
-        )
-    });
+    let branch = BranchLabel::new(point, colour_index, false, ctx);
     let gutter = age_gutter(
         ctx,
         branch_age(point.annotation.as_ref().map(|a| a.meta.timestamp), ctx),
     );
-    let line = format!("{prefix}{BRANCH_LABEL_GAP}{label}");
-    let rendered = render_row(
+    let leading = render_row(
         &gutter,
         &current_row_indicator(
             if is_main_reference {
@@ -163,8 +165,21 @@ fn render_branch_point_row(
             colour_index,
             ctx.colours,
         ),
-        &line,
+        &format!("{prefix}{BRANCH_LABEL_GAP}"),
     );
+    if !is_main_reference {
+        return branch.render(&leading, continuation, ctx.terminal_width);
+    }
+    let label = reference.unwrap_or_else(|| {
+        if point.main_history
+            && let Some(annotation) = &point.annotation
+        {
+            trunk_label(TrunkLabel::Commit(&annotation.meta), ctx)
+        } else {
+            branch.full()
+        }
+    });
+    let rendered = format!("{leading}{label}");
     let oid = point
         .annotation
         .as_ref()
@@ -174,11 +189,7 @@ fn render_branch_point_row(
         Some(oid) => RenderLine::with_trailing_fixed_suffix(rendered, oid),
         None => RenderLine::plain(rendered),
     };
-    if is_main_reference {
-        line
-    } else {
-        with_diff_stat(line, point, ctx)
-    }
+    vec![line]
 }
 
 fn render_rewritten_row(

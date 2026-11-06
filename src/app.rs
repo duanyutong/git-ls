@@ -237,9 +237,7 @@ fn render_analysis(
     environment: RenderEnvironment,
     prepared: &RenderPreparation,
 ) -> RenderPlan {
-    let mut plan = render_unfitted_analysis(args, analysis, environment, prepared);
-    crate::render::fit_diff_stats(&mut plan.lines, environment.terminal_width());
-    plan
+    render_unfitted_analysis(args, analysis, environment, prepared)
 }
 
 fn hydrate_diff_stats(
@@ -252,35 +250,8 @@ fn hydrate_diff_stats(
     if !args.diff_stat {
         return Ok(prepared);
     }
-    if let Some(width) = environment.terminal_width() {
-        set_placeholder_stats(
-            &mut analysis.groups,
-            Some(crate::model::DiffStat::default()),
-        );
-        let candidate = render_unfitted_analysis(args, analysis, environment, &prepared);
-        let fits = candidate
-            .lines
-            .iter()
-            .filter_map(RenderLine::diff_stat_minimum_width)
-            .all(|minimum| minimum <= width);
-        set_placeholder_stats(&mut analysis.groups, None);
-        if !fits {
-            crate::diagnostics::event(format_args!("diff_stats=skipped reason=terminal_width"));
-            return Ok(prepared);
-        }
-    }
     populate_diff_stats(&mut analysis.groups, git, true)?;
     Ok(prepared)
-}
-
-fn set_placeholder_stats(groups: &mut [LaneGroup], value: Option<crate::model::DiffStat>) {
-    for point in groups
-        .iter_mut()
-        .flat_map(|group| &mut group.lanes)
-        .flat_map(|lane| &mut lane.branch_points)
-    {
-        point.diff_stat = value;
-    }
 }
 
 fn build_render_plan(
