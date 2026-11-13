@@ -62,13 +62,15 @@ Git is required for both the native `gix` backend and the Git subprocess backend
 
 ## Installation
 
-Source installation requires Rust.
+Source installation requires Rust; displaying the manual requires `man`.
 
 ```sh
-cargo install --path . --locked
+./install.sh
+git ls --help
 ```
 
-Installation details and display examples are documented in [common commands](docs/commands.md).
+The default destination is `~/.cargo`; ensure `~/.cargo/bin` is on `PATH`.
+See [installation details](docs/commands.md#installation) for custom prefixes, Cargo configuration, updates and removal.
 
 ## Configuration
 

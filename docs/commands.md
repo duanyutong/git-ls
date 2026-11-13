@@ -3,16 +3,27 @@
 ## Installation
 
 Source installation requires the compiler specified in `rust-toolchain.toml`.
-The standard installation uses the optimised release profile:
+Displaying the manual requires `man`.
+The standard installation uses the optimised release profile and installs the executable and its manual under `~/.cargo`:
 
 ```sh
-cargo install --path . --locked
+./install.sh
 ```
 
-Cargo installs the executable in its configured binary directory, commonly `~/.cargo/bin`.
-When that directory is on `PATH`, Git exposes the executable as `git ls`.
-The `--debug` option selects a development build.
-The `--frozen` option additionally disables network access and therefore requires all dependencies to be cached.
+An optional prefix may be supplied as `./install.sh /absolute/prefix`.
+The installer always passes the default or supplied prefix to Cargo as `--root`.
+This deliberate installer policy overrides `CARGO_INSTALL_ROOT`, Cargo's `install.root` configuration and `CARGO_HOME` for the installation destination, in accordance with [Cargo's installation-root precedence](https://doc.rust-lang.org/cargo/commands/cargo-install.html#description).
+To retain a configured installation destination, supply that directory explicitly.
+The helper does not infer Cargo's configured destination.
+
+The prefix's `bin` directory must be on `PATH` so that Git can locate the executable and the manual viewer can discover the adjacent `share/man` directory.
+If `MANPATH` is explicitly set, include the prefix's `share/man` directory whilst retaining the existing manual search paths.
+Direct installation with `cargo install --path . --locked` installs only the executable.
+For direct Cargo installation, `--debug` selects a development build and `--frozen` additionally disables network access, requiring all dependencies to be cached.
+
+Use the helper for subsequent source updates to keep the executable and manual aligned.
+Cargo does not update or remove the separately installed manual; after `cargo uninstall git-ls`, remove `<prefix>/share/man/man1/git-ls.1` separately.
+Package maintainers may generate the same manual from a compiled executable with `./scripts/man.sh ./target/release/git-ls > git-ls.1`.
 
 ## Display
 
@@ -27,6 +38,9 @@ git ls -vv --no-diff-stat           # Detailed display with line counts suppress
 git ls -v --diff-stat               # Normal display with line counts requested.
 git ls --help                      # Complete command reference.
 ```
+
+Git resolves `git ls --help` and `git help ls` through its manual viewer.
+The commands `git ls -h` and `git-ls --help` display the built-in help without requiring an installed manual or a manual viewer.
 
 ## Configuration
 

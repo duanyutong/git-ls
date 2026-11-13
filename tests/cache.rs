@@ -702,13 +702,20 @@ fn oversized_metadata_reuses_topology_without_forcing_high_verbosity() {
 #[test]
 fn unchanged_large_metadata_working_sets_do_not_republish_or_revalidate() {
     use std::fmt::Write as _;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     let repo = TestRepo::new();
     let root = repo.commit("root");
+    // Keep every fixture age well inside a year to avoid display-boundary changes.
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - (3 * 365 + 180) * 24 * 60 * 60;
     let mut records = String::new();
     for index in 0..600 {
         let subject = format!("topic {index}");
-        writeln!(records, "commit refs/heads/topic-{index:03}\ncommitter Example <example@example.invalid> {} +0000\ndata {}\n{subject}\nfrom {root}\n", 1_700_000_000 + index, subject.len()).unwrap();
+        writeln!(records, "commit refs/heads/topic-{index:03}\ncommitter Example <example@example.invalid> {} +0000\ndata {}\n{subject}\nfrom {root}\n", timestamp + index, subject.len()).unwrap();
     }
     repo.command("git")
         .args(["fast-import", "--quiet"])

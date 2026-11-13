@@ -3,6 +3,8 @@
 Tests exercise graph, configuration, cache and rendering policy through unit tests and disposable Git repositories.
 Both native and subprocess backends are covered.
 Application configuration, commit identities and credentials are isolated from the developer's repositories.
+Installation tests use isolated homes and a substitute Cargo boundary to verify default and explicit prefixes, rejected arguments, binary and manual failures, and discovery through both Git help invocations.
+The manual is generated from the compiled executable's built-in help; native rendering is checked at widths of 80 and 120 columns.
 
 `just check` runs repository hygiene, Clippy, dependency policy, unused-dependency detection, Python checks, every test target, separate doctests and the production release build.
 Run `just check` and `just coverage` explicitly before committing changes for acceptance.
