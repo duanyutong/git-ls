@@ -3,7 +3,7 @@
 //! Each uninterrupted ancestry segment retains one colour; forks and joins delimit segments.
 //! Segment weight is its ancestry-row count plus the display width of its branch names, with shared rows counted once.
 //! LOC, commit counts, metadata, terminal width, checkout state and timestamps are excluded.
-//! Main history retains palette entry zero; orphaned histories do not enter this assignment.
+//! Main history is styled separately; orphaned histories do not enter this assignment.
 //!
 //! Visual neighbours comprise consecutive segment blocks, neighbouring active lanes and segments meeting at a junction.
 //! Sky and blue form one hue family; gold and orange form another.
@@ -47,7 +47,7 @@ struct PaletteEntry {
 
 const PALETTE: [PaletteEntry; 7] = [
     PaletteEntry {
-        ansi: 47,
+        ansi: 113,
         family: Family::Green,
         preference: 6,
     },
@@ -104,7 +104,7 @@ pub(super) const fn ansi_colour(index: usize) -> u8 {
     PALETTE[index % PALETTE.len()].ansi
 }
 
-/// Return main's fixed entry followed by one palette index per segment in render order.
+/// Return the reserved main slot followed by one palette index per segment in render order.
 pub(super) fn assign(groups: &[LaneGroup]) -> Vec<usize> {
     assign_prepared(groups, None)
 }

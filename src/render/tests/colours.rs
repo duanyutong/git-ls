@@ -14,6 +14,7 @@ fn colours_text_when_enabled() {
     let colours = test_colours(true);
 
     assert_eq!(colours.stack(0, "x"), "\x1b[38;5;47mx\x1b[0m");
+    assert_eq!(colours.stack(7, "x"), "\x1b[38;5;113mx\x1b[0m");
     assert_eq!(
         colours.current_stack(0, "x"),
         "\x1b[1m\x1b[4m\x1b[38;5;47mx\x1b[0m"
@@ -73,7 +74,7 @@ fn colours_text_when_enabled() {
 }
 
 #[test]
-fn main_reserves_first_palette_colour() {
+fn main_uses_reserved_bright_green() {
     let colours = test_colours(true);
     let groups = vec![LaneGroup {
         base_oid: Some("main".to_string()),

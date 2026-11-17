@@ -419,10 +419,13 @@ fn reuses_the_built_in_palette_for_large_forks_without_losing_shared_continuity(
     let mut previous = None;
     for name in &names {
         let colour = branch_colour(&output, name);
-        assert!([47, 203, 39, 220, 177, 33, 208].contains(&colour));
+        assert!([113, 203, 39, 220, 177, 33, 208].contains(&colour));
         assert_ne!(previous, Some(colour));
         previous = Some(colour);
     }
+    assert!(names.iter().any(|name| branch_colour(&output, name) == 113));
+    let main = output.iter().find(|row| row.contains('◇')).unwrap();
+    assert_eq!(marker_colour(main, '◇'), 47);
     assert_eq!(
         branch_colour(&output, "shared"),
         branch_colour(&output, "base")

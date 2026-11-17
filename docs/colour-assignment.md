@@ -11,7 +11,7 @@ The following entries specify nominal colour-cube values; terminal rendering, fo
 
 | Colour | ANSI index | Nominal RGB | Family |
 | --- | ---: | --- | --- |
-| Green | 47 | `#00FF5F` | Green |
+| Leaf | 113 | `#87D75F` | Green |
 | Coral | 203 | `#FF5F5F` | Coral |
 | Sky | 39 | `#00AFFF` | Blue |
 | Gold | 220 | `#FFD700` | Warm |
@@ -19,7 +19,8 @@ The following entries specify nominal colour-cube values; terminal rendering, fo
 | Blue | 33 | `#0087FF` | Blue |
 | Orange | 208 | `#FF8700` | Warm |
 
-Main-history labels and their spine retain green independently of stack assignment.
+Main-history labels, markers and their spine retain bright green (ANSI 47, `#00FF5F`), which is excluded from the stack palette.
+Stack segments use their assigned colour through their connection to main history, including where a leaf segment adjoins the bright green base marker.
 Orphaned histories retain their separate grey styling and do not consume assignment entries or exposure budgets.
 Added and deleted line counts retain the terminal's standard ANSI green and red.
 

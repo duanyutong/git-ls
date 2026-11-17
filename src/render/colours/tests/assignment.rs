@@ -39,9 +39,9 @@ fn assert_neighbours_differ(segments: &[Segment], colours: &[usize]) {
 fn built_in_palette_contains_the_seven_selected_colours() {
     assert_eq!(
         (0..7).map(ansi_colour).collect::<Vec<_>>(),
-        [47, 203, 39, 220, 177, 33, 208]
+        [113, 203, 39, 220, 177, 33, 208]
     );
-    assert_eq!(ansi_colour(7), 47);
+    assert_eq!(ansi_colour(7), 113);
 }
 
 #[test]
@@ -74,8 +74,12 @@ fn lone_segments_use_sky_independently_of_names_size_and_orphaned_histories() {
             ] {
                 let colours = assign(&groups);
                 assert_eq!(
-                    colours.iter().copied().map(ansi_colour).collect::<Vec<_>>(),
-                    [47, 39]
+                    colours[1..]
+                        .iter()
+                        .copied()
+                        .map(ansi_colour)
+                        .collect::<Vec<_>>(),
+                    [39]
                 );
                 let prepared = crate::render::PreparedTopology::new(&groups);
                 assert_eq!(assign_prepared(&groups, Some(&prepared)), colours);

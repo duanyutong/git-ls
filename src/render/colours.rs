@@ -4,6 +4,7 @@ use crate::model::LaneGroup;
 
 mod assignment;
 
+const ANSI_MAIN: u8 = 47;
 const ANSI_METADATA_COUNT: u8 = 255;
 const ANSI_ORPHANED_LABEL: u8 = 255;
 
@@ -45,6 +46,9 @@ impl Colours {
     }
 
     fn ansi_colour(&self, index: usize) -> Ansi256Color {
+        if index == 0 {
+            return Ansi256Color(ANSI_MAIN);
+        }
         Ansi256Color(assignment::ansi_colour(
             self.assignment.get(index).copied().unwrap_or(index),
         ))
