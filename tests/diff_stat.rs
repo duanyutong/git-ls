@@ -439,3 +439,33 @@ fn diagnostics_explain_statistics_misses_and_publication_without_values() {
         }
     }
 }
+
+#[test]
+fn unrelated_branch_and_fetch_configuration_preserves_warm_statistics() {
+    for backend in ["gix", "shell"] {
+        let repo = TestRepo::new();
+        repo.commit("root");
+        repo.git(&["checkout", "-b", "feature/topic"]);
+        write(&repo, "data", "line\n");
+        repo.commit("topic");
+        run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        for (key, value) in [
+            ("branch.feature/topic.description", "Annotation"),
+            ("fetch.prune", "true"),
+            ("push.default", "current"),
+            ("user.name", "Other identity"),
+        ] {
+            repo.git(&["config", key, value]);
+            let (output, debug) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+            assert!(debug.contains("diff_cache_hits=1"), "{debug}");
+            assert!(!debug.contains("operation=subprocess_diff"), "{debug}");
+            assert_eq!(output, run(&repo, backend, &["-vv", "--no-cache"]).0);
+        }
+        repo.git(&["config", "diff.algorithm", "minimal"]);
+        let (_, debug) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(debug.contains("reason=configuration_changed"), "{debug}");
+        repo.git(&["config", "unclassified.setting", "value"]);
+        let (_, debug) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(debug.contains("reason=configuration_changed"), "{debug}");
+    }
+}

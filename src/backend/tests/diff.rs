@@ -305,3 +305,36 @@ fn resolves_cached_tree_pairs_and_discovers_framed_raw_paths() {
     }
     assert!(parse_paths(&[], "trailing").is_err());
 }
+
+#[test]
+fn transport_and_branch_metadata_do_not_invalidate_numeric_comparisons() {
+    use super::super::diff::configuration_fingerprint;
+    let relevant = "diff.algorithm\nhistogram\0diff.renamelimit\n1000\0";
+    for setting in [
+        "branch.topic.description\nannotation",
+        "branch.topic.remote\norigin",
+        "branch.topic.merge\nrefs/heads/main",
+        "fetch.prune\ntrue",
+        "push.default\ncurrent",
+        "pull.rebase\ntrue",
+        "remote.origin.url\nhttps://example.invalid/repository",
+        "credential.helper\nfixture",
+        "user.name\nFixture",
+    ] {
+        assert_eq!(
+            configuration_fingerprint(relevant),
+            configuration_fingerprint(&format!("{relevant}{setting}\0"))
+        );
+    }
+    for setting in [
+        "unknown.setting\nvalue",
+        "core.autocrlf\ntrue",
+        "core.attributesfile\nattributes",
+        "diff.external\nfixture",
+    ] {
+        assert_ne!(
+            configuration_fingerprint(relevant),
+            configuration_fingerprint(&format!("{relevant}{setting}\0"))
+        );
+    }
+}

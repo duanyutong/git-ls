@@ -49,3 +49,21 @@ Byte admission selects a deterministic retained prefix with logarithmically many
 Historical growth therefore does not discard the current set when that set fits alongside higher-priority graph and metadata facts.
 An oversized current set retains a bounded useful subset; commit-to-tree mappings are trimmed separately when necessary.
 Invocation-local protection is neither serialised nor treated as a change in cached answers.
+
+## Configuration validity
+
+Numeric statistics ignore audited configuration namespaces governing branch metadata, transport, identity and credential selection, together with the existing application and editor or pager exclusions.
+Git continues to resolve includes, scope precedence and effective values before classification.
+Unknown configuration remains part of the fingerprint, and meaningful ordering of retained values is preserved.
+Topology continues to use its independent captured branch and upstream inputs.
+
+| Input class | Statistics validity | Basis |
+| --- | --- | --- |
+| git-ls.*, core.editor, core.pager | Retained. | Application presentation and interactive editor or pager selection do not determine numeric counts. |
+| branch.*, fetch.*, push.*, pull.*, remote.* | Retained. | Branch metadata and transport policy do not change the immutable directional tree comparison. |
+| user.*, credential.* | Retained. | Identity and credential selection do not determine local numeric diff results. |
+| diff.*, core.attributesFile, other core settings | Revalidated. | These can determine comparison policy, binary classification or object and attribute interpretation. |
+| Unclassified settings | Revalidated. | Unknown dependencies remain conservative. |
+
+Changes in effective attributes retain their independent path-specific invalidation.
+The comparison continues to pass --no-ext-diff, --no-textconv, --find-renames, --no-relative and --no-color explicitly.

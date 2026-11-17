@@ -58,7 +58,21 @@ pub(super) fn configuration_fingerprint(config: &str) -> u64 {
                 .split_once('\n')
                 .map_or(*record, |(key, _)| key)
                 .to_ascii_lowercase();
-            !key.starts_with("git-ls.") && !matches!(key.as_str(), "core.editor" | "core.pager")
+            // These namespaces govern presentation, branch metadata, or transport,
+            // rather than the endpoint-tree comparison performed by DIFF_ARGS.
+            ![
+                "git-ls.",
+                "branch.",
+                "fetch.",
+                "push.",
+                "pull.",
+                "remote.",
+                "credential.",
+                "user.",
+            ]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+                && !matches!(key.as_str(), "core.editor" | "core.pager")
         })
         .collect();
     crate::cache::hash(&records)
