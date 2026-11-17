@@ -1,0 +1,35 @@
+# Statistics performance programme
+
+The statistics performance programme preserves directional endpoint-tree counts, effective Git configuration and attributes, rename semantics, and the existing cache storage limits.
+Its implementation is divided into measurement, diagnostics, admission, configuration validity, dependency storage, bounded fallback, reference lifecycles, selective recomputation, cold acquisition, warm validation, and integrated regression evidence.
+
+## Measurement contract
+
+The maintained `scripts/benchmark-diff-stat.py` harness records whole-process elapsed time, child CPU consumption and peak resident memory where available.
+Every sample includes host conditions before and after execution, including available processor count and load averages where the operating system exposes them.
+Unavailable load telemetry is represented explicitly.
+The ratio of load average to available processors provides context; it does not establish the cause of waiting or prove that a host was uncontended.
+Elapsed time minus child CPU consumption shall not be interpreted as a measured breakdown of scheduling and I/O delays.
+
+Results retain each raw sample, the reproducibly shuffled measurement order, executable identities, output digests, Git traces and diagnostic counters.
+Summaries include the median, range, nearest-rank 95th percentile, and median CPU consumption across samples for which CPU data are available.
+Percentiles based on fewer than thirty samples are exploratory.
+Use separate baseline and candidate cache namespaces, equivalent fixtures and serial execution without competing builds or benchmarks.
+Compare deterministic operation counts before attributing an elapsed-time difference to an implementation improvement.
+An uncontended comparison is required for a precise latency claim.
+
+The `--cases` and `--modes` options permit focused comparisons without changing the default fixture set.
+For example:
+
+```sh
+uv run scripts/benchmark-diff-stat.py \
+  --candidate /path/to/candidate/git-ls \
+  --baseline /path/to/baseline/git-ls \
+  --directory /tmp/git-ls-statistics \
+  --cases independent-1 stack-32 \
+  --modes warm_on cold_on \
+  --repeats 9
+```
+
+Functional acceptance shall continue to use disposable repositories, isolated Git configuration and output equivalence checks.
+Machine-dependent latency thresholds do not form part of correctness CI.

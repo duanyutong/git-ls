@@ -15,12 +15,12 @@ import platform
 import random
 import re
 import shutil
-import statistics
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import TypedDict
+
+import benchmark_metrics
 
 ENV = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 ENV.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_ATTR_NOSYSTEM="1", LC_ALL="C")
@@ -88,12 +88,6 @@ MODES = {
     "refresh_on": ["--refresh-cache", "--diff-stat"],
     "low_on": ["--verbosity", "0", "--diff-stat"],
 }
-
-
-class Sample(TypedDict):
-    elapsed_ms: float
-    peak_rss_bytes: int | None
-    cpu_ms: float | None
 
 
 def git(repo: pathlib.Path, *args: str, data: bytes | None = None) -> bytes:
@@ -264,7 +258,7 @@ def measure(
     trace: pathlib.Path | None = None,
     width: int | None = None,
     colour: str = "never",
-) -> tuple[Sample, bytes, str]:
+) -> tuple[benchmark_metrics.Sample, bytes, str]:
     command = [
         str(binary),
         "--backend",
@@ -291,6 +285,7 @@ def measure(
         termios.tcsetattr(slave, termios.TCSANOW, attributes)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, width, 0, 0))
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
+        host_before = benchmark_metrics.host_state()
         started = time.perf_counter()
         child = subprocess.Popen(
             command,
@@ -320,13 +315,24 @@ def measure(
             child.wait()
             rss, cpu = None, None
         elapsed = (time.perf_counter() - started) * 1000
+        host_after = benchmark_metrics.host_state()
         output.seek(0)
         diagnostics.seek(0)
         stdout = output.read()
         debug = diagnostics.read().decode(errors="replace")
         if child.returncode:
             raise RuntimeError(f"{command}: {debug}")
-    return {"elapsed_ms": elapsed, "peak_rss_bytes": rss, "cpu_ms": cpu}, stdout, debug
+    return (
+        {
+            "elapsed_ms": elapsed,
+            "peak_rss_bytes": rss,
+            "cpu_ms": cpu,
+            "host_before": host_before,
+            "host_after": host_after,
+        },
+        stdout,
+        debug,
+    )
 
 
 def visible_style_digest(output: bytes) -> str:
@@ -361,6 +367,7 @@ def main() -> None:
     parser.add_argument("--backend", choices=["gix", "shell"], default="gix")
     parser.add_argument("--repeats", type=int, default=9)
     parser.add_argument("--cases", nargs="+", choices=[case.name for case in CASES])
+    parser.add_argument("--modes", nargs="+", choices=list(MODES))
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be positive")
@@ -373,6 +380,9 @@ def main() -> None:
         "backend": args.backend,
         "repeats": args.repeats,
         "git_version": subprocess.check_output(["git", "--version"], text=True).strip(),
+        "measurement_interval": "whole_child_process",
+        "percentile_method": "nearest_rank; fewer than 30 samples are exploratory",
+        "host": benchmark_metrics.host_state(),
         "binaries": {
             name: {
                 "version": subprocess.check_output([str(binary), "--version"], text=True).strip(),
@@ -390,10 +400,13 @@ def main() -> None:
             modes = {
                 name: [*flags, *(["all()"] if case.shape == "branchless" else [])]
                 for name, flags in MODES.items()
-                if case.shape != "metadata" or name.endswith("off")
+                if (case.shape != "metadata" or name.endswith("off"))
+                and (not args.modes or name in args.modes)
             }
+            if not modes:
+                continue
             outputs: dict[str, bytes] = {}
-            samples: dict[str, list[Sample]] = {}
+            samples: dict[str, list[benchmark_metrics.Sample]] = {}
             for name, binary in binaries.items():
                 for mode, flags in modes.items():
                     _, output, _ = measure(binary, repos[name], args.backend, flags)
@@ -403,9 +416,13 @@ def main() -> None:
                     samples[f"{name}.{mode}"] = []
             order = [(name, mode) for name in binaries for mode in modes]
             changing_outputs: dict[str, bytes] = {}
+            measurement_order = []
             for repetition in range(args.repeats):
                 random.Random(repetition).shuffle(order)
                 for name, mode in order:
+                    measurement_order.append(
+                        {"repetition": repetition, "binary": name, "mode": mode}
+                    )
                     if mode == "cold_on":
                         shutil.rmtree(repos[name] / ".git/git-ls/cache", ignore_errors=True)
                     token = repetition * len(modes) + list(modes).index(mode)
@@ -510,12 +527,13 @@ def main() -> None:
                 ).decode(),
                 "modes": {
                     name: {
-                        "median_ms": statistics.median(sample["elapsed_ms"] for sample in values),
+                        **benchmark_metrics.summarise(values),
                         "samples": values,
                     }
                     for name, values in samples.items()
                 },
                 "probes": probes,
+                "measurement_order": measurement_order,
             }
             report["cases"].append(result)
             (args.directory / "results.json").write_text(json.dumps(report, indent=2) + "\n")
