@@ -1,6 +1,9 @@
 //! Successful object-ID-keyed facts and pure retention policy.
 use crate::model::{CommitMeta, DiffStat};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
+
+mod encoding;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Facts {
@@ -15,25 +18,24 @@ pub(crate) struct Facts {
     clock: u64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DiffFacts {
     pub(crate) trees: HashMap<String, String>,
     pub(crate) scopes: BTreeMap<u64, DiffScope>,
     pub(crate) clock: u64,
-    #[serde(skip)]
     pub(crate) active: HashSet<(u64, String)>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DiffScope {
     pub(crate) values: HashMap<String, DiffValue>,
     pub(crate) used: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiffValue {
     pub(crate) stat: DiffStat,
-    pub(crate) paths: Vec<String>,
+    pub(crate) paths: Rc<Vec<String>>,
     pub(crate) fingerprint: u64,
     pub(crate) configuration: u64,
     pub(crate) used: u64,

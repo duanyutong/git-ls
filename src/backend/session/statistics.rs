@@ -1,12 +1,15 @@
 //! Tree-keyed statistics and path-specific validity, independent of command execution.
 
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 use super::Session;
 use crate::backend::{DiffBatch, DiffContext, DiffPair, DiffStatBackend};
 use crate::cache::facts::DiffValue;
 use crate::error::{GitLsError, Result};
 use crate::model::DiffStat;
+
+type Dependencies = HashMap<String, Rc<Vec<String>>>;
 
 fn invalid() -> GitLsError {
     GitLsError::git_command(
@@ -54,7 +57,7 @@ impl Session<'_> {
         assembled(pairs, &values, batch.paths)
     }
 
-    fn statistics_paths(&self, pairs: &[DiffPair]) -> Result<HashMap<String, Vec<String>>> {
+    fn statistics_paths(&self, pairs: &[DiffPair]) -> Result<Dependencies> {
         let mut paths = HashMap::new();
         let mut unknown = Vec::new();
         {
@@ -81,7 +84,7 @@ impl Session<'_> {
             paths.extend(unknown.iter().zip(discovered).map(|(pair, mut paths)| {
                 paths.sort_unstable();
                 paths.dedup();
-                (pair.key(), paths)
+                (pair.key(), Rc::new(paths))
             }));
         }
         Ok(paths)
@@ -90,7 +93,7 @@ impl Session<'_> {
     fn cached_statistics(
         &self,
         pairs: &[DiffPair],
-        paths: &HashMap<String, Vec<String>>,
+        paths: &Dependencies,
         context: &DiffContext,
     ) -> HashMap<String, DiffStat> {
         let mut facts = self.facts.borrow_mut();
@@ -146,7 +149,7 @@ impl Session<'_> {
         &self,
         pairs: &[DiffPair],
         batch: &DiffBatch,
-        paths: &HashMap<String, Vec<String>>,
+        paths: &Dependencies,
         context: &DiffContext,
     ) {
         let mut facts = self.facts.borrow_mut();
@@ -206,7 +209,7 @@ impl Session<'_> {
         let dependencies = self.statistics_paths(&requested)?;
         let paths: Vec<_> = dependencies
             .values()
-            .flatten()
+            .flat_map(|paths| paths.iter())
             .cloned()
             .collect::<BTreeSet<_>>()
             .into_iter()

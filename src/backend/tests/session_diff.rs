@@ -206,7 +206,7 @@ fn stored() -> Facts {
                         added: 99,
                         deleted: 0,
                     },
-                    paths: vec!["one".into()],
+                    paths: std::rc::Rc::new(vec!["one".into()]),
                     fingerprint: context.fingerprint(&["one".into()]),
                     configuration: context.configuration,
                     used: 0,

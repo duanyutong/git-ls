@@ -17,6 +17,7 @@ unit = [
   "src/backend/traits.rs",
   "src/cache/compatibility.rs",
   "src/cache/facts.rs",
+  "src/cache/facts/encoding.rs",
   "src/cache/policy.rs",
   "src/cache/topology.rs",
   "src/cli/config.rs",

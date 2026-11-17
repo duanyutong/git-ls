@@ -67,3 +67,17 @@ Topology continues to use its independent captured branch and upstream inputs.
 
 Changes in effective attributes retain their independent path-specific invalidation.
 The comparison continues to pass --no-ext-diff, --no-textconv, --find-renames, --no-relative and --no-color explicitly.
+
+## Dependency storage
+
+Persistent statistics intern distinct path strings and identical ordered dependency sets across retained comparisons and contexts.
+Decoded comparisons referencing an identical dependency set share its immutable allocation, reducing the cost of copying retained facts and selecting dependencies.
+Publication constructs pools only from retained comparisons, so evicted entries leave no unreachable persistent paths or dependency sets.
+All pool identifiers are validated during decoding, and an incompatible representation invalidates prior optional cache entries.
+The existing 1 MiB encoded-envelope limit remains effective.
+Both encoding and decoding additionally bound unique expanded dependency storage to 16 MiB, including string-slot overhead, so repeated references cannot cause unbounded allocation.
+The existing four-context and 4,096-comparison bounds are also enforced at the representation boundary.
+
+Encoding recognises shared dependency allocations before enumerating paths or constructing path identifiers, avoiding repeated hashing of identical decoded sets across historical comparisons.
+Equal dependency contents still intern identically when their runtime allocations differ.
+Decoding reserves the known dependency and comparison collection sizes within the existing representation bounds.

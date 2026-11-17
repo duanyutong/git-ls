@@ -41,7 +41,7 @@ fn records_without_dependency_proofs_are_neither_reused_nor_admitted() {
             pair.key(),
             DiffValue {
                 stat: DiffStat::default(),
-                paths: vec!["missing".into()],
+                paths: std::rc::Rc::new(vec!["missing".into()]),
                 fingerprint: 1,
                 configuration: context.configuration,
                 used: 0,

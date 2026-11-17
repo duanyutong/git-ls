@@ -30,7 +30,7 @@ fn statistics_have_bounded_retention_and_are_discarded_before_graph_facts() {
             key.into(),
             DiffValue {
                 stat: DiffStat::default(),
-                paths: vec!["file".into()],
+                paths: std::rc::Rc::new(vec!["file".into()]),
                 fingerprint: 1,
                 configuration: 1,
                 used,
@@ -121,7 +121,7 @@ fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
                     format!("tree-{scope}"),
                     DiffValue {
                         stat: DiffStat::default(),
-                        paths: vec![format!("path-{scope}")],
+                        paths: std::rc::Rc::new(vec![format!("path-{scope}")]),
                         fingerprint: scope,
                         configuration: scope,
                         used,
@@ -200,7 +200,7 @@ fn statistics_fixture(count: usize) -> Facts {
                     added: index as u64,
                     deleted: 0,
                 },
-                paths: vec!["x".repeat(500)],
+                paths: std::rc::Rc::new(vec!["x".repeat(500)]),
                 fingerprint: 1,
                 configuration: 1,
                 used: index as u64,
