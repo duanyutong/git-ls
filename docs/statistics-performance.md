@@ -41,3 +41,11 @@ Admission records retained and rejected comparisons, encoded facts size and evic
 Encoded publication reports successful writes, unavailable locks or storage, and write failures; reference revalidation retains its explicit discarded-publication event.
 The records contain identifiers and reasons without configuration values or file contents.
 Aggregate durations remain inclusive; individual numeric comparisons require independent measurement when Git processes them in one batch.
+
+## Facts admission
+
+Statistics requested by the current invocation take precedence over historical comparisons when applying entry-count and byte limits.
+Byte admission selects a deterministic retained prefix with logarithmically many complete-envelope checks and moves discarded values without repeatedly cloning dependency paths.
+Historical growth therefore does not discard the current set when that set fits alongside higher-priority graph and metadata facts.
+An oversized current set retains a bounded useful subset; commit-to-tree mappings are trimmed separately when necessary.
+Invocation-local protection is neither serialised nor treated as a change in cached answers.

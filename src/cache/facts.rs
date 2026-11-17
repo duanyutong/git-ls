@@ -20,6 +20,8 @@ pub(crate) struct DiffFacts {
     pub(crate) trees: HashMap<String, String>,
     pub(crate) scopes: BTreeMap<u64, DiffScope>,
     pub(crate) clock: u64,
+    #[serde(skip)]
+    pub(crate) active: HashSet<(u64, String)>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -61,40 +63,81 @@ impl DiffFacts {
         self.clock
     }
 
+    fn ordered_pairs(&self) -> Vec<(u64, String)> {
+        let mut entries: Vec<_> = self
+            .scopes
+            .iter()
+            .flat_map(|(&scope, values)| {
+                values.values.iter().map(move |(key, value)| {
+                    let pair = (scope, key.clone());
+                    (self.active.contains(&pair), value.used, pair)
+                })
+            })
+            .collect();
+        entries.sort_unstable_by(|left, right| right.cmp(left));
+        entries.into_iter().map(|(_, _, pair)| pair).collect()
+    }
+
+    fn prune_active(&mut self) {
+        self.active.retain(|(context, key)| {
+            self.scopes
+                .get(context)
+                .is_some_and(|scope| scope.values.contains_key(key))
+        });
+    }
+
+    fn resize_pairs(
+        &mut self,
+        order: &[(u64, String)],
+        discarded: &mut Vec<(u64, u64, String, DiffValue)>,
+        size: usize,
+    ) {
+        let current = order.len().saturating_sub(discarded.len());
+        if size < current {
+            for (context, key) in order.iter().take(current).skip(size).rev() {
+                let removed = self.scopes.get_mut(context).and_then(|scope| {
+                    scope
+                        .values
+                        .remove(key)
+                        .map(|value| (*context, scope.used, key.clone(), value))
+                });
+                discarded.extend(removed);
+            }
+        } else {
+            for (context, used, key, value) in (current..size).filter_map(|_| discarded.pop()) {
+                let scope = self.scopes.entry(context).or_default();
+                scope.used = used;
+                scope.values.insert(key, value);
+            }
+        }
+        self.scopes.retain(|_, scope| !scope.values.is_empty());
+    }
+
     pub(crate) fn compact(&mut self, limit: usize, recency: &HashMap<String, u64>) {
         retain(&mut self.trees, recency, limit);
         let mut scopes: Vec<_> = self
             .scopes
             .iter()
-            .map(|(&id, scope)| (scope.used, id))
-            .collect();
-        scopes.sort_unstable();
-        for (_, id) in scopes.iter().rev().skip(4) {
-            self.scopes.remove(id);
-        }
-        let mut entries: Vec<_> = self
-            .scopes
-            .iter()
-            .flat_map(|(&scope, values)| {
-                values
-                    .values
-                    .iter()
-                    .map(move |(key, value)| (value.used, scope, key.clone()))
+            .map(|(&id, scope)| {
+                (
+                    self.active.iter().any(|(context, _)| *context == id),
+                    scope.used,
+                    id,
+                )
             })
             .collect();
-        entries.sort_unstable();
-        let retained: HashSet<_> = entries
-            .into_iter()
-            .rev()
-            .take(limit)
-            .map(|(_, scope, key)| (scope, key))
-            .collect();
+        scopes.sort_unstable();
+        for (_, _, id) in scopes.iter().rev().skip(4) {
+            self.scopes.remove(id);
+        }
+        let retained: HashSet<_> = self.ordered_pairs().into_iter().take(limit).collect();
         self.scopes.retain(|id, scope| {
             scope
                 .values
                 .retain(|key, _| retained.contains(&(*id, key.clone())));
             !scope.values.is_empty()
         });
+        self.prune_active();
     }
 }
 
@@ -134,20 +177,16 @@ impl Facts {
     /// Preserve graph answers before metadata and optional diff statistics.
     pub(crate) fn fit(&mut self, limit: usize, fits: &dyn Fn(&Self) -> bool) {
         self.compact(limit);
+        if fits(self) {
+            return;
+        }
+        if !self.diff.scopes.is_empty() {
+            self.fit_statistics(&fits);
+        }
         while !fits(self) {
-            if !self.diff.scopes.is_empty() || !self.diff.trees.is_empty() {
-                if self.diff.scopes.len() > 1 {
-                    let id = self
-                        .diff
-                        .scopes
-                        .iter()
-                        .min_by_key(|(_, scope)| scope.used)
-                        .map(|(&id, _)| id)
-                        .unwrap_or_default();
-                    self.diff.scopes.remove(&id);
-                } else {
-                    self.diff = DiffFacts::default();
-                }
+            if !self.diff.trees.is_empty() {
+                let tree_limit = self.diff.trees.len() / 2;
+                retain(&mut self.diff.trees, &self.recency, tree_limit);
                 continue;
             }
             if self.metadata.is_empty() {
@@ -161,6 +200,24 @@ impl Facts {
                 self.compact(limit);
             }
         }
+    }
+
+    fn fit_statistics(&mut self, fits: &impl Fn(&Self) -> bool) {
+        let order = self.diff.ordered_pairs();
+        let mut discarded = Vec::new();
+        let mut lower = 0;
+        let mut upper = order.len();
+        while lower < upper {
+            let size = lower + (upper - lower).div_ceil(2);
+            self.diff.resize_pairs(&order, &mut discarded, size);
+            if fits(self) {
+                lower = size;
+            } else {
+                upper = size.saturating_sub(1);
+            }
+        }
+        self.diff.resize_pairs(&order, &mut discarded, lower);
+        self.diff.prune_active();
     }
 
     pub(crate) fn compact(&mut self, limit: usize) {

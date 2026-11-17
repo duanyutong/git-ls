@@ -188,3 +188,105 @@ fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
     assert_eq!(facts.diff.scopes.len(), 1);
     assert!(facts.diff.scopes.contains_key(&5));
 }
+
+fn statistics_fixture(count: usize) -> Facts {
+    let mut facts = Facts::default();
+    for index in 0..count {
+        let key = format!("pair-{index:04}");
+        facts.diff.scopes.entry(1).or_default().values.insert(
+            key,
+            DiffValue {
+                stat: DiffStat {
+                    added: index as u64,
+                    deleted: 0,
+                },
+                paths: vec!["x".repeat(500)],
+                fingerprint: 1,
+                configuration: 1,
+                used: index as u64,
+            },
+        );
+    }
+    facts
+}
+
+#[test]
+fn byte_admission_preserves_requested_comparisons_and_tree_mappings() {
+    let mut facts = statistics_fixture(20);
+    facts.diff.trees.insert("commit".into(), "tree".into());
+    facts
+        .diff
+        .active
+        .extend([(1, "pair-0000".into()), (1, "pair-0001".into())]);
+    let mut current = facts.clone();
+    current
+        .diff
+        .scopes
+        .get_mut(&1)
+        .unwrap()
+        .values
+        .retain(|key, _| key == "pair-0000" || key == "pair-0001");
+    let bound = serde_json::to_vec(&current).unwrap().len();
+    facts.fit(4096, &|value| {
+        serde_json::to_vec(value).unwrap().len() <= bound
+    });
+    assert_eq!(facts.diff.scopes[&1].values.len(), 2);
+    assert!(facts.diff.scopes[&1].values.contains_key("pair-0000"));
+    assert!(facts.diff.scopes[&1].values.contains_key("pair-0001"));
+    assert_eq!(facts.diff.trees["commit"], "tree");
+    assert!(serde_json::to_vec(&facts).unwrap().len() <= bound);
+    let encoded = serde_json::to_value(&facts).unwrap();
+    assert!(encoded["diff"].get("active").is_none());
+    let mut transient = facts.clone();
+    transient.diff.active.clear();
+    assert!(facts.same_answers(&transient));
+}
+
+#[test]
+fn admission_uses_logarithmically_many_envelope_checks_and_bounded_partial_retention() {
+    let mut facts = statistics_fixture(128);
+    let full = serde_json::to_vec(&facts).unwrap().len();
+    facts.diff.active = facts.diff.scopes[&1]
+        .values
+        .keys()
+        .map(|key| (1, key.clone()))
+        .collect();
+    let calls = std::cell::Cell::new(0);
+    facts.fit(4096, &|value| {
+        calls.set(calls.get() + 1);
+        serde_json::to_vec(value).unwrap().len() <= full / 2
+    });
+    let retained = facts.diff.scopes[&1].values.len();
+    assert!(retained > 0 && retained < 128);
+    assert_eq!(facts.diff.active.len(), retained);
+    assert!(calls.get() <= 12, "{} envelope checks", calls.get());
+    let mut count_limited = statistics_fixture(4);
+    count_limited.diff.active.insert((1, "pair-0000".into()));
+    count_limited.compact(1);
+    assert!(
+        count_limited.diff.scopes[&1]
+            .values
+            .contains_key("pair-0000")
+    );
+}
+
+#[test]
+fn oversized_tree_mappings_are_trimmed_without_dropping_graph_answers() {
+    let mut facts = Facts::default();
+    facts.bases.insert("base".into(), None);
+    facts.diff.trees.insert("commit".into(), "tree".into());
+    facts.fit(4096, &|value| value.diff.trees.is_empty());
+    assert!(facts.diff.trees.is_empty());
+    assert!(facts.bases.contains_key("base"));
+}
+
+#[test]
+fn fitting_working_set_preserves_all_answers_and_active_pairs() {
+    let mut facts = statistics_fixture(3);
+    facts.diff.trees.insert("commit".into(), "tree".into());
+    facts.diff.active.insert((1, "pair-0000".into()));
+    let original = facts.clone();
+    facts.fit(4096, &|_| true);
+    assert!(facts.same_answers(&original));
+    assert_eq!(facts.diff.active, original.diff.active);
+}

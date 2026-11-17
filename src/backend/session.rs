@@ -44,7 +44,8 @@ impl Inputs {
 }
 
 impl<'a> Session<'a> {
-    pub(crate) fn with_facts(inner: &'a dyn GitBackend, inputs: Inputs, facts: Facts) -> Self {
+    pub(crate) fn with_facts(inner: &'a dyn GitBackend, inputs: Inputs, mut facts: Facts) -> Self {
+        facts.diff.active.clear();
         Self {
             inner,
             inputs: Some(inputs),

@@ -222,6 +222,11 @@ impl Session<'_> {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=unsupported_context"));
             return self.live_statistics(pairs, &requested);
         };
+        self.facts
+            .borrow_mut()
+            .diff
+            .active
+            .extend(requested.iter().map(|pair| (before.scope, pair.key())));
         let mut values = self.cached_statistics(&requested, &dependencies, &before);
         let missing: Vec<_> = requested
             .iter()

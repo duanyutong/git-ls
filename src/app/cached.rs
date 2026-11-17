@@ -253,7 +253,13 @@ fn report_evictions(
     let mut contexts: Vec<_> = before
         .scopes
         .iter()
-        .map(|(&id, scope)| (scope.used, id))
+        .map(|(&id, scope)| {
+            (
+                before.active.iter().any(|(context, _)| *context == id),
+                scope.used,
+                id,
+            )
+        })
         .collect();
     contexts.sort_unstable();
     let removed_contexts = &contexts[..contexts.len().saturating_sub(4)];
@@ -265,7 +271,7 @@ fn report_evictions(
                 .is_some_and(|scope| scope.values.contains_key(pair))
             {
                 let cause = if reason == "context_or_entry_count" {
-                    if removed_contexts.iter().any(|(_, id)| id == context) {
+                    if removed_contexts.iter().any(|(_, _, id)| id == context) {
                         "context_count"
                     } else {
                         "entry_count"
