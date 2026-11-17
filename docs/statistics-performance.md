@@ -33,3 +33,11 @@ uv run scripts/benchmark-diff-stat.py \
 
 Functional acceptance shall continue to use disposable repositories, isolated Git configuration and output equivalence checks.
 Machine-dependent latency thresholds do not form part of correctness CI.
+
+## Cache diagnostics
+
+Debug output identifies each directional tree pair and its context, distinguishing absent contexts, absent comparisons, changed effective configuration, changed effective attributes and valid reuse.
+Admission records retained and rejected comparisons, encoded facts size and eviction causes.
+Encoded publication reports successful writes, unavailable locks or storage, and write failures; reference revalidation retains its explicit discarded-publication event.
+The records contain identifiers and reasons without configuration values or file contents.
+Aggregate durations remain inclusive; individual numeric comparisons require independent measurement when Git processes them in one batch.

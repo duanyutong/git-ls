@@ -32,6 +32,7 @@ fn statistics_have_bounded_retention_and_are_discarded_before_graph_facts() {
                 stat: DiffStat::default(),
                 paths: vec!["file".into()],
                 fingerprint: 1,
+                configuration: 1,
                 used,
             },
         );
@@ -122,6 +123,7 @@ fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
                         stat: DiffStat::default(),
                         paths: vec![format!("path-{scope}")],
                         fingerprint: scope,
+                        configuration: scope,
                         used,
                     },
                 )]),
@@ -146,6 +148,17 @@ fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
         .unwrap()
         .used = 100;
     assert!(facts.same_answers(&touched));
+    let mut configuration = facts.clone();
+    configuration
+        .diff
+        .scopes
+        .get_mut(&5)
+        .unwrap()
+        .values
+        .get_mut("tree-5")
+        .unwrap()
+        .configuration = 99;
+    assert!(!facts.same_answers(&configuration));
     touched
         .diff
         .scopes

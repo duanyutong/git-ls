@@ -44,6 +44,16 @@ impl Session<'_> {
         Ok(batch)
     }
 
+    fn live_statistics(&self, pairs: &[DiffPair], requested: &[DiffPair]) -> Result<DiffBatch> {
+        let batch = self.checked_tree_stats(requested)?;
+        let values = requested
+            .iter()
+            .zip(batch.stats)
+            .map(|(pair, stat)| (pair.key(), stat))
+            .collect();
+        assembled(pairs, &values, batch.paths)
+    }
+
     fn statistics_paths(&self, pairs: &[DiffPair]) -> Result<HashMap<String, Vec<String>>> {
         let mut paths = HashMap::new();
         let mut unknown = Vec::new();
@@ -89,20 +99,45 @@ impl Session<'_> {
             if !facts.diff.scopes.is_empty() {
                 crate::diagnostics::count("diff_context_switches", 1);
             }
+            for pair in pairs {
+                crate::diagnostics::event(format_args!(
+                    "diff_cache pair={} context={} status=miss reason=context_absent",
+                    pair.key(),
+                    context.scope
+                ));
+            }
             return HashMap::new();
         };
         scope.used = used;
         let mut values = HashMap::new();
         for pair in pairs {
             let key = pair.key();
-            if let Some(value) = scope.values.get_mut(&key)
-                && paths
-                    .get(&key)
-                    .is_some_and(|paths| value.fingerprint == context.fingerprint(paths))
-            {
-                value.used = used;
-                values.insert(key, value.stat);
-            }
+            let reason = match scope.values.get_mut(&key) {
+                None => "pair_absent",
+                Some(value) if value.configuration != context.configuration => {
+                    "configuration_changed"
+                }
+                Some(_) if !paths.contains_key(&key) => "dependencies_absent",
+                Some(value)
+                    if paths
+                        .get(&key)
+                        .is_some_and(|paths| value.fingerprint == context.fingerprint(paths)) =>
+                {
+                    value.used = used;
+                    values.insert(key.clone(), value.stat);
+                    "valid"
+                }
+                Some(_) => "attributes_changed",
+            };
+            crate::diagnostics::event(format_args!(
+                "diff_cache pair={key} context={} status={} reason={reason}",
+                context.scope,
+                if values.contains_key(&key) {
+                    "hit"
+                } else {
+                    "miss"
+                }
+            ));
         }
         values
     }
@@ -127,10 +162,28 @@ impl Session<'_> {
                     DiffValue {
                         stat: *stat,
                         fingerprint: context.fingerprint(paths),
+                        configuration: context.configuration,
                         paths: paths.clone(),
                         used,
                     },
                 );
+                crate::diagnostics::event(format_args!(
+                    "diff_admission pair={} context={} status=retained paths={}",
+                    pair.key(),
+                    context.scope,
+                    paths.len()
+                ));
+            } else {
+                crate::diagnostics::event(format_args!(
+                    "diff_admission pair={} context={} status=rejected reason={}",
+                    pair.key(),
+                    context.scope,
+                    if scope.values.len() >= self.limit {
+                        "entry_count"
+                    } else {
+                        "missing_dependencies"
+                    }
+                ));
             }
         }
         self.new_facts.set(true);
@@ -163,23 +216,11 @@ impl Session<'_> {
         if dependency_bytes as u64 > crate::cache::ENTRY_LIMIT {
             crate::diagnostics::count("diff_admission_bypasses", 1);
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=dependency_limit"));
-            let batch = self.checked_tree_stats(&requested)?;
-            let values = requested
-                .iter()
-                .zip(batch.stats)
-                .map(|(pair, stat)| (pair.key(), stat))
-                .collect();
-            return assembled(pairs, &values, batch.paths);
+            return self.live_statistics(pairs, &requested);
         }
         let Some(before) = self.inner.diff_snapshot(&paths) else {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=unsupported_context"));
-            let batch = self.checked_tree_stats(&requested)?;
-            let values = requested
-                .iter()
-                .zip(batch.stats)
-                .map(|(pair, stat)| (pair.key(), stat))
-                .collect();
-            return assembled(pairs, &values, batch.paths);
+            return self.live_statistics(pairs, &requested);
         };
         let mut values = self.cached_statistics(&requested, &dependencies, &before);
         let missing: Vec<_> = requested
@@ -201,15 +242,19 @@ impl Session<'_> {
         let stable = covered && self.inner.diff_snapshot(&paths).as_ref() == Some(&before);
         if stable {
             self.retain_statistics(&missing, &batch, &dependencies, &before);
-        } else if !values.is_empty() {
+        } else {
+            crate::diagnostics::event(format_args!(
+                "diff_admission status=rejected reason={}",
+                if covered {
+                    "context_changed"
+                } else {
+                    "uncovered_dependencies"
+                }
+            ));
+        }
+        if !stable && !values.is_empty() {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=context_changed"));
-            let batch = self.checked_tree_stats(&requested)?;
-            let values = requested
-                .iter()
-                .zip(batch.stats)
-                .map(|(pair, stat)| (pair.key(), stat))
-                .collect();
-            return assembled(pairs, &values, batch.paths);
+            return self.live_statistics(pairs, &requested);
         }
         values.extend(
             missing

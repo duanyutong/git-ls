@@ -178,9 +178,19 @@ impl Store {
     pub(crate) fn publish_encoded(&self, name: &str, bytes: &[u8]) -> bool {
         let _perf = crate::diagnostics::stage("cache_write");
         let Some(_lock) = self.lock("publication.lock") else {
+            crate::diagnostics::event(format_args!(
+                "cache_publication=skipped reason=busy_or_unavailable entry={name}"
+            ));
             return false;
         };
-        self.write_locked(name, bytes)
+        let written = self.write_locked(name, bytes);
+        crate::diagnostics::event(format_args!(
+            "cache_publication={} reason={} entry={name} bytes={}",
+            if written { "published" } else { "failed" },
+            if written { "complete" } else { "write_failed" },
+            bytes.len()
+        ));
+        written
     }
 
     fn write_locked(&self, name: &str, bytes: &[u8]) -> bool {

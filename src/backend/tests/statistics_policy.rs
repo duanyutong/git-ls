@@ -43,6 +43,7 @@ fn records_without_dependency_proofs_are_neither_reused_nor_admitted() {
                 stat: DiffStat::default(),
                 paths: vec!["missing".into()],
                 fingerprint: 1,
+                configuration: context.configuration,
                 used: 0,
             },
         );

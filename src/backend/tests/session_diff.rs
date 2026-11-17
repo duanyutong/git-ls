@@ -208,6 +208,7 @@ fn stored() -> Facts {
                     },
                     paths: vec!["one".into()],
                     fingerprint: context.fingerprint(&["one".into()]),
+                    configuration: context.configuration,
                     used: 0,
                 },
             )]),
@@ -460,4 +461,20 @@ fn preparation_failures_and_live_fallbacks_preserve_the_error_and_fact_contract(
             .diff_stats(&[pair("one"), pair("two")])
             .is_err()
     );
+}
+
+#[test]
+fn unavailable_context_preserves_live_errors_without_retaining_counts() {
+    for short in [false, true] {
+        let git = Statistics {
+            fail_at: (!short).then_some(1),
+            short_at: short.then_some(1),
+            ..Statistics::default()
+        };
+        let current = session(&git, Facts::default());
+        assert!(current.diff_stats(&[pair("one")]).is_err());
+        assert!(!current.has_new_facts());
+        assert!(current.into_facts().diff.scopes.is_empty());
+        assert_eq!(git.calls.borrow().len(), 1);
+    }
 }

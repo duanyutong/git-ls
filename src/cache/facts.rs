@@ -33,6 +33,7 @@ pub(crate) struct DiffValue {
     pub(crate) stat: DiffStat,
     pub(crate) paths: Vec<String>,
     pub(crate) fingerprint: u64,
+    pub(crate) configuration: u64,
     pub(crate) used: u64,
 }
 
@@ -48,6 +49,7 @@ impl DiffFacts {
                                 value.stat == old.stat
                                     && value.paths == old.paths
                                     && value.fingerprint == old.fingerprint
+                                    && value.configuration == old.configuration
                             })
                         })
                 })

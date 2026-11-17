@@ -401,3 +401,41 @@ fn attributes_of_a_deleted_branch_do_not_invalidate_requested_statistics() {
         assert!(!debug.contains("operation=subprocess_diff"), "{debug}");
     }
 }
+
+#[test]
+fn diagnostics_explain_statistics_misses_and_publication_without_values() {
+    for backend in ["gix", "shell"] {
+        let repo = TestRepo::new();
+        repo.commit("root");
+        repo.git(&["checkout", "-b", "feature/topic"]);
+        write(&repo, "data", "line\n");
+        repo.commit("topic");
+        let (_, cold) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(cold.contains("status=miss reason=context_absent"), "{cold}");
+        assert!(cold.contains("cache_publication=published"), "{cold}");
+        let (_, warm) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(warm.contains("status=hit reason=valid"), "{warm}");
+        repo.git(&["config", "diff.algorithm", "minimal"]);
+        let (_, config) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(
+            config.contains("status=miss reason=configuration_changed"),
+            "{config}"
+        );
+        write(&repo, ".git/info/attributes", "data -diff\n");
+        let (_, attributes) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(
+            attributes.contains("status=miss reason=attributes_changed"),
+            "{attributes}"
+        );
+        write(&repo, "data", "next\n");
+        repo.commit("next");
+        let (_, changed) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(
+            changed.contains("status=miss reason=pair_absent"),
+            "{changed}"
+        );
+        for debug in [&cold, &warm, &config, &attributes, &changed] {
+            assert!(!debug.contains("diff.algorithm=minimal"), "{debug}");
+        }
+    }
+}

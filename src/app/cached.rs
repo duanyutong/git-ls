@@ -245,8 +245,50 @@ fn prepare_cache(
     Some((store, context))
 }
 
+fn report_evictions(
+    before: &crate::cache::facts::DiffFacts,
+    after: &crate::cache::facts::DiffFacts,
+    reason: &str,
+) {
+    let mut contexts: Vec<_> = before
+        .scopes
+        .iter()
+        .map(|(&id, scope)| (scope.used, id))
+        .collect();
+    contexts.sort_unstable();
+    let removed_contexts = &contexts[..contexts.len().saturating_sub(4)];
+    for (context, scope) in &before.scopes {
+        for pair in scope.values.keys() {
+            if !after
+                .scopes
+                .get(context)
+                .is_some_and(|scope| scope.values.contains_key(pair))
+            {
+                let cause = if reason == "context_or_entry_count" {
+                    if removed_contexts.iter().any(|(_, id)| id == context) {
+                        "context_count"
+                    } else {
+                        "entry_count"
+                    }
+                } else {
+                    reason
+                };
+                crate::diagnostics::event(format_args!(
+                    "diff_eviction pair={pair} context={context} reason={cause}"
+                ));
+            }
+        }
+    }
+}
+
 fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
     let _perf = crate::diagnostics::stage("cache_admission");
+    let mut previous = crate::diagnostics::enabled().then(|| facts.diff.clone());
+    if let Some(original) = &previous {
+        facts.compact(4096);
+        report_evictions(original, &facts.diff, "context_or_entry_count");
+        previous = Some(facts.diff.clone());
+    }
     let encoded = std::cell::RefCell::new(None);
     let before = facts.metadata.len();
     facts.fit(4096, &|value| {
@@ -255,6 +297,14 @@ fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
         encoded.replace(bytes);
         fits
     });
+    if let Some(original) = &previous {
+        report_evictions(original, &facts.diff, "entry_bytes");
+    }
+    crate::diagnostics::event(format_args!(
+        "cache_admission entry=facts encoded_bytes={} entry_limit_bytes={}",
+        encoded.borrow().as_ref().map_or(0, Vec::len),
+        crate::cache::ENTRY_LIMIT
+    ));
     crate::diagnostics::event(format_args!(
         "cache_admission entry=facts metadata_before={} metadata_retained={}",
         before,
