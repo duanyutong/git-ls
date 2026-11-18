@@ -13,6 +13,7 @@ impl GixBackend {
         let Some(id) = id else {
             return Ok(BTreeMap::new());
         };
+        crate::diagnostics::count("diff_discovery_tree_reads", 1);
         let tree = self
             .repo
             .find_tree(id)

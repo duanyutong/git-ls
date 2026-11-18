@@ -11,6 +11,14 @@ use crate::model::DiffStat;
 
 type Dependencies = HashMap<String, Rc<Vec<String>>>;
 
+mod history;
+
+#[derive(Clone)]
+pub(super) struct Transition {
+    previous: DiffPair,
+    paths: Rc<Vec<String>>,
+}
+
 struct StatisticsSelection<'a> {
     dependencies: &'a Dependencies,
     pairs: Vec<DiffPair>,
@@ -75,24 +83,38 @@ impl Session<'_> {
                     .diff
                     .scopes
                     .values()
-                    .find_map(|scope| scope.values.get(&key));
-                if let Some(value) = retained {
-                    paths.insert(key, value.paths.clone());
+                    .filter_map(|scope| scope.values.get(&key))
+                    .collect::<Vec<_>>();
+                if let Some(first) = retained.first() {
+                    let depth = retained
+                        .iter()
+                        .map(|value| value.dependency_depth)
+                        .max()
+                        .unwrap_or(0);
+                    self.dependency_depths
+                        .borrow_mut()
+                        .insert(key.clone(), depth);
+                    let dependencies = if retained.iter().all(|value| value.paths == first.paths) {
+                        first.paths.clone()
+                    } else {
+                        Rc::new(
+                            retained
+                                .iter()
+                                .flat_map(|value| value.paths.iter())
+                                .cloned()
+                                .collect::<BTreeSet<_>>()
+                                .into_iter()
+                                .collect(),
+                        )
+                    };
+                    paths.insert(key, dependencies);
                 } else {
                     unknown.push(pair.clone());
                 }
             }
         }
         if !unknown.is_empty() {
-            let discovered = self.inner.diff_paths(&unknown)?;
-            if discovered.len() != unknown.len() {
-                return Err(invalid());
-            }
-            paths.extend(unknown.iter().zip(discovered).map(|(pair, mut paths)| {
-                paths.sort_unstable();
-                paths.dedup();
-                (pair.key(), Rc::new(paths))
-            }));
+            paths.extend(self.discover_statistics_paths(&unknown)?);
         }
         Ok(paths)
     }
@@ -128,11 +150,7 @@ impl Session<'_> {
                     "configuration_changed"
                 }
                 Some(_) if !paths.contains_key(&key) => "dependencies_absent",
-                Some(value)
-                    if paths
-                        .get(&key)
-                        .is_some_and(|paths| value.fingerprint == context.fingerprint(paths)) =>
-                {
+                Some(value) if value.fingerprint == context.fingerprint(&value.paths) => {
                     value.used = used;
                     values.insert(key.clone(), value.stat);
                     "valid"
@@ -173,6 +191,12 @@ impl Session<'_> {
                         stat: *stat,
                         fingerprint: context.fingerprint(paths),
                         configuration: context.configuration,
+                        dependency_depth: self
+                            .dependency_depths
+                            .borrow()
+                            .get(&pair.key())
+                            .copied()
+                            .unwrap_or(0),
                         paths: paths.clone(),
                         used,
                     },

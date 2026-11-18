@@ -31,6 +31,8 @@ struct Statistics {
     attributes: RefCell<HashMap<String, u64>>,
     aliases: HashMap<String, String>,
     paths: HashMap<String, Vec<String>>,
+    path_calls: RefCell<Vec<Vec<DiffPair>>>,
+    unavailable_trees: std::collections::HashSet<String>,
     preparation: Preparation,
 }
 
@@ -72,6 +74,16 @@ impl DiffStatBackend for Statistics {
         ))
     }
     fn diff_paths(&self, pairs: &[DiffPair]) -> Result<Vec<Vec<String>>> {
+        self.path_calls.borrow_mut().push(pairs.to_vec());
+        if pairs.iter().any(|pair| {
+            pair.base
+                .as_ref()
+                .is_some_and(|base| self.unavailable_trees.contains(base))
+        }) {
+            return Err(GitLsError::TestFixture(
+                "unavailable historical tree".into(),
+            ));
+        }
         if matches!(self.preparation, Preparation::FailPaths) {
             return Err(GitLsError::TestFixture("path failure".into()));
         }
@@ -226,6 +238,7 @@ fn stored() -> Facts {
                     paths: std::rc::Rc::new(vec!["one".into()]),
                     fingerprint: context.fingerprint(&["one".into()]),
                     configuration: context.configuration,
+                    dependency_depth: 0,
                     used: 0,
                 },
             )]),
@@ -541,4 +554,169 @@ fn oversized_dependency_unions_admit_a_validated_subset_without_republishing() {
     assert_eq!(batch.stats[1].added, 2);
     assert_eq!(git.calls.borrow().last().unwrap(), &vec![pair("beta")]);
     assert!(!second.has_new_facts());
+}
+
+fn tree_pair(base: u8, head: u8) -> DiffPair {
+    DiffPair {
+        base: Some(format!("{base:040x}")),
+        head: format!("{head:040x}"),
+    }
+}
+
+#[test]
+fn dependency_discovery_uses_deduplicated_transitions_and_refreshes_long_chains() {
+    let git = Statistics::stable();
+    let initial = session(&git, Facts::default());
+    initial
+        .diff_stats(&[tree_pair(1, 2), tree_pair(4, 2)])
+        .unwrap();
+    let next = session(&git, initial.into_facts());
+    next.diff_stats(&[tree_pair(1, 3), tree_pair(4, 3)])
+        .unwrap();
+    assert_eq!(
+        git.path_calls.borrow().last().unwrap(),
+        &vec![tree_pair(2, 3)]
+    );
+    assert_eq!(next.diff_transitions.borrow().len(), 2);
+    let mut facts = next.into_facts();
+    assert_eq!(
+        facts.diff.scopes[&0].values[&tree_pair(1, 3).key()].dependency_depth,
+        1
+    );
+    for head in 4..=12 {
+        let current = session(&git, facts);
+        current.diff_stats(&[tree_pair(1, head)]).unwrap();
+        facts = current.into_facts();
+    }
+    // The most recent proof reaches its bound, then direct discovery resets it.
+    assert!(
+        git.path_calls
+            .borrow()
+            .iter()
+            .skip(2)
+            .any(|pairs| pairs == &vec![tree_pair(1, 11)])
+    );
+    assert_eq!(
+        facts.diff.scopes[&0].values[&tree_pair(1, 12).key()].dependency_depth,
+        1
+    );
+}
+
+#[test]
+fn mixed_discovery_and_missing_historical_objects_preserve_complete_results() {
+    let mut git = Statistics::stable();
+    let first = session(&git, Facts::default());
+    first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+    let facts = first.into_facts();
+    let mixed = session(&git, facts.clone());
+    mixed
+        .diff_stats(&[tree_pair(1, 3), tree_pair(4, 5)])
+        .unwrap();
+    let calls = git.path_calls.borrow();
+    assert_eq!(calls[calls.len() - 2], vec![tree_pair(2, 3)]);
+    assert_eq!(calls.last().unwrap(), &vec![tree_pair(4, 5)]);
+    drop(calls);
+    drop(mixed);
+    git.unavailable_trees.insert(format!("{:040x}", 2));
+    let current = session(&git, facts.clone());
+    assert!(current.diff_stats(&[tree_pair(1, 3)]).is_ok());
+    assert!(current.diff_transitions.borrow().is_empty());
+    assert_eq!(
+        git.path_calls.borrow().last().unwrap(),
+        &vec![tree_pair(1, 3)]
+    );
+    assert_eq!(
+        current.into_facts().diff.scopes[&0].values[&tree_pair(1, 3).key()].dependency_depth,
+        0
+    );
+    git.unavailable_trees.clear();
+    git.preparation = Preparation::ShortPaths;
+    assert!(session(&git, facts).diff_stats(&[tree_pair(1, 3)]).is_err());
+}
+
+#[test]
+fn malformed_historical_keys_are_ignored_and_distinct_context_proofs_remain_reusable() {
+    let git = Statistics::stable();
+    let mut facts = stored();
+    let value = facts.diff.scopes[&0].values[&pair("one").key()].clone();
+    for key in [
+        "not-a-pair".to_owned(),
+        format!("{:040x}:{}", 1, "z".repeat(40)),
+    ] {
+        facts
+            .diff
+            .scopes
+            .get_mut(&0)
+            .unwrap()
+            .values
+            .insert(key, value.clone());
+    }
+    let current = session(&git, facts);
+    current.diff_stats(&[tree_pair(1, 3)]).unwrap();
+    assert_eq!(
+        git.path_calls.borrow().last().unwrap(),
+        &vec![tree_pair(1, 3)]
+    );
+    let mut facts = current.into_facts();
+    let mut other = facts.diff.scopes[&0].clone();
+    let extra = other.values.get_mut(&tree_pair(1, 3).key()).unwrap();
+    extra.paths = std::rc::Rc::new(vec!["extra".into(), format!("{:040x}", 3)]);
+    let mut context = crate::backend::DiffContext::uniform(1);
+    context.scope = 1;
+    extra.fingerprint = context.fingerprint(&extra.paths);
+    facts.diff.scopes.insert(1, other);
+    git.scope.set(1);
+    let calls = git.calls.borrow().len();
+    let reused = session(&git, facts);
+    reused.diff_stats(&[tree_pair(1, 3)]).unwrap();
+    assert_eq!(git.calls.borrow().len(), calls);
+}
+
+#[test]
+fn sha256_tree_identifiers_support_transition_dependency_reuse() {
+    let git = Statistics::stable();
+    let pair = |head: u8| DiffPair {
+        base: Some(format!("{:064x}", 1)),
+        head: format!("{head:064x}"),
+    };
+    let first = session(&git, Facts::default());
+    first.diff_stats(&[pair(2)]).unwrap();
+    let next = session(&git, first.into_facts());
+    next.diff_stats(&[pair(3)]).unwrap();
+    assert_eq!(
+        git.path_calls.borrow().last().unwrap(),
+        &vec![DiffPair {
+            base: Some(format!("{:064x}", 2)),
+            head: format!("{:064x}", 3),
+        }]
+    );
+}
+
+#[test]
+fn multiple_transition_groups_preserve_order_and_required_current_failures() {
+    let mut git = Statistics::stable();
+    let first = session(&git, Facts::default());
+    first
+        .diff_stats(&[tree_pair(1, 2), tree_pair(4, 5)])
+        .unwrap();
+    let facts = first.into_facts();
+    let pairs = [
+        tree_pair(1, 3),
+        tree_pair(1, 6),
+        tree_pair(4, 7),
+        tree_pair(8, 9),
+    ];
+    let mixed = session(&git, facts.clone());
+    assert_eq!(mixed.diff_stats(&pairs).unwrap().stats.len(), pairs.len());
+    let calls = git.path_calls.borrow();
+    assert_eq!(
+        calls[calls.len() - 2],
+        vec![tree_pair(2, 3), tree_pair(2, 6), tree_pair(5, 7)]
+    );
+    assert_eq!(calls.last().unwrap(), &vec![tree_pair(8, 9)]);
+    drop(calls);
+    drop(mixed);
+    git.unavailable_trees.insert(format!("{:040x}", 8));
+    assert!(session(&git, facts).diff_stats(&pairs).is_err());
+    assert_eq!(git.calls.borrow().len(), 2);
 }

@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 mod encoding;
 
+pub(crate) const DEPENDENCY_REUSE_LIMIT: u8 = 8;
+
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Facts {
     pub(crate) bases: HashMap<String, Option<String>>,
@@ -38,6 +40,7 @@ pub(crate) struct DiffValue {
     pub(crate) paths: Rc<Vec<String>>,
     pub(crate) fingerprint: u64,
     pub(crate) configuration: u64,
+    pub(crate) dependency_depth: u8,
     pub(crate) used: u64,
 }
 
@@ -47,6 +50,7 @@ impl DiffValue {
             && self.paths == other.paths
             && self.fingerprint == other.fingerprint
             && self.configuration == other.configuration
+            && self.dependency_depth == other.dependency_depth
     }
 }
 

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
 
-use super::{DiffFacts, DiffScope, DiffValue};
+use super::{DEPENDENCY_REUSE_LIMIT, DiffFacts, DiffScope, DiffValue};
 use crate::model::DiffStat;
 
 // The encoded entry remains limited to 1 MiB; pooling must not permit unbounded expansion when a small entry refers repeatedly to long dependency names.
@@ -34,6 +34,7 @@ struct WireValue<I = usize> {
     paths: I,
     fingerprint: u64,
     configuration: u64,
+    dependency_depth: u8,
     used: u64,
 }
 
@@ -148,6 +149,9 @@ impl Serialize for DiffFacts {
         for (&context, scope) in &self.scopes {
             let mut values = BTreeMap::new();
             for (key, value) in &scope.values {
+                if value.dependency_depth > DEPENDENCY_REUSE_LIMIT {
+                    return Err(S::Error::custom("dependency proof depth exceeds bound"));
+                }
                 let id = pools
                     .intern(value.paths.as_slice())
                     .map_err(S::Error::custom)?;
@@ -158,6 +162,7 @@ impl Serialize for DiffFacts {
                         paths: id,
                         fingerprint: value.fingerprint,
                         configuration: value.configuration,
+                        dependency_depth: value.dependency_depth,
                         used: value.used,
                     },
                 );
@@ -225,6 +230,9 @@ impl<'de> Deserialize<'de> for DiffFacts {
         for (context, scope) in wire.scopes {
             let mut values = HashMap::with_capacity(scope.values.len());
             for (key, value) in scope.values {
+                if value.dependency_depth > DEPENDENCY_REUSE_LIMIT {
+                    return Err(D::Error::custom("dependency proof depth exceeds bound"));
+                }
                 let paths = dependencies
                     .get(value.paths)
                     .ok_or_else(|| D::Error::custom("invalid dependency set"))?
@@ -236,6 +244,7 @@ impl<'de> Deserialize<'de> for DiffFacts {
                         paths,
                         fingerprint: value.fingerprint,
                         configuration: value.configuration,
+                        dependency_depth: value.dependency_depth,
                         used: value.used,
                     },
                 );

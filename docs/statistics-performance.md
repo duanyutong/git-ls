@@ -109,6 +109,21 @@ Lifecycle regression cases cover top-only commits, aliases, metadata-only amendm
 The paused invocation must retain its valid facts, preserve the later writer's comparisons, and discard its old topology snapshot.
 Concurrency fixtures use two publishers.
 
+## Adjacent endpoint discovery
+
+For a previously unseen comparison, retained same-base comparisons may supply a conservative dependency proof.
+The application discovers the difference between the previous and new endpoint trees and unions those paths with the retained proof, preserving coverage of every new net change independently of attributes and rename matching.
+Transition requests are deduplicated and batched across comparisons; comparisons without a suitable predecessor retain direct discovery.
+Unavailable historical objects trigger a bounded direct-discovery fallback, whilst incomplete backend responses remain errors.
+Debug output identifies the predecessor, changed-path count, proof depth and attempted native discovery-tree reads.
+
+The most recent proof is refreshed by direct discovery after eight derived generations, limiting accumulation of historical dependency names.
+Stored proof depth is bounded and versioned with the representation.
+Comparisons from distinct contexts validate against their own retained dependency fingerprints, with the complete union available for the current attribute capture.
+This avoids invalidating a valid scoped answer merely because another context retained a different conservative superset.
+The one-file edit fixture with 128 independently changed subdirectories requires four native discovery-tree reads instead of revisiting every changed subdirectory.
+Both backends retain the same full numeric counting policy at this stage.
+
 Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
 The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
 This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.

@@ -469,3 +469,70 @@ fn unrelated_branch_and_fetch_configuration_preserves_warm_statistics() {
         assert!(debug.contains("reason=configuration_changed"), "{debug}");
     }
 }
+
+#[test]
+fn adjacent_endpoint_discovery_skips_unchanged_subtrees_and_matches_live_counts() {
+    for backend in ["gix", "shell"] {
+        let repo = TestRepo::new();
+        for index in 0..128 {
+            write(
+                &repo,
+                &format!("directory-{index:03}/data"),
+                format!("base {index}\n"),
+            );
+        }
+        repo.commit("root");
+        repo.git(&["checkout", "-b", "feature/topic"]);
+        for index in 0..128 {
+            write(
+                &repo,
+                &format!("directory-{index:03}/data"),
+                format!("changed {index}\n"),
+            );
+        }
+        repo.commit("large layer");
+        run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        write(&repo, "directory-000/data", "changed again 0\nextra\n");
+        repo.commit("one file edit");
+        let (output, debug) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        assert!(
+            debug
+                .lines()
+                .any(|line| line.ends_with("diff_dependency_reuses=1")),
+            "{debug}"
+        );
+        if backend == "gix" {
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_discovered_paths=1")),
+                "{debug}"
+            );
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_discovery_tree_reads=4")),
+                "{debug}"
+            );
+        }
+        assert_eq!(output, run(&repo, backend, &["-vv", "--no-cache"]).0);
+        assert!(
+            row(&output, "feature/topic").contains("+129 -128"),
+            "{output}"
+        );
+        let (refreshed, direct) = run(
+            &repo,
+            backend,
+            &["-vv", "--refresh-cache", "--no-cache-maintenance"],
+        );
+        assert_eq!(refreshed, output);
+        if backend == "gix" {
+            assert!(
+                direct
+                    .lines()
+                    .any(|line| line.ends_with("diff_discovery_tree_reads=258")),
+                "{direct}"
+            );
+        }
+    }
+}

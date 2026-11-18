@@ -14,6 +14,7 @@ fn fixture() -> DiffFacts {
                 paths: paths.clone(),
                 fingerprint: 1,
                 configuration: 2,
+                dependency_depth: 0,
                 used: index,
             },
         );
@@ -71,6 +72,7 @@ fn canonical_pool_sizes_remain_monotonic_when_comparisons_are_added() {
                 paths: Rc::new(vec!["common".into(), format!("path-{index:02}")]),
                 fingerprint: 1,
                 configuration: 1,
+                dependency_depth: 0,
                 used: index,
             },
         );
@@ -189,6 +191,41 @@ fn cache_encoding_distinguishes_envelope_bytes_from_representation_failures() {
         EncodingFailure::Representation.reason(),
         "representation_bound"
     );
+}
+
+#[test]
+fn excessive_dependency_proof_depth_is_rejected_and_changes_answer_identity() {
+    let mut facts = fixture();
+    let original = facts.clone();
+    facts
+        .scopes
+        .get_mut(&0)
+        .unwrap()
+        .values
+        .get_mut("pair-0")
+        .unwrap()
+        .dependency_depth = 1;
+    let before = crate::cache::Facts {
+        diff: original,
+        ..crate::cache::Facts::default()
+    };
+    let mut after = before.clone();
+    after.diff = facts.clone();
+    assert!(!before.same_answers(&after));
+    facts
+        .scopes
+        .get_mut(&0)
+        .unwrap()
+        .values
+        .get_mut("pair-0")
+        .unwrap()
+        .dependency_depth = DEPENDENCY_REUSE_LIMIT + 1;
+    assert!(serde_json::to_value(&facts).is_err());
+    assert!(serde_json::to_vec(&facts).is_err());
+    let mut wire = serde_json::to_value(fixture()).unwrap();
+    wire["scopes"]["0"]["values"]["pair-0"]["dependency_depth"] =
+        serde_json::json!(DEPENDENCY_REUSE_LIMIT + 1);
+    assert!(serde_json::from_value::<DiffFacts>(wire).is_err());
 }
 
 #[test]

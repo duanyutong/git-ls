@@ -33,6 +33,7 @@ fn statistics_have_bounded_retention_and_are_discarded_before_graph_facts() {
                 paths: std::rc::Rc::new(vec!["file".into()]),
                 fingerprint: 1,
                 configuration: 1,
+                dependency_depth: 0,
                 used,
             },
         );
@@ -124,6 +125,7 @@ fn worktree_contexts_and_tree_mappings_share_a_bounded_recent_working_set() {
                         paths: std::rc::Rc::new(vec![format!("path-{scope}")]),
                         fingerprint: scope,
                         configuration: scope,
+                        dependency_depth: 0,
                         used,
                     },
                 )]),
@@ -203,6 +205,7 @@ fn statistics_fixture(count: usize) -> Facts {
                 paths: std::rc::Rc::new(vec!["x".repeat(500)]),
                 fingerprint: 1,
                 configuration: 1,
+                dependency_depth: 0,
                 used: index as u64,
             },
         );

@@ -13,6 +13,7 @@ unit = [
   "src/backend/metadata.rs",
   "src/backend/session.rs",
   "src/backend/session/statistics.rs",
+  "src/backend/session/statistics/history.rs",
   "src/backend/shell.rs",
   "src/backend/traits.rs",
   "src/cache/compatibility.rs",

@@ -44,6 +44,7 @@ fn records_without_dependency_proofs_are_neither_reused_nor_admitted() {
                 paths: std::rc::Rc::new(vec!["missing".into()]),
                 fingerprint: 1,
                 configuration: context.configuration,
+                dependency_depth: 0,
                 used: 0,
             },
         );

@@ -19,6 +19,8 @@ pub(crate) struct Session<'a> {
     inputs: Option<Inputs>,
     limit: usize,
     new_facts: Cell<bool>,
+    dependency_depths: RefCell<HashMap<String, u8>>,
+    diff_transitions: RefCell<HashMap<String, statistics::Transition>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -53,6 +55,8 @@ impl<'a> Session<'a> {
             new_facts: Cell::new(false),
             facts: RefCell::new(facts),
             rewrites: RefCell::default(),
+            dependency_depths: RefCell::default(),
+            diff_transitions: RefCell::default(),
         }
     }
     pub(crate) const fn has_new_facts(&self) -> bool {
@@ -71,6 +75,8 @@ impl<'a> Session<'a> {
             inputs: None,
             limit: QUERY_LIMIT,
             new_facts: Cell::new(false),
+            dependency_depths: RefCell::default(),
+            diff_transitions: RefCell::default(),
         }
     }
 }
