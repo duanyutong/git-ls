@@ -14,6 +14,7 @@ unit = [
   "src/backend/session.rs",
   "src/backend/session/statistics.rs",
   "src/backend/session/statistics/history.rs",
+  "src/backend/session/statistics/incremental.rs",
   "src/backend/shell.rs",
   "src/backend/traits.rs",
   "src/cache/compatibility.rs",

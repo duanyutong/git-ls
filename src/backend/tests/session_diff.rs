@@ -18,9 +18,21 @@ enum Preparation {
     RecordTrees,
 }
 
+#[derive(Clone, Copy)]
+enum Incremental {
+    Supported,
+    Short,
+    Uncovered,
+    Missing,
+    Failure,
+    Underflow,
+}
+
 #[derive(Default)]
 struct Statistics {
     git: MockGit,
+    incremental: Option<Incremental>,
+    incremental_calls: Cell<usize>,
     calls: RefCell<Vec<Vec<DiffPair>>>,
     contexts: RefCell<VecDeque<Option<u64>>>,
     context: Cell<Option<u64>>,
@@ -46,6 +58,48 @@ impl Statistics {
 }
 
 impl DiffStatBackend for Statistics {
+    fn incremental_stats(
+        &self,
+        _previous: &DiffPair,
+        _current: &DiffPair,
+        paths: &[String],
+    ) -> Result<Option<DiffBatch>> {
+        self.incremental_calls.set(self.incremental_calls.get() + 1);
+        let Some(mode) = self.incremental else {
+            return Ok(None);
+        };
+        if matches!(mode, Incremental::Failure) {
+            return Err(GitLsError::TestFixture("optional failure".into()));
+        }
+        Ok(Some(DiffBatch {
+            stats: if matches!(mode, Incremental::Short) {
+                vec![]
+            } else {
+                vec![
+                    DiffStat {
+                        added: if matches!(mode, Incremental::Underflow) {
+                            2
+                        } else {
+                            1
+                        },
+                        deleted: 0,
+                    },
+                    DiffStat {
+                        added: 4,
+                        deleted: 0,
+                    },
+                ]
+            },
+            paths: if matches!(mode, Incremental::Uncovered) {
+                vec!["uncovered".into()]
+            } else if matches!(mode, Incremental::Missing) {
+                Vec::new()
+            } else {
+                paths.to_vec()
+            },
+        }))
+    }
+
     fn diff_tree_pairs(
         &self,
         pairs: &[DiffPair],
@@ -692,6 +746,108 @@ fn sha256_tree_identifiers_support_transition_dependency_reuse() {
     );
 }
 
+fn incremental_fixture(
+    mode: Option<Incremental>,
+    count: usize,
+    changed: Vec<String>,
+) -> Statistics {
+    Statistics {
+        incremental: mode,
+        paths: HashMap::from([
+            (
+                format!("{:040x}", 2),
+                (0..count).map(|index| format!("path-{index:04}")).collect(),
+            ),
+            (format!("{:040x}", 3), changed),
+        ]),
+        ..Statistics::stable()
+    }
+}
+
+#[test]
+fn incremental_correction_uses_validated_totals_and_optional_failures_fall_back() {
+    for mode in [
+        Some(Incremental::Supported),
+        Some(Incremental::Short),
+        Some(Incremental::Uncovered),
+        Some(Incremental::Missing),
+        Some(Incremental::Failure),
+        Some(Incremental::Underflow),
+        None,
+    ] {
+        let git = incremental_fixture(mode, 64, vec!["path-0000".into()]);
+        let first = session(&git, Facts::default());
+        first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+        let next = session(&git, first.into_facts());
+        let answer = next.diff_stats(&[tree_pair(1, 3)]).unwrap();
+        let supported = matches!(mode, Some(Incremental::Supported));
+        assert_eq!(answer.stats[0].added, if supported { 4 } else { 2 });
+        assert_eq!(git.calls.borrow().len(), if supported { 1 } else { 2 });
+        assert_eq!(git.incremental_calls.get(), 1);
+    }
+}
+
+#[test]
+fn incremental_correction_enforces_benefit_limits_and_current_context() {
+    for (count, changed) in [
+        (63, vec!["path-0000".into()]),
+        (64, vec![]),
+        (
+            1024,
+            (0..129).map(|index| format!("path-{index:04}")).collect(),
+        ),
+        (
+            64,
+            (0..16).map(|index| format!("path-{index:04}")).collect(),
+        ),
+        (64, vec!["long".repeat(9000)]),
+    ] {
+        let git = incremental_fixture(Some(Incremental::Supported), count, changed);
+        let first = session(&git, Facts::default());
+        first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+        session(&git, first.into_facts())
+            .diff_stats(&[tree_pair(1, 3)])
+            .unwrap();
+        assert_eq!(git.incremental_calls.get(), 0);
+        assert_eq!(git.calls.borrow().len(), 2);
+    }
+    for scenario in 0..3 {
+        let git = incremental_fixture(Some(Incremental::Supported), 64, vec!["path-0000".into()]);
+        let first = session(&git, Facts::default());
+        first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+        match scenario {
+            0 => git.context.set(Some(2)),
+            1 => git.scope.set(1),
+            _ => {
+                git.attributes.borrow_mut().insert("path-0001".into(), 42);
+            }
+        }
+        session(&git, first.into_facts())
+            .diff_stats(&[tree_pair(1, 3)])
+            .unwrap();
+        assert_eq!(git.incremental_calls.get(), 0);
+    }
+}
+
+#[test]
+fn incremental_context_race_discards_the_correction_and_recalculates_live() {
+    let git = incremental_fixture(Some(Incremental::Supported), 64, vec!["path-0000".into()]);
+    let first = session(&git, Facts::default());
+    first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+    git.contexts.borrow_mut().extend([Some(1), Some(2)]);
+    let next = session(&git, first.into_facts());
+    assert_eq!(
+        next.diff_stats(&[tree_pair(1, 3)]).unwrap().stats[0].added,
+        2
+    );
+    assert_eq!(git.incremental_calls.get(), 1);
+    assert!(
+        !next.into_facts().diff.scopes[&0]
+            .values
+            .contains_key(&tree_pair(1, 3).key())
+    );
+}
+
 #[test]
 fn multiple_transition_groups_preserve_order_and_required_current_failures() {
     let mut git = Statistics::stable();
@@ -718,5 +874,19 @@ fn multiple_transition_groups_preserve_order_and_required_current_failures() {
     drop(mixed);
     git.unavailable_trees.insert(format!("{:040x}", 8));
     assert!(session(&git, facts).diff_stats(&pairs).is_err());
+    assert_eq!(git.calls.borrow().len(), 2);
+}
+
+#[test]
+fn incremental_correction_requires_a_total_in_the_current_scope() {
+    let git = incremental_fixture(Some(Incremental::Supported), 64, vec!["path-0000".into()]);
+    let first = session(&git, Facts::default());
+    first.diff_stats(&[tree_pair(1, 2)]).unwrap();
+    let mut facts = first.into_facts();
+    facts.diff.scopes.insert(1, DiffScope::default());
+    git.scope.set(1);
+    let answer = session(&git, facts).diff_stats(&[tree_pair(1, 3)]).unwrap();
+    assert_eq!(answer.stats[0].added, 2);
+    assert_eq!(git.incremental_calls.get(), 0);
     assert_eq!(git.calls.borrow().len(), 2);
 }

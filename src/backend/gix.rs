@@ -176,6 +176,36 @@ impl DiffStatBackend for GixBackend {
         pairs.iter().map(|pair| self.tree_paths(pair)).collect()
     }
 
+    fn incremental_stats(
+        &self,
+        previous: &super::DiffPair,
+        current: &super::DiffPair,
+        paths: &[String],
+    ) -> Result<Option<super::DiffBatch>> {
+        if [
+            "GIT_LITERAL_PATHSPECS",
+            "GIT_GLOB_PATHSPECS",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_ICASE_PATHSPECS",
+        ]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some())
+        {
+            crate::diagnostics::event(format_args!(
+                "diff_incremental status=bypass reason=pathspec_environment"
+            ));
+            return Ok(None);
+        }
+        if !self.independent_paths(previous, current, paths)? {
+            crate::diagnostics::event(format_args!(
+                "diff_incremental status=bypass reason=path_shape"
+            ));
+            return Ok(None);
+        }
+        super::diff::filtered_tree_stats(&self.command, &[previous.clone(), current.clone()], paths)
+            .map(Some)
+    }
+
     fn diff_tree_stats(&self, pairs: &[super::DiffPair]) -> Result<super::DiffBatch> {
         super::diff::tree_stats(&self.command, pairs)
     }

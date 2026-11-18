@@ -338,3 +338,31 @@ fn transport_and_branch_metadata_do_not_invalidate_numeric_comparisons() {
         );
     }
 }
+
+#[test]
+fn filtered_statistics_preserve_literal_root_pathspecs_and_framing() {
+    let pairs = [pair(Some("base"), "old"), pair(Some("base"), "new")];
+    let paths = vec!["nested/[literal]\tname\n".into()];
+    let mut args = DIFF_ARGS.to_vec();
+    args.extend(["--", ":(top,literal)nested/[literal]\tname\n"]);
+    let git = MockGit::default().with(
+        &args,
+        "base old\n1\t0\tnested/[literal]\tname\n\0base new\n2\t0\tnested/[literal]\tname\n\0",
+    );
+    let batch = filtered_tree_stats(&git, &pairs, &paths).unwrap();
+    assert_eq!(
+        batch
+            .stats
+            .iter()
+            .map(|stat| stat.added)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(batch.paths, paths);
+    assert!(filtered_tree_stats(&MockGit::default(), &pairs, &[]).is_err());
+    assert!(
+        git.incremental_stats(&pairs[0], &pairs[1], &paths)
+            .unwrap()
+            .is_none()
+    );
+}

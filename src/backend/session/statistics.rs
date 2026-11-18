@@ -12,6 +12,7 @@ use crate::model::DiffStat;
 type Dependencies = HashMap<String, Rc<Vec<String>>>;
 
 mod history;
+mod incremental;
 
 #[derive(Clone)]
 pub(super) struct Transition {
@@ -317,7 +318,12 @@ impl Session<'_> {
         if missing.is_empty() {
             return assembled(pairs, &values, selection.paths.clone());
         }
-        let batch = self.checked_tree_stats(&missing)?;
+        let incremental = self.incremental_statistics(&missing, selection, before);
+        let used_incremental = incremental.is_some();
+        let batch = match incremental {
+            Some(batch) => batch,
+            None => self.checked_tree_stats(&missing)?,
+        };
         let covered = batch
             .paths
             .iter()
@@ -352,7 +358,7 @@ impl Session<'_> {
                 }
             ));
         }
-        if !stable && !values.is_empty() {
+        if !stable && (used_incremental || !values.is_empty()) {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=context_changed"));
             return self.live_statistics(pairs, requested);
         }

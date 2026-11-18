@@ -10,6 +10,15 @@ fn write(repo: &TestRepo, name: &str, content: impl AsRef<[u8]>) {
 }
 
 fn run(repo: &TestRepo, backend: &str, options: &[&str]) -> (String, String) {
+    run_environment(repo, backend, options, &[])
+}
+
+fn run_environment(
+    repo: &TestRepo,
+    backend: &str,
+    options: &[&str],
+    environment: &[(&str, &str)],
+) -> (String, String) {
     let output = repo
         .command(assert_cmd::cargo::cargo_bin!("git-ls"))
         .args([
@@ -22,6 +31,7 @@ fn run(repo: &TestRepo, backend: &str, options: &[&str]) -> (String, String) {
             "--debug",
         ])
         .args(options)
+        .envs(environment.iter().copied())
         .assert()
         .success();
     (
@@ -515,6 +525,22 @@ fn adjacent_endpoint_discovery_skips_unchanged_subtrees_and_matches_live_counts(
                 "{debug}"
             );
         }
+        if backend == "gix" {
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_incremental_reuses=1")),
+                "{debug}"
+            );
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_incremental_pathspecs=1")),
+                "{debug}"
+            );
+        } else {
+            assert!(!debug.contains("diff_incremental_reuses="), "{debug}");
+        }
         assert_eq!(output, run(&repo, backend, &["-vv", "--no-cache"]).0);
         assert!(
             row(&output, "feature/topic").contains("+129 -128"),
@@ -534,5 +560,147 @@ fn adjacent_endpoint_discovery_skips_unchanged_subtrees_and_matches_live_counts(
                 "{direct}"
             );
         }
+    }
+}
+
+fn incremental_layer() -> TestRepo {
+    let repo = TestRepo::new();
+    for index in 0..64 {
+        write(
+            &repo,
+            &format!("nested/path-{index:03}"),
+            format!("base {index}\n"),
+        );
+    }
+    write(&repo, "nested/[literal]\tname\n", "base unusual\n");
+    repo.commit("root");
+    repo.git(&["checkout", "-b", "feature/topic"]);
+    for index in 0..64 {
+        write(
+            &repo,
+            &format!("nested/path-{index:03}"),
+            format!("layer {index}\n"),
+        );
+    }
+    write(&repo, "nested/[literal]\tname\n", "layer unusual\n");
+    repo.commit("large layer");
+    run(&repo, "gix", &["-vv", "--no-cache-maintenance"]);
+    repo
+}
+
+fn assert_incremental_parity(repo: &TestRepo, expected: bool) {
+    let (output, debug) = run(repo, "gix", &["-vv", "--no-cache-maintenance"]);
+    assert_eq!(
+        debug.contains("diff_incremental_reuses=1"),
+        expected,
+        "{debug}"
+    );
+    assert_eq!(output, run(repo, "gix", &["-vv", "--no-cache"]).0);
+    assert_eq!(output, run(repo, "shell", &["-vv", "--no-cache"]).0);
+}
+
+#[test]
+fn incremental_subtotals_match_git_for_literal_names_reverts_and_binary_transitions() {
+    let repo = incremental_layer();
+    for content in [
+        "edit\nextra\n",
+        "base unusual\n",
+        "\0binary\0",
+        "text again\n",
+    ] {
+        write(&repo, "nested/[literal]\tname\n", content);
+        repo.commit("edit unusual file");
+        assert_incremental_parity(&repo, true);
+    }
+    write(&repo, "nested/[literal]\tname\n", "nested edit\nextra\n");
+    repo.commit("edit before nested invocation");
+    let nested = repo
+        .command(assert_cmd::cargo::cargo_bin!("git-ls"))
+        .current_dir(repo.path().join("nested"))
+        .args([
+            "--backend",
+            "gix",
+            "--layout",
+            "columns",
+            "--color",
+            "never",
+            "-vv",
+            "--debug",
+            "--no-cache-maintenance",
+        ])
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&nested.get_output().stderr).contains("diff_incremental_reuses=1")
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&nested.get_output().stdout),
+        run(&repo, "gix", &["-vv", "--no-cache"]).0
+    );
+}
+
+#[test]
+fn incremental_subtotals_reject_rename_candidates_and_changed_attribute_proofs() {
+    let repo = incremental_layer();
+    write(&repo, "new-file", "new\n");
+    repo.commit("add a rename candidate");
+    assert_incremental_parity(&repo, false);
+    repo.git(&["mv", "new-file", "renamed-file"]);
+    repo.commit("rename a file");
+    assert_incremental_parity(&repo, false);
+    std::fs::remove_file(repo.path().join("nested/path-000")).expect("remove file");
+    repo.commit("delete a file");
+    assert_incremental_parity(&repo, false);
+    write(&repo, ".git/info/attributes", "nested/path-001 -diff\n");
+    write(&repo, "nested/path-002", "edit\n");
+    repo.commit("edit under changed attributes");
+    assert_incremental_parity(&repo, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_subtotals_reject_mode_and_symlink_changes() {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+    let repo = incremental_layer();
+    std::fs::set_permissions(
+        repo.path().join("nested/path-000"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("executable mode");
+    repo.commit("change mode");
+    assert_incremental_parity(&repo, false);
+    std::fs::remove_file(repo.path().join("nested/path-001")).expect("remove file");
+    symlink("path-002", repo.path().join("nested/path-001")).expect("symlink");
+    repo.commit("replace with symlink");
+    assert_incremental_parity(&repo, false);
+}
+
+#[test]
+fn incremental_subtotals_bypass_pathspec_environment_overrides() {
+    let repo = incremental_layer();
+    for (index, key) in [
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        write(&repo, "nested/path-000", format!("edit {index}\nextra\n"));
+        repo.commit("edit under pathspec override");
+        let environment = [(key, "1")];
+        let (output, debug) = run_environment(
+            &repo,
+            "gix",
+            &["-vv", "--no-cache-maintenance"],
+            &environment,
+        );
+        assert!(!debug.contains("diff_incremental_reuses="), "{debug}");
+        assert!(debug.contains("reason=pathspec_environment"), "{debug}");
+        assert_eq!(
+            output,
+            run_environment(&repo, "gix", &["-vv", "--no-cache"], &environment).0
+        );
     }
 }

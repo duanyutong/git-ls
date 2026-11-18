@@ -327,6 +327,34 @@ pub(super) fn diff_with_trees(
     Ok(batch)
 }
 
+pub(super) fn filtered_tree_stats(
+    git: &(impl GitCommand + ?Sized),
+    pairs: &[DiffPair; 2],
+    paths: &[String],
+) -> Result<DiffBatch> {
+    let requests: Vec<_> = pairs
+        .iter()
+        .map(|pair| {
+            format!(
+                "{} {}\n",
+                pair.base.as_deref().unwrap_or_default(),
+                pair.head
+            )
+        })
+        .collect();
+    let pathspecs: Vec<_> = paths
+        .iter()
+        .map(|path| format!(":(top,literal){path}"))
+        .collect();
+    let mut args = DIFF_ARGS.to_vec();
+    args.push("--");
+    args.extend(pathspecs.iter().map(String::as_str));
+    crate::diagnostics::count("diff_batch_launches", 1);
+    crate::diagnostics::count("diff_incremental_pathspecs", paths.len());
+    let output = git.run_input(&args, &requests.concat())?;
+    parse_batch(&requests, &output)
+}
+
 fn parse_batch(headers: &[String], mut output: &str) -> Result<DiffBatch> {
     let mut batch = DiffBatch::default();
     let mut paths = BTreeSet::new();

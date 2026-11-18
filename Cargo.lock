@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "git-ls"
-version = "0.17.11"
+version = "0.17.12"
 dependencies = [
  "anstyle",
  "assert_cmd",

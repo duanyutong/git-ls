@@ -26,6 +26,44 @@ impl GixBackend {
         Ok(entries)
     }
 
+    pub(super) fn independent_paths(
+        &self,
+        previous: &DiffPair,
+        current: &DiffPair,
+        paths: &[String],
+    ) -> Result<bool> {
+        if previous.base != current.base {
+            return Ok(false);
+        }
+        let empty = gix::ObjectId::empty_tree(self.repo.object_hash()).to_string();
+        let base = current.base.as_ref().filter(|id| *id != &empty);
+        let ids = base.into_iter().chain([&previous.head, &current.head]);
+        let mut modes = vec![None; paths.len()];
+        for id in ids {
+            let tree = self
+                .repo
+                .find_tree(Self::object_id(id)?)
+                .map_err(|error| GitLsError::gix("read incremental tree", error))?;
+            for (index, path) in paths.iter().enumerate() {
+                let entry = tree
+                    .lookup_entry(path.as_bytes().split(|byte| *byte == b'/'))
+                    .map_err(|error| GitLsError::gix("read incremental entry", error))?;
+                let Some(entry) = entry else {
+                    if base.is_some() {
+                        return Ok(false);
+                    }
+                    continue;
+                };
+                let mode = entry.mode();
+                if !mode.is_blob() || modes[index].is_some_and(|old| old != mode) {
+                    return Ok(false);
+                }
+                modes[index] = Some(mode);
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn tree_paths(&self, pair: &DiffPair) -> Result<Vec<String>> {
         let base = pair.base.as_deref().map(Self::object_id).transpose()?;
         let head = Some(Self::object_id(&pair.head)?);

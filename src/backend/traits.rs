@@ -117,6 +117,19 @@ pub(crate) trait DiffStatBackend {
         Ok(Vec::new())
     }
 
+    /// Return old and new path-restricted subtotals only when rename matching is independent.
+    fn incremental_stats(
+        &self,
+        _previous: &DiffPair,
+        _current: &DiffPair,
+        _paths: &[String],
+    ) -> Result<Option<DiffBatch>> {
+        crate::diagnostics::event(format_args!(
+            "diff_incremental status=bypass reason=unsupported_backend"
+        ));
+        Ok(None)
+    }
+
     fn diff_tree_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
         self.diff_stats(pairs)
     }

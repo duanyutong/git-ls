@@ -54,3 +54,24 @@ fn records_without_dependency_proofs_are_neither_reused_nor_admitted() {
             .is_empty()
     );
 }
+
+#[test]
+fn unselected_comparisons_cannot_use_incremental_correction() {
+    let git = crate::test_support::MockGit::default();
+    let session = Session::new(&git);
+    let current = DiffPair {
+        base: None,
+        head: "head".into(),
+    };
+    let selection = StatisticsSelection {
+        dependencies: &HashMap::new(),
+        pairs: vec![],
+        paths: vec![],
+        all_paths: BTreeSet::new(),
+    };
+    assert!(
+        session
+            .incremental_statistics(&[current], &selection, &DiffContext::uniform(1))
+            .is_none()
+    );
+}

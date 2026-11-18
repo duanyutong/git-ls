@@ -124,10 +124,25 @@ This avoids invalidating a valid scoped answer merely because another context re
 The one-file edit fixture with 128 independently changed subdirectories requires four native discovery-tree reads instead of revisiting every changed subdirectory.
 Both backends retain the same full numeric counting policy at this stage.
 
+For one changed comparison with at least 64 previously validated dependency paths, the native backend may correct the previous aggregate using two path-restricted Git subtotals.
+The changed subset must contain at most 128 paths, occupy at most 32 KiB of arguments, and comprise fewer than one quarter of the previous dependency paths.
+For a non-empty base, every changed path must remain a regular file of the same mode in all three endpoint trees; an empty base additionally permits regular-file additions and deletions because no rename source exists.
+The previous aggregate must pass the current configuration and complete attribute validation, and subtraction and addition use checked arithmetic.
+Literal, repository-root-anchored pathspecs preserve unusual filenames and nested invocation semantics.
+Unsupported shapes, contexts, arithmetic, adapter capabilities or optional comparison failures retain the complete comparison as the correctness fallback.
+The shell backend retains the complete numeric comparison.
+
 Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
 The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
 This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.
 Exact envelope checks remain authoritative and logarithmically bounded.
+
+Selective subtotals are disabled when a Git pathspec environment override is present, because such overrides can alter or disable explicit pathspec magic.
+The full comparison has no pathspec restriction and retains the established behaviour in those environments.
+The applicable Git semantics are specified in the [Git command documentation](https://git-scm.com/docs/git).
+
+The union of restricted-result paths must exactly cover the discovered transition paths before an aggregate correction is admitted.
+Missing records, unexpected paths and incomplete subtotal batches trigger complete recalculation, including when a platform cannot address an unusual tree path through a pathspec.
 
 Encoding recognises shared dependency allocations before enumerating paths or constructing path identifiers, avoiding repeated hashing of identical decoded sets across historical comparisons.
 Equal dependency contents still intern identically when their runtime allocations differ.
