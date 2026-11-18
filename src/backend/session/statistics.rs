@@ -1,6 +1,6 @@
 //! Tree-keyed statistics and path-specific validity, independent of command execution.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::Session;
@@ -10,6 +10,13 @@ use crate::error::{GitLsError, Result};
 use crate::model::DiffStat;
 
 type Dependencies = HashMap<String, Rc<Vec<String>>>;
+
+struct StatisticsSelection<'a> {
+    dependencies: &'a Dependencies,
+    pairs: Vec<DiffPair>,
+    paths: Vec<String>,
+    all_paths: BTreeSet<&'a str>,
+}
 
 fn invalid() -> GitLsError {
     GitLsError::git_command(
@@ -192,6 +199,148 @@ impl Session<'_> {
         self.new_facts.set(true);
     }
 
+    fn statistics_selection<'a>(
+        &self,
+        requested: &[DiffPair],
+        dependencies: &'a Dependencies,
+    ) -> StatisticsSelection<'a> {
+        let all_paths: BTreeSet<_> = dependencies
+            .values()
+            .flat_map(|paths| paths.iter().map(String::as_str))
+            .collect();
+        crate::diagnostics::count("diff_dependency_paths", all_paths.len());
+        let bytes = all_paths
+            .iter()
+            .map(|path| path.len().saturating_add(1))
+            .fold(0usize, usize::saturating_add);
+        if bytes as u64 <= crate::cache::ENTRY_LIMIT {
+            return StatisticsSelection {
+                dependencies,
+                pairs: requested.to_vec(),
+                paths: all_paths.iter().map(|path| (*path).to_owned()).collect(),
+                all_paths,
+            };
+        }
+        let facts = self.facts.borrow();
+        let mut ranked: Vec<_> = requested
+            .iter()
+            .filter_map(|pair| dependencies.get(&pair.key()).map(|paths| (pair, paths)))
+            .collect();
+        ranked.sort_by_cached_key(|(pair, paths)| {
+            let key = pair.key();
+            let cached = facts
+                .diff
+                .scopes
+                .values()
+                .any(|scope| scope.values.contains_key(&key));
+            (
+                std::cmp::Reverse(cached),
+                std::cmp::Reverse(paths.len()),
+                key,
+            )
+        });
+        let mut selected: BTreeSet<&str> = BTreeSet::new();
+        let mut selected_pairs = Vec::new();
+        let mut selected_bytes = 0usize;
+        for (pair, paths) in ranked {
+            let additional = paths
+                .iter()
+                .filter(|path| !selected.contains(path.as_str()))
+                .map(|path| path.len().saturating_add(1))
+                .fold(0usize, usize::saturating_add);
+            if selected_bytes.saturating_add(additional) as u64 > crate::cache::ENTRY_LIMIT {
+                crate::diagnostics::count("diff_admission_bypasses", 1);
+                crate::diagnostics::event(format_args!(
+                    "diff_cache pair={} status=bypass reason=dependency_budget",
+                    pair.key()
+                ));
+                continue;
+            }
+            selected_bytes = selected_bytes.saturating_add(additional);
+            selected.extend(paths.iter().map(String::as_str));
+            selected_pairs.push(pair.clone());
+        }
+        StatisticsSelection {
+            dependencies,
+            pairs: selected_pairs,
+            paths: selected.into_iter().map(str::to_owned).collect(),
+            all_paths,
+        }
+    }
+
+    fn selected_statistics(
+        &self,
+        pairs: &[DiffPair],
+        requested: &[DiffPair],
+        selection: &StatisticsSelection<'_>,
+        before: &DiffContext,
+    ) -> Result<DiffBatch> {
+        self.facts.borrow_mut().diff.active.extend(
+            selection
+                .pairs
+                .iter()
+                .map(|pair| (before.scope, pair.key())),
+        );
+        let mut values = self.cached_statistics(&selection.pairs, selection.dependencies, before);
+        let missing: Vec<_> = requested
+            .iter()
+            .filter(|pair| !values.contains_key(&pair.key()))
+            .cloned()
+            .collect();
+        crate::diagnostics::count("diff_cache_hits", pairs.len() - missing.len());
+        crate::diagnostics::count("diff_tree_cache_hits", requested.len() - missing.len());
+        crate::diagnostics::count("diff_cache_misses", missing.len());
+        if missing.is_empty() {
+            return assembled(pairs, &values, selection.paths.clone());
+        }
+        let batch = self.checked_tree_stats(&missing)?;
+        let covered = batch
+            .paths
+            .iter()
+            .all(|path| selection.all_paths.contains(path.as_str()));
+        let stable = covered && self.inner.diff_snapshot(&selection.paths).as_ref() == Some(before);
+        if stable {
+            let selected: HashSet<_> = selection.pairs.iter().map(DiffPair::key).collect();
+            let (retained, stats): (Vec<DiffPair>, Vec<DiffStat>) = missing
+                .iter()
+                .zip(&batch.stats)
+                .filter(|(pair, _)| selected.contains(&pair.key()))
+                .map(|(pair, stat)| (pair.clone(), *stat))
+                .unzip();
+            if !retained.is_empty() {
+                self.retain_statistics(
+                    &retained,
+                    &DiffBatch {
+                        stats,
+                        paths: Vec::new(),
+                    },
+                    selection.dependencies,
+                    before,
+                );
+            }
+        } else {
+            crate::diagnostics::event(format_args!(
+                "diff_admission status=rejected reason={}",
+                if covered {
+                    "context_changed"
+                } else {
+                    "uncovered_dependencies"
+                }
+            ));
+        }
+        if !stable && !values.is_empty() {
+            crate::diagnostics::event(format_args!("diff_cache=bypass reason=context_changed"));
+            return self.live_statistics(pairs, requested);
+        }
+        values.extend(
+            missing
+                .iter()
+                .zip(batch.stats)
+                .map(|(pair, stat)| (pair.key(), stat)),
+        );
+        assembled(pairs, &values, batch.paths)
+    }
+
     fn reuse_statistics(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
         let mut unique = HashMap::new();
         for pair in pairs
@@ -207,70 +356,17 @@ impl Session<'_> {
             return assembled(pairs, &HashMap::new(), Vec::new());
         }
         let dependencies = self.statistics_paths(&requested)?;
-        let paths: Vec<_> = dependencies
-            .values()
-            .flat_map(|paths| paths.iter())
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        crate::diagnostics::count("diff_dependency_paths", paths.len());
-        let dependency_bytes: usize = paths.iter().map(String::len).sum();
-        if dependency_bytes as u64 > crate::cache::ENTRY_LIMIT {
-            crate::diagnostics::count("diff_admission_bypasses", 1);
+        let selection = self.statistics_selection(&requested, &dependencies);
+        crate::diagnostics::count("diff_validated_paths", selection.paths.len());
+        if selection.pairs.is_empty() {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=dependency_limit"));
             return self.live_statistics(pairs, &requested);
         }
-        let Some(before) = self.inner.diff_snapshot(&paths) else {
+        let Some(before) = self.inner.diff_snapshot(&selection.paths) else {
             crate::diagnostics::event(format_args!("diff_cache=bypass reason=unsupported_context"));
             return self.live_statistics(pairs, &requested);
         };
-        self.facts
-            .borrow_mut()
-            .diff
-            .active
-            .extend(requested.iter().map(|pair| (before.scope, pair.key())));
-        let mut values = self.cached_statistics(&requested, &dependencies, &before);
-        let missing: Vec<_> = requested
-            .iter()
-            .filter(|pair| !values.contains_key(&pair.key()))
-            .cloned()
-            .collect();
-        crate::diagnostics::count("diff_cache_hits", pairs.len() - missing.len());
-        crate::diagnostics::count("diff_tree_cache_hits", requested.len() - missing.len());
-        crate::diagnostics::count("diff_cache_misses", missing.len());
-        if missing.is_empty() {
-            return assembled(pairs, &values, paths);
-        }
-        let batch = self.checked_tree_stats(&missing)?;
-        let covered = batch
-            .paths
-            .iter()
-            .all(|path| paths.binary_search(path).is_ok());
-        let stable = covered && self.inner.diff_snapshot(&paths).as_ref() == Some(&before);
-        if stable {
-            self.retain_statistics(&missing, &batch, &dependencies, &before);
-        } else {
-            crate::diagnostics::event(format_args!(
-                "diff_admission status=rejected reason={}",
-                if covered {
-                    "context_changed"
-                } else {
-                    "uncovered_dependencies"
-                }
-            ));
-        }
-        if !stable && !values.is_empty() {
-            crate::diagnostics::event(format_args!("diff_cache=bypass reason=context_changed"));
-            return self.live_statistics(pairs, &requested);
-        }
-        values.extend(
-            missing
-                .iter()
-                .zip(batch.stats)
-                .map(|(pair, stat)| (pair.key(), stat)),
-        );
-        assembled(pairs, &values, batch.paths)
+        self.selected_statistics(pairs, &requested, &selection, &before)
     }
 }
 

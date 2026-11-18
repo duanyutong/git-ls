@@ -30,6 +30,7 @@ struct Statistics {
     scope: Cell<u64>,
     attributes: RefCell<HashMap<String, u64>>,
     aliases: HashMap<String, String>,
+    paths: HashMap<String, Vec<String>>,
     preparation: Preparation,
 }
 
@@ -77,7 +78,15 @@ impl DiffStatBackend for Statistics {
         if matches!(self.preparation, Preparation::ShortPaths) {
             return Ok(Vec::new());
         }
-        Ok(pairs.iter().map(|pair| vec![pair.head.clone()]).collect())
+        Ok(pairs
+            .iter()
+            .map(|pair| {
+                self.paths
+                    .get(&pair.head)
+                    .cloned()
+                    .unwrap_or_else(|| vec![pair.head.clone()])
+            })
+            .collect())
     }
     fn diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch> {
         self.calls.borrow_mut().push(pairs.to_vec());
@@ -100,7 +109,15 @@ impl DiffStatBackend for Statistics {
             paths: if self.new_path_at == Some(call) {
                 vec!["new".into()]
             } else {
-                pairs.iter().map(|pair| pair.head.clone()).collect()
+                pairs
+                    .iter()
+                    .flat_map(|pair| {
+                        self.paths
+                            .get(&pair.head)
+                            .cloned()
+                            .unwrap_or_else(|| vec![pair.head.clone()])
+                    })
+                    .collect()
             },
         })
     }
@@ -477,4 +494,51 @@ fn unavailable_context_preserves_live_errors_without_retaining_counts() {
         assert!(current.into_facts().diff.scopes.is_empty());
         assert_eq!(git.calls.borrow().len(), 1);
     }
+}
+
+#[test]
+fn oversized_comparisons_preserve_valid_small_cache_hits() {
+    let git = Statistics {
+        paths: HashMap::from([("huge".into(), vec!["x".repeat(1024 * 1024 + 1)])]),
+        ..Statistics::stable()
+    };
+    let current = session(&git, stored());
+    let batch = current.diff_stats(&[pair("one"), pair("huge")]).unwrap();
+    assert_eq!(batch.stats[0].added, 99);
+    assert_eq!(batch.stats[1].added, 1);
+    assert_eq!(*git.calls.borrow(), vec![vec![pair("huge")]]);
+    assert!(!current.has_new_facts());
+    assert_eq!(current.into_facts().diff.scopes[&0].values.len(), 1);
+}
+
+#[test]
+fn oversized_dependency_unions_admit_a_validated_subset_without_republishing() {
+    let git = Statistics {
+        paths: HashMap::from([
+            ("alpha".into(), vec!["x".repeat(600_000)]),
+            ("beta".into(), vec!["y".repeat(600_000)]),
+        ]),
+        ..Statistics::stable()
+    };
+    let first = session(&git, Facts::default());
+    let pairs = [pair("alpha"), pair("beta")];
+    first.diff_stats(&pairs).unwrap();
+    let facts = first.into_facts();
+    assert_eq!(facts.diff.scopes[&0].values.len(), 1);
+    assert!(
+        facts.diff.scopes[&0]
+            .values
+            .contains_key(&pair("alpha").key())
+    );
+    assert!(
+        !facts.diff.scopes[&0]
+            .values
+            .contains_key(&pair("beta").key())
+    );
+    let second = session(&git, facts);
+    let batch = second.diff_stats(&pairs).unwrap();
+    assert_eq!(batch.stats[0].added, 1);
+    assert_eq!(batch.stats[1].added, 2);
+    assert_eq!(git.calls.borrow().last().unwrap(), &vec![pair("beta")]);
+    assert!(!second.has_new_facts());
 }

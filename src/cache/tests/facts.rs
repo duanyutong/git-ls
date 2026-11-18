@@ -290,3 +290,39 @@ fn fitting_working_set_preserves_all_answers_and_active_pairs() {
     assert!(facts.same_answers(&original));
     assert_eq!(facts.diff.active, original.diff.active);
 }
+
+#[test]
+fn oversized_escaped_dependencies_do_not_displace_smaller_active_comparisons() {
+    let mut facts = statistics_fixture(3);
+    let scope = facts.diff.scopes.get_mut(&1).unwrap();
+    scope.values.get_mut("pair-0000").unwrap().used = 1000;
+    scope.values.get_mut("pair-0000").unwrap().paths = std::rc::Rc::new(vec!["\"".repeat(300_000)]);
+    scope.values.get_mut("pair-0001").unwrap().paths = std::rc::Rc::new(vec!["a".repeat(400_000)]);
+    scope.values.get_mut("pair-0002").unwrap().paths = std::rc::Rc::new(vec!["small".into()]);
+    facts.diff.active = scope.values.keys().map(|key| (1, key.clone())).collect();
+    facts.fit(4096, &|value| {
+        crate::cache::encoded_entry("key", value).is_some()
+    });
+    assert_eq!(facts.diff.scopes[&1].values.len(), 2);
+    assert!(!facts.diff.scopes[&1].values.contains_key("pair-0000"));
+    assert!(facts.diff.scopes[&1].values.contains_key("pair-0001"));
+    assert!(facts.diff.scopes[&1].values.contains_key("pair-0002"));
+}
+
+#[test]
+fn dependency_weights_account_for_nested_json_escaping() {
+    for paths in [
+        vec![],
+        vec!["plain".to_owned()],
+        vec![
+            "quote\"\\\n\r\t\u{8}\u{c}\0\u{1}\u{7f}é".into(),
+            "second".into(),
+        ],
+    ] {
+        let encoded = serde_json::to_string(&serde_json::to_string(&paths).unwrap()).unwrap();
+        assert_eq!(
+            dependency_weight(&paths) + paths.len().saturating_sub(1) + 4,
+            encoded.len()
+        );
+    }
+}

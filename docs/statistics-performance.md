@@ -78,6 +78,23 @@ The existing 1 MiB encoded-envelope limit remains effective.
 Both encoding and decoding additionally bound unique expanded dependency storage to 16 MiB, including string-slot overhead, so repeated references cannot cause unbounded allocation.
 The existing four-context and 4,096-comparison bounds are also enforced at the representation boundary.
 
+## Oversized selections and fallback
+
+An oversized dependency union does not require every comparison to bypass the statistics cache.
+The application first selects a bounded validation set, preferring retained comparisons and then comparisons with larger dependency sets, with deterministic tie-breaking.
+Only comparisons covered by the validated effective context may supply cached answers or acquire new persistent counts.
+Remaining comparisons share the ordinary numeric batch, preserving accurate complete output without expanding the attribute-validation input beyond its bound.
+The before-and-after context check remains mandatory for admitting newly measured statistics, and all discovered dependency paths remain available for detecting incomplete coverage.
+An unstable context with partial hits still requires a complete live recalculation to avoid combining incompatible answers.
+When no valid context can be established, the application performs one complete live batch without admitting unvalidated counts.
+An unchanged retained subset does not force repeated facts publication merely because another comparison remains too large to retain.
+Diagnostics distinguish encoded-envelope exhaustion from a representation-bound failure.
+
+Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
+The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
+This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.
+Exact envelope checks remain authoritative and logarithmically bounded.
+
 Encoding recognises shared dependency allocations before enumerating paths or constructing path identifiers, avoiding repeated hashing of identical decoded sets across historical comparisons.
 Equal dependency contents still intern identically when their runtime allocations differ.
 Decoding reserves the known dependency and comparison collection sizes within the existing representation bounds.

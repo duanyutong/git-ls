@@ -170,6 +170,28 @@ fn pooled_references_cannot_expand_beyond_the_memory_budget() {
 }
 
 #[test]
+fn cache_encoding_distinguishes_envelope_bytes_from_representation_failures() {
+    use crate::cache::{EncodingFailure, encoded_entry, encoded_entry_checked};
+    let invalid = BTreeMap::from([(vec![1, 2], 3)]);
+    assert_eq!(
+        encoded_entry_checked("key", &invalid).unwrap_err(),
+        EncodingFailure::Representation
+    );
+    assert!(encoded_entry("key", &invalid).is_none());
+    // The initial JSON string fits; escaping it inside the envelope does not.
+    let escaped = "\n".repeat(400_000);
+    assert_eq!(
+        encoded_entry_checked("key", &escaped).unwrap_err(),
+        EncodingFailure::EntryBytes
+    );
+    assert_eq!(EncodingFailure::EntryBytes.reason(), "entry_bytes");
+    assert_eq!(
+        EncodingFailure::Representation.reason(),
+        "representation_bound"
+    );
+}
+
+#[test]
 fn content_interning_is_independent_of_runtime_allocation_sharing() {
     let original = fixture();
     let mut separate = original.clone();

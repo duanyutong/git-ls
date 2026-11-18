@@ -64,14 +64,42 @@ impl Write for BoundedBuffer {
     }
 }
 
-fn encode(value: &impl Serialize) -> Option<Vec<u8>> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EncodingFailure {
+    EntryBytes,
+    Representation,
+}
+
+impl EncodingFailure {
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::EntryBytes => "entry_bytes",
+            Self::Representation => "representation_bound",
+        }
+    }
+}
+
+fn encode(value: &impl Serialize) -> Result<Vec<u8>, EncodingFailure> {
     let mut buffer = BoundedBuffer(Vec::new());
-    serde_json::to_writer(&mut buffer, value).ok()?;
-    Some(buffer.0)
+    serde_json::to_writer(&mut buffer, value).map_err(|error| {
+        if error.is_io() {
+            EncodingFailure::EntryBytes
+        } else {
+            EncodingFailure::Representation
+        }
+    })?;
+    Ok(buffer.0)
 }
 
 pub(crate) fn encoded_entry(key: &str, value: &impl Serialize) -> Option<Vec<u8>> {
-    let payload = String::from_utf8(encode(value)?).ok()?;
+    encoded_entry_checked(key, value).ok()
+}
+
+pub(crate) fn encoded_entry_checked(
+    key: &str,
+    value: &impl Serialize,
+) -> Result<Vec<u8>, EncodingFailure> {
+    let payload = String::from_utf8(encode(value)?).map_err(|_| EncodingFailure::Representation)?;
     encode(&Envelope {
         semantics: SEMANTICS.to_string(),
         key: key.to_string(),

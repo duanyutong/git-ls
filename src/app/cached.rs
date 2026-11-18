@@ -296,15 +296,24 @@ fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
         previous = Some(facts.diff.clone());
     }
     let encoded = std::cell::RefCell::new(None);
+    let failure = std::cell::Cell::new(crate::cache::EncodingFailure::EntryBytes);
     let before = facts.metadata.len();
-    facts.fit(4096, &|value| {
-        let bytes = crate::cache::encoded_entry(key, value);
-        let fits = bytes.is_some();
-        encoded.replace(bytes);
-        fits
-    });
+    facts.fit(
+        4096,
+        &|value| match crate::cache::encoded_entry_checked(key, value) {
+            Ok(bytes) => {
+                encoded.replace(Some(bytes));
+                true
+            }
+            Err(reason) => {
+                encoded.replace(None);
+                failure.set(reason);
+                false
+            }
+        },
+    );
     if let Some(original) = &previous {
-        report_evictions(original, &facts.diff, "entry_bytes");
+        report_evictions(original, &facts.diff, failure.get().reason());
     }
     crate::diagnostics::event(format_args!(
         "cache_admission entry=facts encoded_bytes={} entry_limit_bytes={}",

@@ -66,18 +66,24 @@ impl DiffFacts {
     }
 
     fn ordered_pairs(&self) -> Vec<(u64, String)> {
-        let mut entries: Vec<_> = self
-            .scopes
-            .iter()
-            .flat_map(|(&scope, values)| {
-                values.values.iter().map(move |(key, value)| {
-                    let pair = (scope, key.clone());
-                    (self.active.contains(&pair), value.used, pair)
-                })
-            })
-            .collect();
+        let mut entries = Vec::new();
+        let mut weights = HashMap::new();
+        for (&scope, values) in &self.scopes {
+            for (key, value) in &values.values {
+                let pair = (scope, key.clone());
+                let weight = *weights
+                    .entry(std::rc::Rc::as_ptr(&value.paths))
+                    .or_insert_with(|| dependency_weight(&value.paths));
+                entries.push((
+                    self.active.contains(&pair),
+                    std::cmp::Reverse(weight),
+                    value.used,
+                    pair,
+                ));
+            }
+        }
         entries.sort_unstable_by(|left, right| right.cmp(left));
-        entries.into_iter().map(|(_, _, pair)| pair).collect()
+        entries.into_iter().map(|(_, _, _, pair)| pair).collect()
     }
 
     fn prune_active(&mut self) {
@@ -141,6 +147,19 @@ impl DiffFacts {
         });
         self.prune_active();
     }
+}
+
+fn dependency_weight(paths: &[String]) -> usize {
+    paths.iter().fold(0usize, |total, path| {
+        path.bytes().fold(total.saturating_add(4), |total, byte| {
+            total.saturating_add(match byte {
+                b'"' | b'\\' => 4,
+                b'\n' | b'\r' | b'\t' | 8 | 12 => 3,
+                0..=31 => 7,
+                _ => 1,
+            })
+        })
+    })
 }
 
 fn retain<T>(map: &mut HashMap<String, T>, recency: &HashMap<String, u64>, limit: usize) {
