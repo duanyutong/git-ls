@@ -112,6 +112,12 @@ struct CacheLocation {
 }
 
 impl CacheLocation {
+    fn same_facts(&self, other: &Self) -> bool {
+        self.common == other.common
+            && self.object_format == other.object_format
+            && self.shallow_boundary == other.shallow_boundary
+    }
+
     fn matches_backend(&self, git: &dyn GitBackend) -> bool {
         git.captured_shallow_boundary()
             .is_none_or(|boundary| boundary == self.shallow_boundary)
@@ -348,6 +354,67 @@ fn admit_facts(facts: &mut Facts, key: &str) -> Option<Vec<u8>> {
     encoded.into_inner()
 }
 
+fn publish_facts(
+    store: &Store,
+    facts: &mut Facts,
+    original: &Facts,
+    name: &str,
+    key: &str,
+    encoded: Option<Vec<u8>>,
+    merge: bool,
+) {
+    if !merge {
+        if let Some(bytes) = encoded {
+            store.publish_encoded(name, &bytes);
+        }
+        return;
+    }
+    store.update_encoded::<Facts>(name, key, |latest| {
+        if let Some(latest) = latest
+            && !latest.same_answers(original)
+        {
+            let added = facts.merge_concurrent(latest, original);
+            crate::diagnostics::count("merged_facts", added);
+            crate::diagnostics::event(format_args!("cache_facts_merge entries={added}"));
+            return admit_facts(facts, key);
+        }
+        encoded
+    });
+}
+
+struct PublicationValidity {
+    facts: bool,
+    snapshot: bool,
+}
+
+fn revalidate_publication(
+    context: &CacheLocation,
+    inputs: &Inputs,
+    git: &dyn GitBackend,
+) -> PublicationValidity {
+    let _perf = crate::diagnostics::stage("cache_revalidation");
+    let current = Inputs::capture(git);
+    let current_location = location(".");
+    let validity = PublicationValidity {
+        facts: current_location
+            .as_ref()
+            .is_some_and(|current| context.same_facts(current)),
+        snapshot: current.is_ok_and(|current| &current == inputs)
+            && context.configured_main == inputs.configured_main
+            && current_location.as_ref() == Some(context),
+    };
+    if !validity.facts {
+        crate::diagnostics::event(format_args!(
+            "cache_publication=discarded reason=graph_context_changed entry=facts_and_snapshot"
+        ));
+    } else if !validity.snapshot {
+        crate::diagnostics::event(format_args!(
+            "cache_publication=discarded reason=inputs_changed entry=snapshot"
+        ));
+    }
+    validity
+}
+
 pub(super) fn execute_cached<W: Write>(
     raw: &Args,
     args: &RuntimeOptions,
@@ -432,23 +499,20 @@ pub(super) fn execute_cached<W: Write>(
             crate::cache::maintenance::after_render(&store, false, raw.no_cache_maintenance, &name);
             return Ok(());
         }
-        let unchanged = {
-            let _perf = crate::diagnostics::stage("cache_revalidation");
-            Inputs::capture(git).is_ok_and(|current| current == inputs)
-                && context.configured_main == inputs.configured_main
-                && location(".").as_ref() == Some(&context)
-        };
-        if unchanged {
-            if let Some(bytes) = encoded {
-                store.publish_encoded(facts_name, &bytes);
-            }
-            if !topology_hit {
+        let validity = revalidate_publication(&context, &inputs, git);
+        if validity.facts {
+            publish_facts(
+                &store,
+                &mut facts,
+                &original_facts,
+                facts_name,
+                &facts_key,
+                encoded,
+                !raw.refresh_cache,
+            );
+            if validity.snapshot && !topology_hit {
                 published = store.publish(&name, &key, &Snapshot::neutral(analysis.groups));
             }
-        } else {
-            crate::diagnostics::event(format_args!(
-                "cache_publication=discarded reason=inputs_changed"
-            ));
         }
     }
     crate::cache::maintenance::after_render(&store, published, raw.no_cache_maintenance, &name);

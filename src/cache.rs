@@ -29,6 +29,21 @@ pub(crate) struct Store {
 
 pub(crate) struct CacheLock(File);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LockFailure {
+    Busy,
+    Unavailable,
+}
+
+impl LockFailure {
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Busy => "busy",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 impl Drop for CacheLock {
     fn drop(&mut self) {
         let _ = self.0.unlock();
@@ -161,9 +176,13 @@ impl Store {
     }
 
     pub(crate) fn lock(&self, name: &str) -> Option<CacheLock> {
+        self.lock_checked(name).ok()
+    }
+
+    fn lock_checked(&self, name: &str) -> Result<CacheLock, LockFailure> {
         let path = self.root.join(name);
         if path.exists() && !regular(&path) {
-            return None;
+            return Err(LockFailure::Unavailable);
         }
         let file = OpenOptions::new()
             .create(true)
@@ -171,17 +190,30 @@ impl Store {
             .read(true)
             .write(true)
             .open(path)
-            .ok()?;
-        file.try_lock().ok()?;
-        Some(CacheLock(file))
+            .map_err(|_| LockFailure::Unavailable)?;
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => LockFailure::Busy,
+            std::fs::TryLockError::Error(_) => LockFailure::Unavailable,
+        })?;
+        Ok(CacheLock(file))
+    }
+
+    fn publication_lock(&self, name: &str) -> Option<CacheLock> {
+        match self.lock_checked("publication.lock") {
+            Ok(lock) => Some(lock),
+            Err(reason) => {
+                crate::diagnostics::event(format_args!(
+                    "cache_publication=skipped reason={} entry={name}",
+                    reason.reason()
+                ));
+                None
+            }
+        }
     }
 
     pub(crate) fn publish<T: Serialize>(&self, name: &str, key: &str, value: &T) -> bool {
         let _perf = crate::diagnostics::stage("cache_write");
-        let Some(lock) = self.lock("publication.lock") else {
-            crate::diagnostics::event(format_args!(
-                "cache_publication=skipped reason=busy_or_unavailable"
-            ));
+        let Some(lock) = self.publication_lock(name) else {
             return false;
         };
         self.publish_locked(&lock, name, key, value)
@@ -200,17 +232,37 @@ impl Store {
             ));
             return false;
         };
-        self.write_locked(name, &bytes)
+        self.commit_encoded(name, &bytes)
     }
 
     pub(crate) fn publish_encoded(&self, name: &str, bytes: &[u8]) -> bool {
         let _perf = crate::diagnostics::stage("cache_write");
-        let Some(_lock) = self.lock("publication.lock") else {
+        let Some(_lock) = self.publication_lock(name) else {
+            return false;
+        };
+        self.commit_encoded(name, bytes)
+    }
+
+    pub(crate) fn update_encoded<T: DeserializeOwned>(
+        &self,
+        name: &str,
+        key: &str,
+        update: impl FnOnce(Option<T>) -> Option<Vec<u8>>,
+    ) -> bool {
+        let _perf = crate::diagnostics::stage("cache_write");
+        let Some(_lock) = self.publication_lock(name) else {
+            return false;
+        };
+        let Some(bytes) = update(self.read(name, key)) else {
             crate::diagnostics::event(format_args!(
-                "cache_publication=skipped reason=busy_or_unavailable entry={name}"
+                "cache_publication=skipped reason=admission_rejected entry={name}"
             ));
             return false;
         };
+        self.commit_encoded(name, &bytes)
+    }
+
+    fn commit_encoded(&self, name: &str, bytes: &[u8]) -> bool {
         let written = self.write_locked(name, bytes);
         crate::diagnostics::event(format_args!(
             "cache_publication={} reason={} entry={name} bytes={}",

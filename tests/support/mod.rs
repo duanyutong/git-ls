@@ -27,7 +27,14 @@ impl TestRepo {
     }
 
     pub(super) fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
-        let mut command = Command::new(program);
+        self.std_command(program).into()
+    }
+
+    pub(super) fn std_command(
+        &self,
+        program: impl AsRef<std::ffi::OsStr>,
+    ) -> std::process::Command {
+        let mut command = std::process::Command::new(program);
         command
             .current_dir(self.path())
             .env_remove("GIT_DIR")

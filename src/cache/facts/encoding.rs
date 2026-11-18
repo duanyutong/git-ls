@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
 use super::{DiffFacts, DiffScope, DiffValue};
 use crate::model::DiffStat;
 
-// The encoded entry remains limited to 1 MiB; pooling must not permit unbounded
-// expansion when a small entry refers repeatedly to long dependency names.
+// The encoded entry remains limited to 1 MiB; pooling must not permit unbounded expansion when a small entry refers repeatedly to long dependency names.
 const EXPANDED_PATH_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]

@@ -34,6 +34,54 @@ fn publishes_atomically_and_validates_keys_versions_and_checksums() {
 }
 
 #[test]
+fn encoded_updates_observe_the_latest_value_and_preserve_it_when_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    let name = "facts-gix.json";
+    assert!(store.publish(name, "key", &vec!["latest"]));
+    assert!(store.update_encoded::<Vec<String>>(name, "key", |latest| {
+        let mut latest = latest.unwrap();
+        latest.push("current".into());
+        encoded_entry("key", &latest)
+    }));
+    assert_eq!(
+        store.read::<Vec<String>>(name, "key").unwrap(),
+        vec!["latest", "current"]
+    );
+    assert!(!store.update_encoded::<Vec<String>>(name, "key", |_| None));
+    assert_eq!(
+        store.read::<Vec<String>>(name, "key").unwrap(),
+        vec!["latest", "current"]
+    );
+    let lock = store.lock("publication.lock").unwrap();
+    assert_eq!(
+        store.lock_checked("publication.lock").err(),
+        Some(LockFailure::Busy)
+    );
+    assert!(
+        !store
+            .update_encoded::<Vec<String>>(name, "key", |_| panic!("busy update must not execute"))
+    );
+    drop(lock);
+    assert!(
+        store.update_encoded::<Vec<String>>(name, "other", |latest| {
+            assert!(latest.is_none());
+            encoded_entry("other", &vec!["replacement"])
+        })
+    );
+    assert_eq!(
+        store.read::<Vec<String>>(name, "other").unwrap(),
+        vec!["replacement"]
+    );
+    fs::remove_file(store.root.join("publication.lock")).unwrap();
+    fs::create_dir(store.root.join("publication.lock")).unwrap();
+    assert_eq!(
+        store.lock_checked("publication.lock").err(),
+        Some(LockFailure::Unavailable)
+    );
+}
+
+#[test]
 fn bounded_publication_and_clearing_do_not_wait_for_active_writers() {
     let directory = tempfile::tempdir().unwrap();
     let store = Store::open(directory.path()).unwrap();

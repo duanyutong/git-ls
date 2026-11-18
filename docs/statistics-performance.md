@@ -90,6 +90,25 @@ When no valid context can be established, the application performs one complete 
 An unchanged retained subset does not force repeated facts publication merely because another comparison remains too large to retain.
 Diagnostics distinguish encoded-envelope exhaustion from a representation-bound failure.
 
+## Reference changes and publication
+
+Immutable graph and metadata facts are keyed by object identifiers, whilst numeric comparisons additionally retain their validated configuration and attribute context.
+Moving a branch during analysis therefore no longer discards those facts when the repository, object format and shallow boundary remain compatible and graph interpretation remains supported.
+Topology publication still requires the complete captured reference and repository context to remain unchanged.
+An incompatible graph context prevents both facts and topology publication.
+
+Facts publication reads the latest compatible entry under the existing non-blocking publication lock and merges missing answers before bounded admission.
+The current invocation's newly computed answers take precedence on conflicts, whilst unchanged loaded answers may adopt concurrent updates.
+Its active working set retains its admission priority.
+Unchanged latest answers reuse the already encoded bytes; concurrent additions require renewed admission within the same limits.
+Explicit refreshes replace facts without reading or merging the previous entry.
+Contention remains a bounded skip, with separate busy, unavailable-storage, admission-rejection and write-failure diagnostics.
+Two concurrent invocations may therefore still require later recalculation if one cannot acquire the publication lock; the application does not wait indefinitely to preserve optional reuse.
+
+Lifecycle regression cases cover top-only commits, aliases, metadata-only amendments, incompatible shallow changes, and a deterministic writer which advances a branch whilst an earlier invocation is paused.
+The paused invocation must retain its valid facts, preserve the later writer's comparisons, and discard its old topology snapshot.
+Concurrency fixtures use two publishers.
+
 Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
 The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
 This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.

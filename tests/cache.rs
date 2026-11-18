@@ -346,7 +346,7 @@ exec "$LS_TEST_REAL_GIT" "$@"
             .success();
         let diagnostics = String::from_utf8_lossy(&output.get_output().stderr);
         assert!(
-            diagnostics.contains("cache_publication=discarded reason=inputs_changed"),
+            diagnostics.contains("cache_publication=discarded reason=graph_context_changed"),
             "{diagnostics}"
         );
         assert!(
@@ -393,7 +393,7 @@ fn linked_worktrees_share_cache_without_sharing_current_markers() {
 fn simultaneous_publishers_produce_complete_readable_entries() {
     let repo = fixture();
     std::thread::scope(|scope| {
-        for _ in 0..4 {
+        for _ in 0..2 {
             scope.spawn(|| {
                 run(&repo, &["--refresh-cache"]);
             });

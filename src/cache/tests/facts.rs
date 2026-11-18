@@ -281,6 +281,87 @@ fn oversized_tree_mappings_are_trimmed_without_dropping_graph_answers() {
 }
 
 #[test]
+fn concurrent_facts_merge_missing_answers_without_replacing_current_results() {
+    let mut current = statistics_fixture(4);
+    current.diff.active.insert((1, "pair-0000".into()));
+    current.recency.insert("base".into(), 30);
+    let mut incoming = statistics_fixture(6);
+    incoming
+        .bases
+        .insert("base".into(), Some("ancestor".into()));
+    incoming.distances.insert("distance".into(), Some(3));
+    incoming
+        .metadata
+        .insert("meta".into(), CommitMeta::new("meta", 0, "subject"));
+    incoming.diff.trees.insert("commit".into(), "tree".into());
+    incoming.recency.insert("base".into(), 20);
+    incoming.recency.insert("distance".into(), 20);
+    incoming.clock = 20;
+    incoming.diff.clock = 20;
+    incoming.diff.scopes.get_mut(&1).unwrap().used = 20;
+    incoming
+        .diff
+        .scopes
+        .get_mut(&1)
+        .unwrap()
+        .values
+        .get_mut("pair-0000")
+        .unwrap()
+        .stat
+        .added = 999;
+    let extra = incoming.diff.scopes[&1].clone();
+    incoming.diff.scopes.insert(2, extra);
+    incoming.diff.active.insert((2, "pair-0005".into()));
+    assert_eq!(current.merge_concurrent(incoming, &Facts::default()), 12);
+    assert_eq!(current.diff.scopes[&1].values["pair-0000"].stat.added, 0);
+    assert_eq!(current.diff.scopes[&1].values.len(), 6);
+    assert_eq!(current.diff.scopes[&2].values.len(), 6);
+    assert_eq!(current.clock, 20);
+    assert_eq!(current.diff.clock, 20);
+    assert_eq!(current.diff.scopes[&1].used, 20);
+    assert_eq!(current.recency["base"], 30);
+    assert_eq!(current.recency["distance"], 20);
+    assert_eq!(
+        current.diff.active,
+        HashSet::from([(1, "pair-0000".into())])
+    );
+    assert_eq!(current.bases["base"].as_deref(), Some("ancestor"));
+    assert_eq!(current.diff.trees["commit"], "tree");
+}
+
+#[test]
+fn concurrent_updates_replace_unchanged_loaded_counts_but_preserve_new_answers() {
+    let original = statistics_fixture(3);
+    let mut current = original.clone();
+    current
+        .diff
+        .scopes
+        .get_mut(&1)
+        .unwrap()
+        .values
+        .get_mut("pair-0001")
+        .unwrap()
+        .stat
+        .added = 101;
+    let mut latest = original.clone();
+    for (key, value) in &mut latest.diff.scopes.get_mut(&1).unwrap().values {
+        if key != "pair-0002" {
+            value.configuration = 2;
+        }
+        value.used = 99;
+    }
+    assert_eq!(current.merge_concurrent(latest, &original), 1);
+    assert_eq!(current.diff.scopes[&1].values["pair-0000"].configuration, 2);
+    assert_eq!(current.diff.scopes[&1].values["pair-0001"].stat.added, 101);
+    assert_eq!(current.diff.scopes[&1].values["pair-0001"].configuration, 1);
+    assert_eq!(current.diff.scopes[&1].values["pair-0001"].used, 99);
+    assert_eq!(current.diff.scopes[&1].values["pair-0002"].configuration, 1);
+    assert_eq!(current.diff.scopes[&1].values["pair-0002"].used, 99);
+    let unchanged = current.clone();
+    assert_eq!(current.merge_concurrent(unchanged, &original), 0);
+}
+
+#[test]
 fn fitting_working_set_preserves_all_answers_and_active_pairs() {
     let mut facts = statistics_fixture(3);
     facts.diff.trees.insert("commit".into(), "tree".into());

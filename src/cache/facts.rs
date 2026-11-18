@@ -41,6 +41,15 @@ pub(crate) struct DiffValue {
     pub(crate) used: u64,
 }
 
+impl DiffValue {
+    fn same_answer(&self, other: &Self) -> bool {
+        self.stat == other.stat
+            && self.paths == other.paths
+            && self.fingerprint == other.fingerprint
+            && self.configuration == other.configuration
+    }
+}
+
 impl DiffFacts {
     fn same_answers(&self, other: &Self) -> bool {
         self.trees == other.trees
@@ -49,12 +58,10 @@ impl DiffFacts {
                 other.scopes.get(id).is_some_and(|previous| {
                     scope.values.len() == previous.values.len()
                         && scope.values.iter().all(|(key, value)| {
-                            previous.values.get(key).is_some_and(|old| {
-                                value.stat == old.stat
-                                    && value.paths == old.paths
-                                    && value.fingerprint == old.fingerprint
-                                    && value.configuration == old.configuration
-                            })
+                            previous
+                                .values
+                                .get(key)
+                                .is_some_and(|old| value.same_answer(old))
                         })
                 })
             })
@@ -183,7 +190,64 @@ fn retain<T>(map: &mut HashMap<String, T>, recency: &HashMap<String, u64>, limit
     map.retain(|key, _| retained.contains(key));
 }
 
+fn extend_missing<K: Eq + std::hash::Hash, V>(
+    target: &mut HashMap<K, V>,
+    incoming: HashMap<K, V>,
+) -> usize {
+    let before = target.len();
+    for (key, value) in incoming {
+        target.entry(key).or_insert(value);
+    }
+    target.len().saturating_sub(before)
+}
+
 impl Facts {
+    /// Merge only facts identified by the same immutable compatibility key.
+    /// Newly calculated answers take precedence; unchanged loaded answers may adopt a concurrent writer's update.
+    /// Active protection remains local.
+    pub(crate) fn merge_concurrent(&mut self, incoming: Self, original: &Self) -> usize {
+        let mut added = extend_missing(&mut self.bases, incoming.bases);
+        added = added.saturating_add(extend_missing(&mut self.distances, incoming.distances));
+        added = added.saturating_add(extend_missing(&mut self.metadata, incoming.metadata));
+        self.clock = self.clock.max(incoming.clock);
+        for (key, used) in incoming.recency {
+            self.recency
+                .entry(key)
+                .and_modify(|value| *value = (*value).max(used))
+                .or_insert(used);
+        }
+        self.diff.clock = self.diff.clock.max(incoming.diff.clock);
+        added = added.saturating_add(extend_missing(&mut self.diff.trees, incoming.diff.trees));
+        for (context, values) in incoming.diff.scopes {
+            let scope = self.diff.scopes.entry(context).or_default();
+            scope.used = scope.used.max(values.used);
+            for (key, value) in values.values {
+                match scope.values.entry(key) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(value);
+                        added = added.saturating_add(1);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        let unchanged = original
+                            .diff
+                            .scopes
+                            .get(&context)
+                            .and_then(|scope| scope.values.get(entry.key()))
+                            .is_some_and(|before| entry.get().same_answer(before));
+                        if unchanged && !entry.get().same_answer(&value) {
+                            entry.insert(value);
+                            added = added.saturating_add(1);
+                        } else {
+                            let used = entry.get().used.max(value.used);
+                            entry.get_mut().used = used;
+                        }
+                    }
+                }
+            }
+        }
+        added
+    }
+
     pub(crate) fn same_answers(&self, other: &Self) -> bool {
         self.bases == other.bases
             && self.distances == other.distances
