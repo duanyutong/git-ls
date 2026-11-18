@@ -19,7 +19,7 @@ impl Session<'_> {
         &self,
         missing: &[DiffPair],
         selection: &StatisticsSelection<'_>,
-        context: &DiffContext,
+        context: &DiffContext<'_>,
     ) -> Option<DiffBatch> {
         let [current] = missing else { return None };
         if !selection.pairs.contains(current) {

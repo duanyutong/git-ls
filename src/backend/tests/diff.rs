@@ -215,6 +215,7 @@ fn context_fingerprints_exclude_only_known_irrelevant_settings() {
         configuration_fingerprint(&format!("{base}unknown.setting\0"))
     );
     let context = super::super::DiffContext {
+        requested: None,
         scope: 1,
         configuration: 2,
         attributes: std::collections::BTreeMap::from([("one".into(), 3), ("two".into(), 4)]),
@@ -364,5 +365,56 @@ fn filtered_statistics_preserve_literal_root_pathspecs_and_framing() {
         git.incremental_stats(&pairs[0], &pairs[1], &paths)
             .unwrap()
             .is_none()
+    );
+}
+
+#[test]
+fn sparse_attribute_fingerprints_match_dense_records_and_distinguish_unvalidated_paths() {
+    let paths = vec!["absent".to_owned(), "explicit".to_owned()];
+    let attributes = BTreeMap::from([("explicit".into(), 42)]);
+    let sparse = DiffContext {
+        scope: 1,
+        configuration: 2,
+        attributes: attributes.clone(),
+        requested: Some(&paths),
+    };
+    let mut dense = DiffContext {
+        scope: 1,
+        configuration: 2,
+        attributes,
+        requested: None,
+    };
+    dense.attributes.insert(
+        "absent".into(),
+        crate::cache::hash(&Vec::<(&str, &str)>::new()),
+    );
+    for subset in [
+        vec![],
+        vec!["absent".into()],
+        vec!["explicit".into()],
+        paths.clone(),
+    ] {
+        assert_eq!(sparse.fingerprint(&subset), dense.fingerprint(&subset));
+        let legacy = crate::cache::hash(&(
+            dense.configuration,
+            subset
+                .iter()
+                .map(|path| (path, dense.attributes.get(path)))
+                .collect::<Vec<_>>(),
+        ));
+        assert_eq!(sparse.fingerprint(&subset), legacy);
+    }
+    let unknown = DiffContext {
+        requested: None,
+        attributes: BTreeMap::new(),
+        ..sparse.clone()
+    };
+    assert_ne!(
+        sparse.fingerprint(&["absent".into()]),
+        unknown.fingerprint(&["absent".into()])
+    );
+    assert_eq!(
+        sparse.fingerprint(&["unknown".into()]),
+        unknown.fingerprint(&["unknown".into()])
     );
 }

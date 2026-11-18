@@ -60,9 +60,11 @@ impl GitCommand for ProcessGit {
             .map(|context| crate::cache::hash(&(context.scope, context.fingerprint(paths))))
     }
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<super::DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<super::DiffContext<'a>> {
         let _perf = crate::diagnostics::stage("diff_context");
-        if paths.iter().any(|path| path.contains('\u{fffd}')) {
+        if paths.iter().any(|path| path.contains('\u{fffd}'))
+            || paths.windows(2).any(|pair| pair[0] > pair[1])
+        {
             return None;
         }
         if self.worktree.borrow().is_none() {
@@ -104,24 +106,26 @@ impl GitCommand for ProcessGit {
             metadata.len(),
             metadata.modified().ok()?,
         ));
-        let mut values: BTreeMap<_, Vec<(&str, &str)>> = paths
-            .iter()
-            .map(|path| (path.clone(), Vec::new()))
-            .collect();
+        let mut values: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
         let mut fields = attributes.split_terminator('\0');
         while let Some(path) = fields.next() {
             let attribute = fields.next()?;
             let value = fields.next()?;
-            values.get_mut(path)?.push((attribute, value));
+            paths
+                .binary_search_by(|requested| requested.as_str().cmp(path))
+                .ok()?;
+            values.entry(path).or_default().push((attribute, value));
         }
+        crate::diagnostics::count("diff_attribute_records", values.len());
         Some(super::DiffContext {
             scope,
             configuration: super::diff::configuration_fingerprint(&config),
+            requested: Some(paths),
             attributes: values
                 .into_iter()
                 .map(|(path, mut attributes)| {
                     attributes.sort_unstable();
-                    (path, crate::cache::hash(&attributes))
+                    (path.to_owned(), crate::cache::hash(&attributes))
                 })
                 .collect(),
         })

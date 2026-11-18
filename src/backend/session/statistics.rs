@@ -124,7 +124,7 @@ impl Session<'_> {
         &self,
         pairs: &[DiffPair],
         paths: &Dependencies,
-        context: &DiffContext,
+        context: &DiffContext<'_>,
     ) -> HashMap<String, DiffStat> {
         let mut facts = self.facts.borrow_mut();
         let used = facts.diff.tick();
@@ -176,7 +176,7 @@ impl Session<'_> {
         pairs: &[DiffPair],
         batch: &DiffBatch,
         paths: &Dependencies,
-        context: &DiffContext,
+        context: &DiffContext<'_>,
     ) {
         let mut facts = self.facts.borrow_mut();
         let used = facts.diff.tick();
@@ -298,7 +298,7 @@ impl Session<'_> {
         pairs: &[DiffPair],
         requested: &[DiffPair],
         selection: &StatisticsSelection<'_>,
-        before: &DiffContext,
+        before: &DiffContext<'_>,
     ) -> Result<DiffBatch> {
         self.facts.borrow_mut().diff.active.extend(
             selection

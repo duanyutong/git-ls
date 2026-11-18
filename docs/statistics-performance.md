@@ -132,6 +132,11 @@ Literal, repository-root-anchored pathspecs preserve unusual filenames and neste
 Unsupported shapes, contexts, arithmetic, adapter capabilities or optional comparison failures retain the complete comparison as the correctness fallback.
 The shell backend retains the complete numeric comparison.
 
+Attribute captures borrow the sorted validation request and allocate per-path records only for attributes actually reported by Git.
+A validated path with no reported attributes remains distinct from an unvalidated path; dense and sparse representations yield identical fingerprints.
+Fingerprint construction streams the existing hash format without allocating a temporary vector of path tuples.
+Warm invocations continue to resolve live Git configuration and attributes, and cold or changed invocations retain the subsequent validation capture.
+
 Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
 The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
 This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.

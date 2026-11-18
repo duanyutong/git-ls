@@ -25,7 +25,7 @@ pub(crate) trait GitCommand {
         None
     }
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<DiffContext<'a>> {
         self.diff_context(paths).map(DiffContext::uniform)
     }
 
@@ -99,7 +99,7 @@ pub(crate) trait DiffStatBackend {
     fn diff_stats(&self, pairs: &[DiffPair]) -> Result<DiffBatch>;
     fn diff_context(&self, paths: &[String]) -> Option<u64>;
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<DiffContext<'a>> {
         self.diff_context(paths).map(DiffContext::uniform)
     }
 

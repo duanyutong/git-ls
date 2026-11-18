@@ -146,7 +146,7 @@ impl DiffStatBackend for GixBackend {
         super::GitCommand::diff_context(&self.command, paths)
     }
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<super::DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<super::DiffContext<'a>> {
         super::GitCommand::diff_snapshot(&self.command, paths)
     }
 

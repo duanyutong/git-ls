@@ -24,29 +24,50 @@ pub(crate) struct DiffBatch {
 
 /// Effective inputs for one capture; path fingerprints permit subset validation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DiffContext {
+pub(crate) struct DiffContext<'a> {
     pub(crate) scope: u64,
     pub(crate) configuration: u64,
     pub(crate) attributes: BTreeMap<String, u64>,
+    pub(crate) requested: Option<&'a [String]>,
 }
 
-impl DiffContext {
+impl DiffContext<'_> {
     pub(crate) const fn uniform(configuration: u64) -> Self {
         Self {
             scope: 0,
             configuration,
             attributes: BTreeMap::new(),
+            requested: None,
         }
     }
 
     pub(crate) fn fingerprint(&self, paths: &[String]) -> u64 {
-        crate::cache::hash(&(
-            self.configuration,
-            paths
-                .iter()
-                .map(|path| (path, self.attributes.get(path)))
-                .collect::<Vec<_>>(),
-        ))
+        crate::cache::hash(&PathFingerprint {
+            context: self,
+            paths,
+        })
+    }
+}
+
+struct PathFingerprint<'a, 'b> {
+    context: &'a DiffContext<'b>,
+    paths: &'a [String],
+}
+
+impl std::hash::Hash for PathFingerprint<'_, '_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.context.configuration.hash(state);
+        self.paths.len().hash(state);
+        let empty = crate::cache::hash(&Vec::<(&str, &str)>::new());
+        for path in self.paths {
+            let value = self.context.attributes.get(path).or_else(|| {
+                self.context
+                    .requested
+                    .filter(|requested| requested.binary_search(path).is_ok())
+                    .map(|_| &empty)
+            });
+            (path, value).hash(state);
+        }
     }
 }
 
@@ -144,7 +165,7 @@ impl<T: GitCommand + ?Sized> DiffStatBackend for T {
         GitCommand::diff_context(self, paths)
     }
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<DiffContext<'a>> {
         GitCommand::diff_snapshot(self, paths)
     }
 

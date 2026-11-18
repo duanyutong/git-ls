@@ -194,7 +194,7 @@ impl DiffStatBackend for Statistics {
             .unwrap_or_else(|| self.context.get())
     }
 
-    fn diff_snapshot(&self, paths: &[String]) -> Option<crate::backend::DiffContext> {
+    fn diff_snapshot<'a>(&self, paths: &'a [String]) -> Option<crate::backend::DiffContext<'a>> {
         let mut context = crate::backend::DiffContext::uniform(self.diff_context(paths)?);
         context.scope = self.scope.get();
         context.attributes = self
