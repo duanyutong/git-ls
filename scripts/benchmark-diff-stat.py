@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import benchmark_metrics
@@ -60,6 +61,10 @@ CASES = [
     Case("paths-6000", 1, "paths", paths=6000),
     Case("amend-identical-tree", 1, "amend"),
     Case("edit-same-path", 32, "edit"),
+    Case("large-layer-edit", 1, "large_edit", paths=512),
+    Case("stack-top-edit", 3, "stack_edit", paths=2000),
+    Case("branch-description", 3, "branch_config"),
+    Case("fetch-prune", 3, "fetch_config"),
     Case("edit-new-path", 32, "new_path"),
     Case("new-topic", 32, "new_topic"),
     Case("unrelated-config", 32, "config"),
@@ -126,6 +131,11 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
         (f"old-{index:05}.txt", f"file {index}\n".encode() + b"stable\n" * 30)
         for index in range(case.renames)
     ]
+    if case.shape == "large_edit":
+        initial = [
+            (f"directory-{index:04}/data", f"base {index}\n".encode() * 64)
+            for index in range(case.paths)
+        ]
     if case.shape == "large":
         initial = [("data", b"stable content\n" * 200000)]
     base = commit("main", 0, initial or [("data", b"base\n")])
@@ -150,7 +160,7 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
     for index in range(case.layers):
         parent = (
             trunk
-            if case.shape == "stack"
+            if case.shape in ("stack", "stack_edit")
             or case.shape.startswith("shared")
             or case.shape == "branchless"
             else base
@@ -169,12 +179,22 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
             files = [("data", initial[0][1] + b"changed\n")]
         elif case.shape == "binary":
             files = [("binary", b"\0binary\0content\0")]
+        elif case.shape == "large_edit":
+            files = [
+                (path, f"layer {number}\n".encode() * 64)
+                for number, (path, _) in enumerate(initial)
+            ]
+        elif case.shape == "stack_edit":
+            files = [
+                (f"layer-{index:03}/file-{number:05}-" + "x" * 80, b"changed\n")
+                for number in range(case.paths)
+            ]
         elif case.shape == "paths":
             files = [
                 (f"file-{number:05}-" + "x" * 210, b"changed\n") for number in range(case.paths)
             ]
         tip = commit(f"topic-{index:03}", parent, files, bool(case.renames))
-        if case.shape == "stack":
+        if case.shape in ("stack", "stack_edit"):
             trunk = tip
     git(repo, "fast-import", "--quiet", data=bytes(records))
     if case.depth:
@@ -208,12 +228,63 @@ def fixture(directory: pathlib.Path, case: Case) -> pathlib.Path:
     return repo
 
 
+def replace_layer(
+    repo: pathlib.Path,
+    branch: str,
+    parent: str,
+    files: Iterable[tuple[str, bytes]],
+    token: int,
+) -> None:
+    """Replace one layer without quadratic construction of the import stream."""
+    records = bytearray(
+        (
+            f"commit refs/heads/{branch}\n"
+            f"committer Benchmark <benchmark@example.invalid> {1700000500 + token} +0000\n"
+            f"data 6\nlayer\nfrom {parent}\n"
+        ).encode()
+    )
+    for path, content in files:
+        records.extend(f"M 100644 inline {path}\ndata {len(content)}\n".encode())
+        records.extend(content)
+        records.extend(b"\n")
+    records.extend(b"\n")
+    git(repo, "fast-import", "--quiet", "--force", data=bytes(records))
+
+
 def prepare_sample(
     binary: pathlib.Path, repo: pathlib.Path, case: Case, backend: str, flags: list[str], token: int
 ) -> None:
     """Arrange one development event outside the measured invocation."""
     if case.shape == "worktree":
         measure(binary, repo.parent / "linked", backend, flags)
+    elif case.shape in ("branch_config", "fetch_config"):
+        key = "branch.topic-000.description" if case.shape == "branch_config" else "fetch.prune"
+        value = (
+            f"description-{token}"
+            if case.shape == "branch_config"
+            else str(bool(token % 2)).lower()
+        )
+        git(repo, "config", key, value)
+    elif case.shape == "large_edit":
+        parent = git(repo, "rev-parse", "main").decode().strip()
+        files = (
+            (
+                f"directory-{index:04}/data",
+                (f"layer {index}\n" * 64 + (f"edit {token}\n" if index == 0 else "")).encode(),
+            )
+            for index in range(case.paths)
+        )
+        replace_layer(repo, "topic-000", parent, files, token)
+    elif case.shape == "stack_edit":
+        parent = git(repo, "rev-parse", "topic-001").decode().strip()
+        files = (
+            (
+                f"layer-002/file-{index:05}-" + "x" * 80,
+                f"changed {token}\n".encode() if index == 0 else b"changed\n",
+            )
+            for index in range(case.paths)
+        )
+        replace_layer(repo, "topic-002", parent, files, token)
     elif case.shape == "config":
         git(repo, "config", "core.editor", f"unused-editor-{token}")
     elif case.shape in ("attributes", "inactive"):
@@ -434,6 +505,8 @@ def main() -> None:
                     )
                     if case.shape in (
                         "amend",
+                        "large_edit",
+                        "stack_edit",
                         "edit",
                         "new_path",
                         "new_topic",

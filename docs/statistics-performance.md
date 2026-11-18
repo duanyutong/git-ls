@@ -122,7 +122,7 @@ Stored proof depth is bounded and versioned with the representation.
 Comparisons from distinct contexts validate against their own retained dependency fingerprints, with the complete union available for the current attribute capture.
 This avoids invalidating a valid scoped answer merely because another context retained a different conservative superset.
 The one-file edit fixture with 128 independently changed subdirectories requires four native discovery-tree reads instead of revisiting every changed subdirectory.
-Both backends retain the same full numeric counting policy at this stage.
+Dependency discovery is independent of numeric comparison policy.
 
 For one changed comparison with at least 64 previously validated dependency paths, the native backend may correct the previous aggregate using two path-restricted Git subtotals.
 The changed subset must contain at most 128 paths, occupy at most 32 KiB of arguments, and comprise fewer than one quarter of the previous dependency paths.
@@ -137,10 +137,30 @@ A validated path with no reported attributes remains distinct from an unvalidate
 Fingerprint construction streams the existing hash format without allocating a temporary vector of path tuples.
 Warm invocations continue to resolve live Git configuration and attributes, and cold or changed invocations retain the subsequent validation capture.
 
+## Integrated regression evidence
+
+The maintained benchmark includes repeated top-only edits in a three-layer, 6,000-path stack, repeated single-path edits in a 512-path layer, branch descriptions and fetch pruning.
+Fixture changes and preparatory warming occur outside the measured invocation, whilst reference movement itself determines the cache state observed by that invocation.
+Baseline and candidate use equivalent disposable repositories and separate cache namespaces.
+The ordinary lifecycle regressions additionally cover aliases, metadata-only amendments, reference changes during publication, bounded admission and concurrent writers.
+Integration fixtures isolate system attributes and the default user attribute file as well as Git configuration; tests which exercise user attributes configure their own disposable file explicitly.
+
+For resource-constrained local validation, run one acceptance or benchmark job at a time with CARGO_BUILD_JOBS=2, RUST_TEST_THREADS=2, RAYON_NUM_THREADS=2, PREK_CONCURRENT_HOOKS=1 and PREK_CONCURRENT_BATCHES=1.
+These limits bound this programme's workers, but cannot suppress unrelated host workloads.
+The implementation does not assert minimum wall-clock improvements on a contended host.
+
+Residual costs remain explicit: a cold uncached comparison still performs Git's complete numeric diff; broad edits and rename-sensitive changes retain that fallback; the shell adapter does not perform incremental subtotals; warm operation still resolves live attributes and configuration; non-blocking publication may skip retention under contention.
+These cases preserve the established counting and resource contracts and remain observable through diagnostic counters and reasons.
+
 Within active and historical admission tiers, smaller encoded dependency payloads take precedence, with recency retained as a deterministic tie-breaker.
 The estimate accounts for both JSON escaping layers and is computed once per shared dependency allocation for each ranking pass.
 This prevents an individually oversized leading comparison from blocking smaller comparisons which collectively fit.
 Exact envelope checks remain authoritative and logarithmically bounded.
+
+The first uncached acquisition still discovers dependency paths before counting so that effective attributes can be captured before and after the numeric comparison.
+Eliminating that discovery by validating attributes only after counting would not establish that the retained aggregate was measured under the validated context.
+Adjacent-endpoint reuse removes redundant traversal when a conservative prior proof exists; it does not claim to remove all first-acquisition work.
+The initial investigation also rejected changing rename detection or the diff algorithm as a performance shortcut because those variants changed the reported totals.
 
 Selective subtotals are disabled when a Git pathspec environment override is present, because such overrides can alter or disable explicit pathspec magic.
 The full comparison has no pathspec restriction and retains the established behaviour in those environments.

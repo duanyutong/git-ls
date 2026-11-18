@@ -675,6 +675,110 @@ fn incremental_subtotals_reject_mode_and_symlink_changes() {
     assert_incremental_parity(&repo, false);
 }
 
+fn import_large_layer(repo: &TestRepo, branch: &str, base: &str, layer: usize, revision: usize) {
+    use std::fmt::Write as _;
+    let mut input = format!(
+        "commit refs/heads/{branch}\ncommitter Fixture <fixture@example.invalid> 1700000000 +0000\ndata 6\nlayer\nfrom {base}\n"
+    );
+    for index in 0..2000 {
+        let content = if index == 0 {
+            format!("revision {revision}\n")
+        } else {
+            "content\n".into()
+        };
+        writeln!(
+            input,
+            "M 100644 inline layer-{layer}/file-{index:04}-{}\ndata {}\n{content}",
+            "x".repeat(80),
+            content.len()
+        )
+        .expect("fixture record");
+    }
+    repo.command("git")
+        .args(["fast-import", "--quiet", "--force"])
+        .write_stdin(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn repeated_large_stack_top_edits_preserve_the_active_working_set() {
+    for backend in ["gix", "shell"] {
+        let repo = TestRepo::new();
+        let mut base = repo.commit("root");
+        for layer in 0..3 {
+            let branch = format!("feature/layer-{layer}");
+            import_large_layer(&repo, &branch, &base, layer, 0);
+            base = repo.git(&["rev-parse", &branch]);
+        }
+        run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+        let base = repo.git(&["rev-parse", "feature/layer-1"]);
+        for revision in 1..=4 {
+            import_large_layer(&repo, "feature/layer-2", &base, 2, revision);
+            let (output, changed) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+            assert!(
+                changed
+                    .lines()
+                    .any(|line| line.ends_with("diff_cache_hits=2")),
+                "{changed}"
+            );
+            assert!(
+                changed
+                    .lines()
+                    .any(|line| line.ends_with("diff_cache_misses=1")),
+                "{changed}"
+            );
+            let (warm, debug) = run(&repo, backend, &["-vv", "--no-cache-maintenance"]);
+            assert_eq!(warm, output);
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_cache_hits=3")),
+                "{debug}"
+            );
+            assert!(!debug.contains("operation=subprocess_diff"), "{debug}");
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_attribute_records=0")),
+                "{debug}"
+            );
+            assert!(
+                debug
+                    .lines()
+                    .any(|line| line.ends_with("diff_validated_paths=6000")),
+                "{debug}"
+            );
+        }
+        assert_eq!(
+            run(&repo, backend, &["-vv"]).0,
+            run(&repo, backend, &["-vv", "--no-cache"]).0
+        );
+    }
+}
+
+#[test]
+fn incremental_orphan_layers_allow_regular_additions_and_deletions_without_rename_sources() {
+    let repo = TestRepo::new();
+    repo.commit("main root");
+    repo.git(&["checkout", "--orphan", "feature/topic"]);
+    for index in 0..64 {
+        write(
+            &repo,
+            &format!("orphan-{index:03}"),
+            format!("orphan {index}\n"),
+        );
+    }
+    repo.commit("large orphan layer");
+    run(&repo, "gix", &["-vv", "--no-cache-maintenance"]);
+    write(&repo, "orphan-new", "new\n");
+    repo.commit("add orphan file");
+    assert_incremental_parity(&repo, true);
+    std::fs::remove_file(repo.path().join("orphan-000")).expect("remove orphan file");
+    repo.commit("delete orphan file");
+    assert_incremental_parity(&repo, true);
+}
+
 #[test]
 fn incremental_subtotals_bypass_pathspec_environment_overrides() {
     let repo = incremental_layer();

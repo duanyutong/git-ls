@@ -19,6 +19,11 @@ impl TestRepo {
         repo.git(&["config", "user.email", "developer@example.invalid"]);
         repo.git(&["config", "commit.gpgSign", "false"]);
         repo.git(&["config", "tag.gpgSign", "false"]);
+        repo.git(&[
+            "config",
+            "core.attributesFile",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        ]);
         repo
     }
 
@@ -50,7 +55,9 @@ impl TestRepo {
             .env_remove("GIT_GLOB_PATHSPECS")
             .env_remove("GIT_NOGLOB_PATHSPECS")
             .env_remove("GIT_ICASE_PATHSPECS")
+            .env_remove("GIT_ATTR_SOURCE")
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_ATTR_NOSYSTEM", "1")
             .env(
                 "GIT_CONFIG_GLOBAL",
                 self.path().join("absent-global-config"),
